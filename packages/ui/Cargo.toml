@@ -1,0 +1,12 @@
+[package]
+name = "ui"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+dioxus = { workspace = true }
+api = { workspace = true }
+web-sys = { version = "0.3", features = ["console"] }
+
+[features]
+server = ["api/server"]
