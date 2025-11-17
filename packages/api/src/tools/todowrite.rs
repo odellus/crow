@@ -51,13 +51,7 @@ impl TodoWriteTool {
 
 #[derive(Deserialize)]
 struct TodoWriteInput {
-    #[serde(default = "default_session_id")]
-    session_id: String,
     todos: Vec<TodoItem>,
-}
-
-fn default_session_id() -> String {
-    "default".to_string()
 }
 
 #[derive(Serialize, Deserialize)]
@@ -112,7 +106,7 @@ impl Tool for TodoWriteTool {
         })
     }
 
-    async fn execute(&self, input: Value, _ctx: &ToolContext) -> ToolResult {
+    async fn execute(&self, input: Value, ctx: &ToolContext) -> ToolResult {
         let todo_input: TodoWriteInput = match serde_json::from_value(input) {
             Ok(i) => i,
             Err(e) => {
@@ -125,10 +119,13 @@ impl Tool for TodoWriteTool {
             }
         };
 
+        // Use session_id from context, NOT from LLM input
+        let session_id = &ctx.session_id;
+
         // Store todos in memory
         {
             let mut todos = self.todos.write().unwrap();
-            todos.insert(todo_input.session_id.clone(), todo_input.todos.clone());
+            todos.insert(session_id.clone(), todo_input.todos.clone());
         }
 
         // Persist to disk (like OpenCode does)
@@ -141,7 +138,7 @@ impl Tool for TodoWriteTool {
             if let Err(e) = std::fs::create_dir_all(&global_paths) {
                 tracing::warn!("Failed to create todo storage directory: {}", e);
             } else {
-                let todo_file = global_paths.join(format!("{}.json", todo_input.session_id));
+                let todo_file = global_paths.join(format!("{}.json", session_id));
                 if let Ok(json) = serde_json::to_string_pretty(&todo_input.todos) {
                     if let Err(e) = std::fs::write(&todo_file, json) {
                         tracing::warn!("Failed to write todo file: {}", e);
@@ -162,7 +159,7 @@ impl Tool for TodoWriteTool {
             output: serde_json::to_string(&output).unwrap_or_default(),
             error: None,
             metadata: json!({
-                "session_id": todo_input.session_id,
+                "session_id": session_id,
                 "count": output.count,
             }),
         }
