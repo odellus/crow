@@ -1,7 +1,91 @@
-//! OpenCode-compatible message types for crow
+//! OpenCode-compatible types for crow
 //! Based on OpenCode's TypeScript SDK types
 
 use serde::{Deserialize, Serialize};
+
+// ============================================================================
+// Session Types
+// ============================================================================
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct Session {
+    /// Session identifier (pattern: "ses.*")
+    pub id: String,
+    /// Associated project ID
+    #[serde(rename = "projectID")]
+    pub project_id: String,
+    /// Working directory
+    pub directory: String,
+    /// Parent session ID (for forked sessions)
+    #[serde(rename = "parentID", skip_serializing_if = "Option::is_none")]
+    pub parent_id: Option<String>,
+    /// Session summary with file changes
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub summary: Option<SessionSummary>,
+    /// Share information if session is shared
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub share: Option<SessionShare>,
+    /// Session title
+    pub title: String,
+    /// Session version
+    pub version: String,
+    /// Timestamps
+    pub time: SessionTime,
+    /// Revert information
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub revert: Option<SessionRevert>,
+    /// Arbitrary metadata (used for dual-pair tracking, etc.)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub metadata: Option<serde_json::Value>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct SessionSummary {
+    pub additions: u64,
+    pub deletions: u64,
+    pub files: u64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub diffs: Option<Vec<FileDiff>>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct FileDiff {
+    pub path: String,
+    pub additions: u64,
+    pub deletions: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct SessionShare {
+    pub url: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct SessionTime {
+    /// Unix timestamp in milliseconds
+    pub created: u64,
+    /// Last update timestamp
+    pub updated: u64,
+    /// Compacting timestamp if in progress
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub compacting: Option<u64>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct SessionRevert {
+    #[serde(rename = "messageID")]
+    pub message_id: String,
+    #[serde(rename = "partID", skip_serializing_if = "Option::is_none")]
+    pub part_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub snapshot: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub diff: Option<String>,
+}
+
+// ============================================================================
+// Message Types
+// ============================================================================
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(tag = "role")]
@@ -13,6 +97,8 @@ pub enum Message {
         time: MessageTime,
         #[serde(skip_serializing_if = "Option::is_none")]
         summary: Option<MessageSummary>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        metadata: Option<serde_json::Value>,
     },
     #[serde(rename = "assistant")]
     Assistant {
@@ -30,7 +116,19 @@ pub enum Message {
         error: Option<String>,
         #[serde(skip_serializing_if = "Option::is_none")]
         summary: Option<bool>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        metadata: Option<serde_json::Value>,
     },
+}
+
+impl Message {
+    /// Get the message ID
+    pub fn id(&self) -> &str {
+        match self {
+            Message::User { id, .. } => id,
+            Message::Assistant { id, .. } => id,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]

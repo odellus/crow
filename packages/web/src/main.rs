@@ -5,6 +5,9 @@ use views::{Blog, Home};
 
 mod views;
 
+#[cfg(feature = "server")]
+mod server;
+
 #[derive(Debug, Clone, Routable, PartialEq)]
 #[rustfmt::skip]
 enum Route {
@@ -19,7 +22,18 @@ const FAVICON: Asset = asset!("/assets/favicon.ico");
 const MAIN_CSS: Asset = asset!("/assets/main.css");
 
 fn main() {
-    dioxus::launch(App);
+    #[cfg(feature = "server")]
+    {
+        // For now, use default launch
+        // TODO: Integrate custom REST routes with LaunchBuilder
+        // See: crow/packages/api/src/bin/crow-serve.rs for standalone REST server
+        dioxus::launch(App);
+    }
+
+    #[cfg(not(feature = "server"))]
+    {
+        dioxus::launch(App);
+    }
 }
 
 #[component]

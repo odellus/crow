@@ -1,265 +1,287 @@
-You are an expert [0.7 Dioxus](https://dioxuslabs.com/learn/0.7) assistant. Dioxus 0.7 changes every api in dioxus. Only use this up to date documentation. `cx`, `Scope`, and `use_state` are gone
+# Agent Architecture for Crow
 
-Provide concise code examples with detailed descriptions
+## Current Status
 
-# Dioxus Dependency
+### What Crow Has Now ✅
+- **Single-agent execution** working with LLM integration
+- **6 built-in agents:** general, build, plan, supervisor, architect, discriminator
+- **9 working tools:** bash, edit, write, read, grep, glob, todowrite, todoread, work_completed
+- **Permission system** with tool filtering
+- **Project directory isolation** - agents can spawn in any directory
+- **Session storage** with persistence to `~/.crow/sessions/`
+- **Dual-agent runtime** - executor + discriminator loop (basic implementation)
+- **API endpoints:** 
+  - `POST /session` - create session
+  - `POST /session/:id/message` - send message to agent
+  - `POST /session/dual` - run dual-agent (currently top-level, needs refactoring)
 
-You can add Dioxus to your `Cargo.toml` like this:
+### What's Missing ❌
+- **Task tool** - agents can't spawn subagents yet
+- **Proper dual-agent invocation** - currently top-level, should be subagent via task tool
+- **Session hierarchy** - parent/child session linking works but task tool doesn't use it
+- **Agent mode enforcement** - subagent vs primary distinction exists but not enforced
+- **Markdown telemetry** - started but not complete (see TELEMETRY_WORK_STATUS.md)
+- **Frontend** - Dioxus fullstack setup exists but is broken/neglected
 
-```toml
-[dependencies]
-dioxus = { version = "0.7.1" }
+## The Architecture We Need
 
-[features]
-default = ["web", "webview", "server"]
-web = ["dioxus/web"]
-webview = ["dioxus/desktop"]
-server = ["dioxus/server"]
+Based on OpenCode's proven pattern (see OPENCODE_SUBAGENT_SYSTEM.md):
+
+### 1. Task Tool (CRITICAL - Not Yet Implemented)
+
+**Purpose:** Allows agents to spawn subagents autonomously
+
+**Signature:**
+```rust
+task(
+  description: "Short 3-5 word task description",
+  prompt: "Detailed task for the subagent",
+  subagent_type: "dual-agent" | "explore" | "plan" | "docs"
+)
 ```
 
-# Launching your application
+**How it works:**
+1. Parent agent calls task tool in their response
+2. Task tool creates child session with `parentID` link
+3. If `subagent_type == "dual-agent"` → run DualAgentRuntime
+4. Otherwise → run single agent with SessionPrompt
+5. Return summary + output to parent agent
+6. Parent agent synthesizes result for user
 
-You need to create a main function that sets up the Dioxus runtime and mounts your root component.
+**Example:**
+```
+User: "Implement fibonacci function"
+  ↓
+BUILD agent: "I'll use dual-agent for supervised execution"
+  🔧 task(
+    description="Implement fibonacci", 
+    prompt="Write fibonacci with tests",
+    subagent_type="dual-agent"
+  )
+  ↓
+Task tool:
+  - Creates child session (ses-child-123)
+  - Runs DualAgentRuntime (executor + discriminator loop)
+  - Exports to .crow/sessions/ses-child-123.md
+  - Returns: { output: "Fibonacci implemented", metadata: {...} }
+  ↓
+BUILD agent: "Fibonacci function has been implemented with tests. All tests passing."
+```
+
+### 2. Agent Modes (Already Exists, Needs Enforcement)
 
 ```rust
-use dioxus::prelude::*;
-
-fn main() {
-	dioxus::launch(App);
-}
-
-#[component]
-fn App() -> Element {
-	rsx! { "Hello, Dioxus!" }
+pub enum AgentMode {
+    Primary,   // Can be used directly by user
+    Subagent,  // Only via task tool
+    All,       // Both
 }
 ```
 
-Then serve with `dx serve`:
+**Current agents:**
+- `general` - Primary (default for user)
+- `build` - Primary (but should default to spawning dual-agent)
+- `plan` - Subagent (read-only planning)
+- `supervisor` - Primary (task management)
+- `architect` - Primary (project management)
+- `discriminator` - Subagent (only used in dual-agent)
+- **`dual-agent`** - Subagent (NEW - needs to be registered)
 
-```sh
-curl -sSL http://dioxus.dev/install.sh | sh
-dx serve
+### 3. Dual-Agent as Subagent (Needs Refactoring)
+
+**Current problem:** `POST /session/dual` is a top-level endpoint
+
+**What we need:**
+- Remove `POST /session/dual` endpoint
+- Register dual-agent as a subagent
+- BUILD agent's system prompt should say: "Use task tool with subagent_type='dual-agent' for implementation tasks"
+- Task tool handles the spawning
+
+**Dual-agent prompt:**
+```markdown
+---
+description: Supervised execution with executor/discriminator
+mode: subagent
+---
+
+You are part of a DUAL-AGENT supervision system.
+
+## How This Works
+- EXECUTOR (build agent) - Implements the task
+- DISCRIMINATOR (supervisor agent) - Reviews and provides feedback
+- You see different perspectives of the same conversation
+- Only discriminator can call work_completed
+
+[Rest of dual-agent.md from OpenCode]
 ```
 
-# UI with RSX
+### 4. Session Hierarchy (Already Works)
 
 ```rust
-rsx! {
-	div {
-		class: "container", // Attribute
-		color: "red", // Inline styles
-		width: if condition { "100%" }, // Conditional attributes
-		"Hello, Dioxus!"
-	}
-	// Prefer loops over iterators
-	for i in 0..5 {
-		div { "{i}" } // use elements or components directly in loops
-	}
-	if condition {
-		div { "Condition is true!" } // use elements or components directly in conditionals
-	}
-
-	{children} // Expressions are wrapped in brace
-	{(0..5).map(|i| rsx! { span { "Item {i}" } })} // Iterators must be wrapped in braces
+pub struct Session {
+    pub id: String,
+    pub parent_id: Option<String>,  // ✅ Already exists
+    pub directory: String,
+    pub metadata: Option<serde_json::Value>,  // ✅ Added
+    // ...
 }
 ```
 
-# Assets
+**Task tool creates:**
+```rust
+Session {
+    id: "ses-child-123",
+    parent_id: Some("ses-parent-456"),
+    title: "Implement fibonacci (@dual-agent subagent)",
+    metadata: Some(json!({
+        "includeParentContext": true,
+        "subagentType": "dual-agent",
+    })),
+}
+```
 
-The asset macro can be used to link to local files to use in your project. All links start with `/` and are relative to the root of your project.
+### 5. Markdown Telemetry (Partially Done)
+
+**Status:** SessionExport and CrowStorage exist but not wired up
+
+**What's needed:**
+- Export both executor and discriminator sessions after each turn
+- Store in `.crow/sessions/{session-id}.md`
+- Include system prompts, tools available, all messages, tool calls
+
+See TELEMETRY_WORK_STATUS.md for details.
+
+## Agent Delegation Rules
+
+**We should implement these rules in the task tool:**
 
 ```rust
-rsx! {
-	img {
-		src: asset!("/assets/image.png"),
-		alt: "An image",
-	}
+// BUILD can spawn any subagent
+if calling_agent == "build" {
+    // Allow dual-agent, explore, plan, docs, etc.
+}
+
+// SUPERVISOR can only spawn build
+if calling_agent == "supervisor" {
+    if subagent_type != "build" {
+        return Err("supervisor can only delegate to build agent")
+    }
+}
+
+// DISCRIMINATOR can spawn for verification
+if calling_agent == "discriminator" {
+    // Allow bash, read, grep, write, edit for fixes
 }
 ```
 
-## Styles
-
-The `document::Stylesheet` component will inject the stylesheet into the `<head>` of the document
-
-```rust
-rsx! {
-	document::Stylesheet {
-		href: asset!("/assets/styles.css"),
-	}
-}
+**Hierarchy:**
+```
+User
+  └─> General/Primary agents
+       └─> Supervisor
+            └─> Build (default: spawns dual-agent for implementation)
+                 └─> Dual-Agent (executor + discriminator)
+                 └─> Explore (research/search)
+                 └─> Plan (read-only planning)
+                 └─> Docs (documentation)
 ```
 
-# Components
+## Default Behavior
 
-Components are the building blocks of apps
+**Key insight from OpenCode:** BUILD agent should DEFAULT to using dual-agent
 
-* Component are functions annotated with the `#[component]` macro.
-* The function name must start with a capital letter or contain an underscore.
-* A component re-renders only under two conditions:
-	1.  Its props change (as determined by `PartialEq`).
-	2.  An internal reactive state it depends on is updated.
+**BUILD agent system prompt should include:**
+```
+When implementing code or making significant changes, use the task tool 
+with subagent_type='dual-agent' for supervised execution. This ensures 
+quality through discriminator review.
 
-```rust
-#[component]
-fn Input(mut value: Signal<String>) -> Element {
-	rsx! {
-		input {
-            value,
-			oninput: move |e| {
-				*value.write() = e.value();
-			},
-			onkeydown: move |e| {
-				if e.key() == Key::Enter {
-					value.write().clear();
-				}
-			},
-		}
-	}
-}
+Example:
+🔧 task(
+  description="Implement feature X",
+  prompt="Write feature X with tests and error handling",
+  subagent_type="dual-agent"
+)
 ```
 
-Each component accepts function arguments (props)
+## Frontend Situation
 
-* Props must be owned values, not references. Use `String` and `Vec<T>` instead of `&str` or `&[T]`.
-* Props must implement `PartialEq` and `Clone`.
-* To make props reactive and copy, you can wrap the type in `ReadOnlySignal`. Any reactive state like memos and resources that read `ReadOnlySignal` props will automatically re-run when the prop changes.
+**Current state:**
+- Dioxus 0.7.1 fullstack setup in `crow/packages/web/`, `crow/packages/desktop/`
+- Not actively developed
+- Broken/neglected
+- Uses Axum backend in `crow/packages/api/src/server.rs`
 
-# State
+**What we need eventually:**
+- Dioxus frontend consuming REST API
+- Session list view
+- Message stream view
+- Tool call rendering (like OpenCode's UI)
+- Fork/branch visualization
+- Agent selection UI
 
-A signal is a wrapper around a value that automatically tracks where it's read and written. Changing a signal's value causes code that relies on the signal to rerun.
+**Priority:** LOW - focus on backend/agent system first
 
-## Local State
+See crow/AGENTS.md (the Dioxus reference) for framework patterns.
 
-The `use_signal` hook creates state that is local to a single component. You can call the signal like a function (e.g. `my_signal()`) to clone the value, or use `.read()` to get a reference. `.write()` gets a mutable reference to the value.
+## Implementation Priority for Next Session
 
-Use `use_memo` to create a memoized value that recalculates when its dependencies change. Memos are useful for expensive calculations that you don't want to repeat unnecessarily.
+1. **Implement Task Tool** ⭐ CRITICAL
+   - Create `crow/packages/api/src/tools/task.rs`
+   - Spawn child session with parentID
+   - Check subagent_type
+   - If dual-agent → DualAgentRuntime
+   - Return summary to parent
 
-```rust
-#[component]
-fn Counter() -> Element {
-	let mut count = use_signal(|| 0);
-	let mut doubled = use_memo(move || count() * 2); // doubled will re-run when count changes because it reads the signal
+2. **Register Dual-Agent Subagent**
+   - Create `.crow/agent/dual-agent.md`
+   - Set mode: subagent
+   - Remove `POST /session/dual` endpoint
 
-	rsx! {
-		h1 { "Count: {count}" } // Counter will re-render when count changes because it reads the signal
-		h2 { "Doubled: {doubled}" }
-		button {
-			onclick: move |_| *count.write() += 1, // Writing to the signal rerenders Counter
-			"Increment"
-		}
-		button {
-			onclick: move |_| count.with_mut(|count| *count += 1), // use with_mut to mutate the signal
-			"Increment with with_mut"
-		}
-	}
-}
-```
+3. **Update BUILD Agent Prompt**
+   - Add task tool usage guidance
+   - Default to dual-agent for implementation
 
-## Context API
+4. **Wire Up Telemetry**
+   - Add export calls in DualAgentRuntime
+   - Export both sessions after each turn
 
-The Context API allows you to share state down the component tree. A parent provides the state using `use_context_provider`, and any child can access it with `use_context`
+5. **Test End-to-End**
+   - User → BUILD → spawns dual-agent → returns result
+   - Check `.crow/sessions/` for markdown exports
 
-```rust
-#[component]
-fn App() -> Element {
-	let mut theme = use_signal(|| "light".to_string());
-	use_context_provider(|| theme); // Provide a type to children
-	rsx! { Child {} }
-}
+## Files to Give Next Agent
 
-#[component]
-fn Child() -> Element {
-	let theme = use_context::<Signal<String>>(); // Consume the same type
-	rsx! {
-		div {
-			"Current theme: {theme}"
-		}
-	}
-}
-```
+### Must Read First:
+1. **OPENCODE_SUBAGENT_SYSTEM.md** - How task tool and subagents work
+2. **TELEMETRY_WORK_STATUS.md** - Current telemetry implementation status
 
-# Async
+### Reference:
+3. **STATUS.md** - What's already implemented in Crow
+4. **This file (AGENTS.md)** - Agent architecture overview
 
-For state that depends on an asynchronous operation (like a network request), Dioxus provides a hook called `use_resource`. This hook manages the lifecycle of the async task and provides the result to your component.
+### Codebase Entry Points:
+- `crow/packages/api/src/tools/` - Tool implementations
+- `crow/packages/api/src/agent/` - Agent executor, registry, runtime
+- `crow/packages/api/src/server.rs` - API endpoints
+- `crow/packages/api/src/session/` - Session management
 
-* The `use_resource` hook takes an `async` closure. It re-runs this closure whenever any signals it depends on (reads) are updated
-* The `Resource` object returned can be in several states when read:
-1. `None` if the resource is still loading
-2. `Some(value)` if the resource has successfully loaded
+## Success Criteria
 
-```rust
-let mut dog = use_resource(move || async move {
-	// api request
-});
+**Task tool is working when:**
+1. BUILD agent can call `task(subagent_type="dual-agent", ...)`
+2. Child session is created with parentID
+3. DualAgentRuntime executes in child session
+4. Both executor and discriminator sessions export to `.crow/sessions/`
+5. Task tool returns summary to BUILD agent
+6. BUILD agent shows user the result
 
-match dog() {
-	Some(dog_info) => rsx! { Dog { dog_info } },
-	None => rsx! { "Loading..." },
-}
-```
+**Full system is working when:**
+1. User sends "Implement feature X" to BUILD agent
+2. BUILD agent automatically spawns dual-agent
+3. Executor implements, discriminator reviews
+4. Both sessions exported to markdown
+5. Task tool returns to BUILD agent
+6. BUILD agent tells user "Feature X implemented and verified"
 
-# Routing
-
-All possible routes are defined in a single Rust `enum` that derives `Routable`. Each variant represents a route and is annotated with `#[route("/path")]`. Dynamic Segments can capture parts of the URL path as parameters by using `:name` in the route string. These become fields in the enum variant.
-
-The `Router<Route> {}` component is the entry point that manages rendering the correct component for the current URL.
-
-You can use the `#[layout(NavBar)]` to create a layout shared between pages and place an `Outlet<Route> {}` inside your layout component. The child routes will be rendered in the outlet.
-
-```rust
-#[derive(Routable, Clone, PartialEq)]
-enum Route {
-	#[layout(NavBar)] // This will use NavBar as the layout for all routes
-		#[route("/")]
-		Home {},
-		#[route("/blog/:id")] // Dynamic segment
-		BlogPost { id: i32 },
-}
-
-#[component]
-fn NavBar() -> Element {
-	rsx! {
-		a { href: "/", "Home" }
-		Outlet<Route> {} // Renders Home or BlogPost
-	}
-}
-
-#[component]
-fn App() -> Element {
-	rsx! { Router::<Route> {} }
-}
-```
-
-```toml
-dioxus = { version = "0.7.1", features = ["router"] }
-```
-
-# Fullstack
-
-Fullstack enables server rendering and ipc calls. It uses Cargo features (`server` and a client feature like `web`) to split the code into a server and client binaries.
-
-```toml
-dioxus = { version = "0.7.1", features = ["fullstack"] }
-```
-
-## Server Functions
-
-Use the `#[post]` / `#[get]` macros to define an `async` function that will only run on the server. On the server, this macro generates an API endpoint. On the client, it generates a function that makes an HTTP request to that endpoint.
-
-```rust
-#[post("/api/double/:path/&query")]
-async fn double_server(number: i32, path: String, query: i32) -> Result<i32, ServerFnError> {
-	tokio::time::sleep(std::time::Duration::from_secs(1)).await;
-	Ok(number * 2)
-}
-```
-
-## Hydration
-
-Hydration is the process of making a server-rendered HTML page interactive on the client. The server sends the initial HTML, and then the client-side runs, attaches event listeners, and takes control of future rendering.
-
-### Errors
-The initial UI rendered by the component on the client must be identical to the UI rendered on the server.
-
-* Use the `use_server_future` hook instead of `use_resource`. It runs the future on the server, serializes the result, and sends it to the client, ensuring the client has the data immediately for its first render.
-* Any code that relies on browser-specific APIs (like accessing `localStorage`) must be run *after* hydration. Place this code inside a `use_effect` hook.
+This is the architecture. Let's build it.

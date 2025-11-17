@@ -3,12 +3,29 @@ name = "api"
 version = "0.1.0"
 edition = "2021"
 
+[[bin]]
+name = "crow-serve"
+path = "src/bin/crow-serve.rs"
+required-features = ["server"]
+
 [dependencies]
 dioxus = { workspace = true, features = ["fullstack"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 async-openai = { version = "0.30", optional = true }
 dotenvy = { version = "0.15", optional = true }
+uuid = { version = "1", features = ["v4", "serde"] }
+async-trait = { version = "0.1", optional = true }
+regex = { version = "1", optional = true }
+
+# HTTP server
+axum = { version = "0.7", optional = true }
+tokio = { version = "1", features = ["full"], optional = true }
+tower-http = { version = "0.5", features = ["cors"], optional = true }
+tracing = { version = "0.1", optional = true }
+tracing-subscriber = { version = "0.3", optional = true }
+futures = { version = "0.3", optional = true }
+tokio-stream = { version = "0.1", optional = true }
 
 [features]
-server = ["dioxus/server", "dep:async-openai", "dep:dotenvy"]
+server = ["dioxus/server", "dep:async-openai", "dep:dotenvy", "dep:axum", "dep:tokio", "dep:tower-http", "dep:tracing", "dep:tracing-subscriber", "dep:async-trait", "dep:futures", "dep:tokio-stream", "dep:regex"]

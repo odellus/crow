@@ -1,0 +1,336 @@
+use crate::types::{Message, Part, Session, SessionTime};
+use std::collections::HashMap;
+use std::sync::{Arc, RwLock};
+
+#[cfg(feature = "server")]
+use crate::storage::Storage;
+
+/// Represents a complete message with its info and parts
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
+pub struct MessageWithParts {
+    pub info: Message,
+    pub parts: Vec<Part>,
+}
+
+/// Session store with file persistence
+#[derive(Clone)]
+pub struct SessionStore {
+    sessions: Arc<RwLock<HashMap<String, Session>>>,
+    /// Messages grouped by session ID
+    /// Key: session_id, Value: Vec of messages
+    messages: Arc<RwLock<HashMap<String, Vec<MessageWithParts>>>>,
+    #[cfg(feature = "server")]
+    storage: Option<Arc<Storage>>,
+}
+
+impl SessionStore {
+    pub fn new() -> Self {
+        Self {
+            sessions: Arc::new(RwLock::new(HashMap::new())),
+            messages: Arc::new(RwLock::new(HashMap::new())),
+            #[cfg(feature = "server")]
+            storage: Some(Arc::new(Storage::new())),
+        }
+    }
+
+    /// Initialize storage and load existing sessions
+    #[cfg(feature = "server")]
+    pub async fn init(&self) -> Result<(), String> {
+        let storage = self.storage.as_ref().ok_or("Storage not available")?;
+
+        // Initialize storage directories
+        storage.init().await?;
+
+        // Load existing sessions
+        let sessions = storage.list_sessions().await?;
+        {
+            let mut sessions_lock = self.sessions.write().unwrap();
+            for session in sessions {
+                sessions_lock.insert(session.id.clone(), session);
+            }
+        }
+
+        // Load messages for each session
+        let session_ids: Vec<String> = {
+            let sessions_lock = self.sessions.read().unwrap();
+            sessions_lock.keys().cloned().collect()
+        };
+
+        for session_id in session_ids {
+            let messages = storage.load_messages(&session_id).await?;
+            self.messages.write().unwrap().insert(session_id, messages);
+        }
+
+        Ok(())
+    }
+
+    /// Create a new session
+    pub fn create(
+        &self,
+        directory: String,
+        parent_id: Option<String>,
+        title: Option<String>,
+    ) -> Result<Session, String> {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_err(|e| format!("Time error: {}", e))?
+            .as_millis() as u64;
+
+        let id = format!("ses-{}", uuid::Uuid::new_v4());
+        let project_id = "default".to_string(); // TODO: Get from actual project
+
+        let session = Session {
+            id: id.clone(),
+            project_id,
+            directory,
+            parent_id,
+            summary: None,
+            share: None,
+            title: title.unwrap_or_else(|| "New Session".to_string()),
+            version: "1.0.0".to_string(),
+            time: SessionTime {
+                created: now,
+                updated: now,
+                compacting: None,
+            },
+            revert: None,
+            metadata: None,
+        };
+
+        let mut sessions = self
+            .sessions
+            .write()
+            .map_err(|e| format!("Lock error: {}", e))?;
+        sessions.insert(id.clone(), session.clone());
+
+        // Persist to disk in background
+        #[cfg(feature = "server")]
+        if let Some(storage) = &self.storage {
+            let storage = storage.clone();
+            let session_clone = session.clone();
+            tokio::spawn(async move {
+                if let Err(e) = storage.save_session(&session_clone).await {
+                    eprintln!("Failed to persist session: {}", e);
+                }
+            });
+        }
+
+        Ok(session)
+    }
+
+    /// Get a session by ID
+    pub fn get(&self, id: &str) -> Result<Session, String> {
+        let sessions = self
+            .sessions
+            .read()
+            .map_err(|e| format!("Lock error: {}", e))?;
+        sessions
+            .get(id)
+            .cloned()
+            .ok_or_else(|| format!("Session not found: {}", id))
+    }
+
+    /// List all sessions
+    pub fn list(&self, directory: Option<String>) -> Result<Vec<Session>, String> {
+        let sessions = self
+            .sessions
+            .read()
+            .map_err(|e| format!("Lock error: {}", e))?;
+
+        let mut result: Vec<Session> = sessions
+            .values()
+            .filter(|s| {
+                if let Some(ref dir) = directory {
+                    &s.directory == dir
+                } else {
+                    true
+                }
+            })
+            .cloned()
+            .collect();
+
+        // Sort by creation time, newest first
+        result.sort_by(|a, b| b.time.created.cmp(&a.time.created));
+
+        Ok(result)
+    }
+
+    /// Update a session
+    pub fn update(&self, id: &str, title: Option<String>) -> Result<Session, String> {
+        let mut sessions = self
+            .sessions
+            .write()
+            .map_err(|e| format!("Lock error: {}", e))?;
+
+        let session = sessions
+            .get_mut(id)
+            .ok_or_else(|| format!("Session not found: {}", id))?;
+
+        if let Some(new_title) = title {
+            session.title = new_title;
+        }
+
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_err(|e| format!("Time error: {}", e))?
+            .as_millis() as u64;
+        session.time.updated = now;
+
+        let updated_session = session.clone();
+
+        // Persist to disk in background
+        #[cfg(feature = "server")]
+        if let Some(storage) = &self.storage {
+            let storage = storage.clone();
+            let session_clone = updated_session.clone();
+            tokio::spawn(async move {
+                if let Err(e) = storage.save_session(&session_clone).await {
+                    eprintln!("Failed to persist session update: {}", e);
+                }
+            });
+        }
+
+        Ok(updated_session)
+    }
+
+    /// Update session metadata
+    pub fn update_metadata(
+        &self,
+        id: &str,
+        metadata: serde_json::Value,
+    ) -> Result<Session, String> {
+        let mut sessions = self
+            .sessions
+            .write()
+            .map_err(|e| format!("Lock error: {}", e))?;
+
+        let session = sessions
+            .get_mut(id)
+            .ok_or_else(|| format!("Session not found: {}", id))?;
+
+        session.metadata = Some(metadata);
+
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_err(|e| format!("Time error: {}", e))?
+            .as_millis() as u64;
+        session.time.updated = now;
+
+        let updated_session = session.clone();
+
+        // Persist to disk in background
+        #[cfg(feature = "server")]
+        if let Some(storage) = &self.storage {
+            let storage = storage.clone();
+            let session_clone = updated_session.clone();
+            tokio::spawn(async move {
+                if let Err(e) = storage.save_session(&session_clone).await {
+                    eprintln!("Failed to persist session metadata: {}", e);
+                }
+            });
+        }
+
+        Ok(updated_session)
+    }
+
+    /// Delete a session
+    pub fn delete(&self, id: &str) -> Result<bool, String> {
+        let mut sessions = self
+            .sessions
+            .write()
+            .map_err(|e| format!("Lock error: {}", e))?;
+
+        Ok(sessions.remove(id).is_some())
+    }
+
+    /// Get child sessions
+    pub fn get_children(&self, parent_id: &str) -> Result<Vec<Session>, String> {
+        let sessions = self
+            .sessions
+            .read()
+            .map_err(|e| format!("Lock error: {}", e))?;
+
+        let mut children: Vec<Session> = sessions
+            .values()
+            .filter(|s| s.parent_id.as_ref().map(|p| p.as_str()) == Some(parent_id))
+            .cloned()
+            .collect();
+
+        children.sort_by(|a, b| b.time.created.cmp(&a.time.created));
+
+        Ok(children)
+    }
+
+    // ========================================================================
+    // Message Management
+    // ========================================================================
+
+    /// Add a message to a session
+    pub fn add_message(&self, session_id: &str, message: MessageWithParts) -> Result<(), String> {
+        // Verify session exists
+        self.get(session_id)?;
+
+        let mut messages = self
+            .messages
+            .write()
+            .map_err(|e| format!("Lock error: {}", e))?;
+
+        messages
+            .entry(session_id.to_string())
+            .or_insert_with(Vec::new)
+            .push(message.clone());
+
+        // Update session timestamp
+        self.update(session_id, None)?;
+
+        // Persist to disk in background
+        #[cfg(feature = "server")]
+        if let Some(storage) = &self.storage {
+            let storage = storage.clone();
+            let message_clone = message.clone();
+            tokio::spawn(async move {
+                if let Err(e) = storage.save_message(&message_clone).await {
+                    eprintln!("Failed to persist message: {}", e);
+                }
+            });
+        }
+
+        Ok(())
+    }
+
+    /// Get all messages for a session
+    pub fn get_messages(&self, session_id: &str) -> Result<Vec<MessageWithParts>, String> {
+        // Verify session exists
+        self.get(session_id)?;
+
+        let messages = self
+            .messages
+            .read()
+            .map_err(|e| format!("Lock error: {}", e))?;
+
+        Ok(messages.get(session_id).cloned().unwrap_or_else(Vec::new))
+    }
+
+    /// Get a specific message by ID
+    pub fn get_message(
+        &self,
+        session_id: &str,
+        message_id: &str,
+    ) -> Result<MessageWithParts, String> {
+        let messages = self.get_messages(session_id)?;
+
+        messages
+            .into_iter()
+            .find(|m| match &m.info {
+                Message::User { id, .. } => id == message_id,
+                Message::Assistant { id, .. } => id == message_id,
+            })
+            .ok_or_else(|| format!("Message not found: {}", message_id))
+    }
+}
+
+impl Default for SessionStore {
+    fn default() -> Self {
+        Self::new()
+    }
+}

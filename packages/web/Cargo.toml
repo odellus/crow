@@ -7,8 +7,10 @@ edition = "2021"
 dioxus = { workspace = true, features = ["router", "fullstack"] }
 ui = { workspace = true }
 api = { workspace = true }
+axum = { version = "0.7", optional = true }
+tower-http = { version = "0.5", features = ["cors"], optional = true }
 
 [features]
 default = []
 web = ["dioxus/web"]
-server = ["dioxus/server", "ui/server", "api/server"]
+server = ["dioxus/server", "ui/server", "api/server", "dep:axum", "dep:tower-http"]

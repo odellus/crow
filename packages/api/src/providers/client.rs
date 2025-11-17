@@ -1,7 +1,10 @@
 use super::ProviderConfig;
 use async_openai::{
     config::OpenAIConfig,
-    types::{ChatCompletionRequestMessage, CreateChatCompletionRequestArgs},
+    types::{
+        ChatCompletionRequestMessage, ChatCompletionTool, CreateChatCompletionRequestArgs,
+        FunctionObject,
+    },
     Client,
 };
 
@@ -59,6 +62,33 @@ impl ProviderClient {
             .ok_or_else(|| "No response from LLM".to_string())?;
 
         Ok(message.clone())
+    }
+
+    /// Send a chat completion request with tools
+    pub async fn chat_with_tools(
+        &self,
+        messages: Vec<ChatCompletionRequestMessage>,
+        tools: Vec<ChatCompletionTool>,
+        model: Option<&str>,
+    ) -> Result<async_openai::types::CreateChatCompletionResponse, String> {
+        let model = model.unwrap_or(&self.config.default_model);
+
+        let mut request_builder = CreateChatCompletionRequestArgs::default();
+        request_builder.model(model).messages(messages);
+
+        if !tools.is_empty() {
+            request_builder.tools(tools);
+        }
+
+        let request = request_builder
+            .build()
+            .map_err(|e| format!("Failed to build request: {}", e))?;
+
+        self.client
+            .chat()
+            .create(request)
+            .await
+            .map_err(|e| format!("API call failed: {}", e))
     }
 
     /// Get the provider config
