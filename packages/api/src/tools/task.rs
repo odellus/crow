@@ -11,14 +11,12 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::sync::Arc;
 
-/// Task tool description template
+/// Task tool description template (shameless copy from OpenCode's task.txt)
+/// The {agents} placeholder gets replaced with actual agent list at runtime
 const DESCRIPTION: &str = r#"Launch a new agent to handle complex, multi-step tasks autonomously.
 
-The Task tool launches specialized agents (subprocesses) that autonomously handle complex tasks. Each agent type has specific capabilities and tools available to it.
-
 Available agent types and the tools they have access to:
-- general-purpose: General-purpose agent for researching complex questions, searching for code, and executing multi-step tasks. When you are searching for a keyword or file and are not confident that you will find the right match in the first few tries use this agent to perform the search for you. (Tools: *)
-- build: Implementation agent for executing code and build tasks (Tools: all except task_done)
+{agents}
 
 When using the Task tool, you must specify a subagent_type parameter to select which agent type to use.
 
@@ -88,22 +86,42 @@ pub struct TaskTool {
     tool_registry: Arc<std::sync::RwLock<Option<Arc<crate::tools::ToolRegistry>>>>,
     lock_manager: Arc<crate::session::SessionLockManager>,
     provider_config: crate::providers::ProviderConfig,
+    description: String,
 }
 
 impl TaskTool {
-    pub fn new(
+    pub async fn new(
         session_store: Arc<SessionStore>,
         agent_registry: Arc<AgentRegistry>,
         tool_registry: Arc<std::sync::RwLock<Option<Arc<crate::tools::ToolRegistry>>>>,
         lock_manager: Arc<crate::session::SessionLockManager>,
         provider_config: crate::providers::ProviderConfig,
     ) -> Self {
+        // Build dynamic description like OpenCode does
+        // Get all subagents (non-primary agents)
+        let agents = agent_registry.get_subagents().await;
+        let agent_list = agents
+            .iter()
+            .map(|a| {
+                let desc = a
+                    .description
+                    .as_ref()
+                    .map(|d| d.as_str())
+                    .unwrap_or("This subagent should only be called manually by the user.");
+                format!("- {}: {}", a.name, desc)
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        let description = DESCRIPTION.replace("{agents}", &agent_list);
+
         Self {
             session_store,
             agent_registry,
             tool_registry,
             lock_manager,
             provider_config,
+            description,
         }
     }
 }
@@ -115,7 +133,7 @@ impl Tool for TaskTool {
     }
 
     fn description(&self) -> &str {
-        DESCRIPTION
+        &self.description
     }
 
     fn parameters_schema(&self) -> Value {
@@ -334,7 +352,7 @@ mod tests {
         let lock_manager = Arc::new(crate::session::SessionLockManager::new());
         let provider_config = crate::providers::ProviderConfig {
             provider: "moonshotai".to_string(),
-            model: "moonshot-v1-8k".to_string(),
+            model: "kimi-k2-thinking".to_string(),
             api_key: "test-key".to_string(),
             base_url: None,
         };

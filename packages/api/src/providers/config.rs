@@ -20,7 +20,7 @@ impl ProviderConfig {
             name: "Moonshot (Kimi)".to_string(),
             base_url: "https://api.moonshot.ai/v1".to_string(),
             api_key_env: "MOONSHOT_API_KEY".to_string(),
-            default_model: "moonshot-v1-8k".to_string(),
+            default_model: "kimi-k2-thinking".to_string(),
         }
     }
 

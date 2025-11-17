@@ -108,6 +108,9 @@ impl AgentExecutor {
             }
         }
 
+        // Insert agent-specific reminders into last user message (like OpenCode does)
+        Self::insert_reminders(&mut llm_messages, &agent.name);
+
         // ReACT loop
         let mut parts = vec![];
 
@@ -311,7 +314,7 @@ impl AgentExecutor {
                 id: message_id.clone(),
                 session_id: session_id.to_string(),
                 parent_id: "".to_string(), // TODO: Get actual parent
-                model_id: "moonshot-v1-8k".to_string(),
+                model_id: "kimi-k2-thinking".to_string(),
                 provider_id: "moonshotai".to_string(),
                 mode: agent_id.to_string(),
                 time: MessageTime {
@@ -562,5 +565,64 @@ impl AgentExecutor {
 
         // Exact match
         pattern == command
+    }
+
+    /// Insert agent-specific reminders into last user message
+    /// This is how OpenCode does it - NOT in system prompt!
+    /// See: opencode/packages/opencode/src/session/prompt.ts:insertReminders()
+    fn insert_reminders(messages: &mut Vec<ChatCompletionRequestMessage>, agent_name: &str) {
+        // Find last user message
+        let last_user_idx = messages
+            .iter()
+            .rposition(|m| matches!(m, ChatCompletionRequestMessage::User(_)));
+
+        if let Some(idx) = last_user_idx {
+            let reminder_text = match agent_name {
+                "plan" => {
+                    tracing::debug!("Inserting plan reminder into last user message");
+                    Some(include_str!("../prompts/plan.txt"))
+                }
+                "build" => {
+                    // Check if there was a previous assistant message from plan mode
+                    // For now, we'll skip this complexity - can add later
+                    None
+                }
+                _ => None,
+            };
+
+            if let Some(reminder) = reminder_text {
+                // Get the existing message and append the reminder
+                if let ChatCompletionRequestMessage::User(user_msg) = &messages[idx] {
+                    // Extract current content
+                    let current_content = match &user_msg.content {
+                        ChatCompletionRequestUserMessageContent::Text(text) => text.clone(),
+                        ChatCompletionRequestUserMessageContent::Array(parts) => {
+                            // Combine all text parts
+                            parts
+                                .iter()
+                                .filter_map(|p| match p {
+                                    ChatCompletionRequestUserMessageContentPart::Text(t) => {
+                                        Some(t.text.clone())
+                                    }
+                                    _ => None,
+                                })
+                                .collect::<Vec<_>>()
+                                .join("\n")
+                        }
+                    };
+
+                    // Create new message with appended reminder
+                    let new_content = format!("{}\n\n{}", current_content, reminder);
+
+                    if let Ok(new_msg) = ChatCompletionRequestUserMessageArgs::default()
+                        .content(new_content)
+                        .build()
+                    {
+                        messages[idx] = ChatCompletionRequestMessage::User(new_msg);
+                        tracing::debug!("Successfully inserted {} reminder", agent_name);
+                    }
+                }
+            }
+        }
     }
 }

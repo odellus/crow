@@ -107,7 +107,7 @@ impl ToolRegistry {
     }
 
     /// Create a new tool registry with all tools including Task tool
-    pub fn new_with_deps(
+    pub async fn new_with_deps(
         session_store: std::sync::Arc<crate::session::SessionStore>,
         agent_registry: std::sync::Arc<crate::agent::AgentRegistry>,
         lock_manager: std::sync::Arc<crate::session::SessionLockManager>,
@@ -134,13 +134,16 @@ impl ToolRegistry {
             Box::new((*todo_write_shared).clone()),
             Box::new(TodoReadTool::new(todo_write_shared)),
             // Subagent spawning with dependencies
-            Box::new(TaskTool::new(
-                session_store,
-                agent_registry,
-                registry_for_task,
-                lock_manager,
-                provider_config,
-            )),
+            Box::new(
+                TaskTool::new(
+                    session_store,
+                    agent_registry,
+                    registry_for_task,
+                    lock_manager,
+                    provider_config,
+                )
+                .await,
+            ), // NOW ASYNC!
             // Dual-agent discriminator tool
             Box::new(WorkCompletedTool),
         ];

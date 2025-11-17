@@ -82,7 +82,8 @@ pub async fn create_router_with_storage() -> Result<Router, String> {
         agent_registry.clone(),
         lock_manager.clone(),
         provider_config,
-    );
+    )
+    .await;
 
     let state = AppState {
         session_store,
@@ -797,7 +798,7 @@ async fn list_providers() -> Result<Json<Vec<serde_json::Value>>, (StatusCode, S
     Ok(Json(vec![serde_json::json!({
         "id": "moonshotai",
         "name": "Moonshot AI",
-        "models": ["moonshot-v1-8k", "moonshot-v1-32k", "moonshot-v1-128k"]
+        "models": ["kimi-k2-thinking", "kimi-k2-thinking-turbo", "moonshot-v1-128k", "moonshot-v1-32k"]
     })]))
 }
 

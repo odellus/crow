@@ -20,6 +20,9 @@ pub mod agent;
 pub mod storage;
 
 #[cfg(feature = "server")]
+pub mod auth;
+
+#[cfg(feature = "server")]
 pub mod global;
 
 #[cfg(feature = "server")]

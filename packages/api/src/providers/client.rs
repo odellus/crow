@@ -17,12 +17,8 @@ pub struct ProviderClient {
 impl ProviderClient {
     /// Create a new provider client from config
     pub fn new(config: ProviderConfig) -> Result<Self, String> {
-        // Load .env file
-        let _ = dotenvy::dotenv();
-
-        // Get API key from environment
-        let api_key = std::env::var(&config.api_key_env)
-            .map_err(|_| format!("{} not found in environment", config.api_key_env))?;
+        // Try to get API key from auth.json first, fall back to environment
+        let api_key = Self::get_api_key(&config)?;
 
         // Configure client
         let openai_config = OpenAIConfig::new()
@@ -32,6 +28,26 @@ impl ProviderClient {
         let client = Client::with_config(openai_config);
 
         Ok(Self { config, client })
+    }
+
+    /// Get API key from auth.json or environment
+    fn get_api_key(config: &ProviderConfig) -> Result<String, String> {
+        // Try auth.json first
+        if let Ok(Some(auth_info)) = crate::auth::get("moonshotai") {
+            match auth_info {
+                crate::auth::AuthInfo::Api { key } => return Ok(key),
+                _ => {}
+            }
+        }
+
+        // Fall back to environment variable
+        let _ = dotenvy::dotenv();
+        std::env::var(&config.api_key_env).map_err(|_| {
+            format!(
+                "{} not found in environment or auth.json",
+                config.api_key_env
+            )
+        })
     }
 
     /// Send a chat completion request
@@ -72,6 +88,12 @@ impl ProviderClient {
         model: Option<&str>,
     ) -> Result<async_openai::types::CreateChatCompletionResponse, String> {
         let model = model.unwrap_or(&self.config.default_model);
+
+        eprintln!("[DEBUG] Using model: {}", model);
+        eprintln!(
+            "[DEBUG] Config default_model: {}",
+            self.config.default_model
+        );
 
         let mut request_builder = CreateChatCompletionRequestArgs::default();
         request_builder.model(model).messages(messages);
