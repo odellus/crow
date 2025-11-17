@@ -1,0 +1,147 @@
+//! Session locking and abort functionality
+//! Prevents race conditions and allows cancelling runaway agents
+
+use std::collections::HashMap;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, RwLock};
+
+/// Session lock with abort signal
+pub struct SessionLock {
+    pub session_id: String,
+    pub locked_at: u64,
+    pub abort_signal: Arc<AtomicBool>,
+}
+
+impl SessionLock {
+    pub fn new(session_id: String) -> Self {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_millis() as u64;
+
+        Self {
+            session_id,
+            locked_at: now,
+            abort_signal: Arc::new(AtomicBool::new(false)),
+        }
+    }
+
+    pub fn is_locked(&self) -> bool {
+        !self.abort_signal.load(Ordering::Relaxed)
+    }
+
+    pub fn abort(&self) {
+        eprintln!("[LOCK] Aborting session {}", self.session_id);
+        self.abort_signal.store(true, Ordering::Relaxed);
+    }
+
+    pub fn should_abort(&self) -> bool {
+        self.abort_signal.load(Ordering::Relaxed)
+    }
+}
+
+/// Global lock manager for all sessions
+pub struct SessionLockManager {
+    locks: Arc<RwLock<HashMap<String, Arc<SessionLock>>>>,
+}
+
+impl SessionLockManager {
+    pub fn new() -> Self {
+        Self {
+            locks: Arc::new(RwLock::new(HashMap::new())),
+        }
+    }
+
+    /// Acquire lock for a session
+    pub fn acquire(&self, session_id: &str) -> Result<Arc<SessionLock>, String> {
+        let mut locks = self.locks.write().unwrap();
+
+        if locks.contains_key(session_id) {
+            return Err(format!("Session {} is already locked", session_id));
+        }
+
+        let lock = Arc::new(SessionLock::new(session_id.to_string()));
+        locks.insert(session_id.to_string(), lock.clone());
+
+        eprintln!("[LOCK] Acquired lock for session {}", session_id);
+        Ok(lock)
+    }
+
+    /// Release lock for a session
+    pub fn release(&self, session_id: &str) {
+        let mut locks = self.locks.write().unwrap();
+        locks.remove(session_id);
+        eprintln!("[LOCK] Released lock for session {}", session_id);
+    }
+
+    /// Get existing lock (if any)
+    pub fn get(&self, session_id: &str) -> Option<Arc<SessionLock>> {
+        let locks = self.locks.read().unwrap();
+        locks.get(session_id).cloned()
+    }
+
+    /// Abort a session (sets abort signal on its lock)
+    pub fn abort(&self, session_id: &str) -> Result<(), String> {
+        let locks = self.locks.read().unwrap();
+        if let Some(lock) = locks.get(session_id) {
+            lock.abort();
+            Ok(())
+        } else {
+            Err(format!(
+                "Session {} is not locked (not running)",
+                session_id
+            ))
+        }
+    }
+
+    /// Check if session is currently locked
+    pub fn is_locked(&self, session_id: &str) -> bool {
+        let locks = self.locks.read().unwrap();
+        locks.contains_key(session_id)
+    }
+}
+
+impl Default for SessionLockManager {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_lock_acquire_and_release() {
+        let manager = SessionLockManager::new();
+        let session_id = "test-session";
+
+        // Acquire lock
+        let lock = manager.acquire(session_id).unwrap();
+        assert!(lock.is_locked());
+        assert!(manager.is_locked(session_id));
+
+        // Can't acquire again
+        assert!(manager.acquire(session_id).is_err());
+
+        // Release
+        manager.release(session_id);
+        assert!(!manager.is_locked(session_id));
+
+        // Can acquire again after release
+        assert!(manager.acquire(session_id).is_ok());
+    }
+
+    #[test]
+    fn test_abort() {
+        let manager = SessionLockManager::new();
+        let session_id = "test-session";
+
+        let lock = manager.acquire(session_id).unwrap();
+        assert!(!lock.should_abort());
+
+        // Abort
+        manager.abort(session_id).unwrap();
+        assert!(lock.should_abort());
+    }
+}

@@ -17,7 +17,7 @@ use tower_http::cors::CorsLayer;
 use crate::{
     agent::{AgentExecutor, AgentRegistry},
     providers::ProviderConfig,
-    session::{MessageWithParts, SessionStore},
+    session::{MessageWithParts, SessionLockManager, SessionStore},
     tools::ToolRegistry,
     types::{Message, MessageTime, Part, Session},
 };
@@ -28,6 +28,7 @@ pub struct AppState {
     pub session_store: Arc<SessionStore>,
     pub tool_registry: Arc<ToolRegistry>,
     pub agent_registry: Arc<AgentRegistry>,
+    pub lock_manager: Arc<SessionLockManager>,
 }
 
 /// Build the Axum router with OpenCode-compatible endpoints
@@ -36,6 +37,7 @@ pub fn create_router() -> Router {
         session_store: Arc::new(SessionStore::new()),
         tool_registry: Arc::new(ToolRegistry::new()),
         agent_registry: Arc::new(AgentRegistry::new()),
+        lock_manager: Arc::new(SessionLockManager::new()),
     };
 
     Router::new()
@@ -74,6 +76,7 @@ pub async fn create_router_with_storage() -> Result<Router, String> {
         session_store,
         tool_registry: Arc::new(ToolRegistry::new()),
         agent_registry: Arc::new(AgentRegistry::new()),
+        lock_manager: Arc::new(SessionLockManager::new()),
     };
 
     Ok(Router::new()
@@ -326,6 +329,7 @@ async fn send_message(
         state.tool_registry.clone(),
         state.session_store.clone(),
         state.agent_registry.clone(),
+        state.lock_manager.clone(),
     );
 
     // Get working directory from session
@@ -437,6 +441,7 @@ async fn send_message_stream(
             state.tool_registry.clone(),
             state.session_store.clone(),
             state.agent_registry.clone(),
+            state.lock_manager.clone(),
         );
 
         // Get working directory
@@ -536,6 +541,7 @@ async fn create_dual_session(
         state.tool_registry.clone(),
         state.session_store.clone(),
         state.agent_registry.clone(),
+        state.lock_manager.clone(),
     );
 
     // Run the dual-agent loop
@@ -628,11 +634,18 @@ async fn fork_session(
 
 /// POST /session/:id/abort - Abort a running session
 async fn abort_session(
-    State(_state): State<AppState>,
-    Path(_session_id): Path<String>,
-) -> Result<Json<bool>, (StatusCode, String)> {
-    // TODO: Implement abort logic (requires tracking running sessions)
-    Ok(Json(true))
+    State(state): State<AppState>,
+    Path(session_id): Path<String>,
+) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
+    state
+        .lock_manager
+        .abort(&session_id)
+        .map_err(|e| (StatusCode::NOT_FOUND, e))?;
+
+    Ok(Json(serde_json::json!({
+        "aborted": true,
+        "session_id": session_id
+    })))
 }
 
 /// GET /session/:id/children - Get child sessions

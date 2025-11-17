@@ -26,6 +26,7 @@ pub struct AgentExecutor {
     tools: Arc<ToolRegistry>,
     session_store: Arc<SessionStore>,
     agent_registry: Arc<AgentRegistry>,
+    lock_manager: Arc<crate::session::SessionLockManager>,
 }
 
 impl AgentExecutor {
@@ -34,12 +35,14 @@ impl AgentExecutor {
         tools: Arc<ToolRegistry>,
         session_store: Arc<SessionStore>,
         agent_registry: Arc<AgentRegistry>,
+        lock_manager: Arc<crate::session::SessionLockManager>,
     ) -> Self {
         Self {
             provider,
             tools,
             session_store,
             agent_registry,
+            lock_manager,
         }
     }
 

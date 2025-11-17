@@ -179,8 +179,15 @@ pub async fn send_message(content: String) -> Result<Vec<Part>, ServerFnError> {
         let tool_registry = Arc::new(ToolRegistry::new());
         let agent_registry = Arc::new(agent::AgentRegistry::new());
         let session_store = Arc::new(store.clone());
+        let lock_manager = Arc::new(session::SessionLockManager::new());
 
-        let executor = AgentExecutor::new(provider, tool_registry, session_store, agent_registry);
+        let executor = AgentExecutor::new(
+            provider,
+            tool_registry,
+            session_store,
+            agent_registry,
+            lock_manager,
+        );
 
         // Get working directory
         let working_dir = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));

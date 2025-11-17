@@ -20,6 +20,7 @@ pub struct DualAgentRuntime {
     tools: Arc<ToolRegistry>,
     sessions: Arc<SessionStore>,
     agents: Arc<AgentRegistry>,
+    lock_manager: Arc<crate::session::SessionLockManager>,
 }
 
 impl DualAgentRuntime {
@@ -27,11 +28,13 @@ impl DualAgentRuntime {
         tools: Arc<ToolRegistry>,
         sessions: Arc<SessionStore>,
         agents: Arc<AgentRegistry>,
+        lock_manager: Arc<crate::session::SessionLockManager>,
     ) -> Self {
         Self {
             tools,
             sessions,
             agents,
+            lock_manager,
         }
     }
 
@@ -98,6 +101,7 @@ impl DualAgentRuntime {
             self.tools.clone(),
             self.sessions.clone(),
             self.agents.clone(),
+            self.lock_manager.clone(),
         );
 
         let discriminator_exec = AgentExecutor::new(
@@ -105,6 +109,7 @@ impl DualAgentRuntime {
             self.tools.clone(),
             self.sessions.clone(),
             self.agents.clone(),
+            self.lock_manager.clone(),
         );
         let mut current_agent = AgentRole::Executor;
         let mut steps = 0;
