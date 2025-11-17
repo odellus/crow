@@ -160,20 +160,75 @@ impl AgentExecutor {
                         continue;
                     }
 
+                    // Create tool part with pending state
+                    let tool_part_id = format!("part-tool-{}", uuid::Uuid::new_v4());
+                    let now = std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .unwrap()
+                        .as_millis() as u64;
+
+                    parts.push(Part::Tool {
+                        id: tool_part_id.clone(),
+                        session_id: session_id.to_string(),
+                        message_id: message_id.clone(),
+                        call_id: tool_call.id.clone(),
+                        tool: tool_name.clone(),
+                        state: crate::types::ToolState::Pending {
+                            input: args.clone(),
+                            raw: tool_args.clone(),
+                        },
+                    });
+
                     // Execute tool
                     let tool_result = self
                         .tools
-                        .execute(tool_name, args)
+                        .execute(tool_name, args.clone())
                         .await
                         .map_err(|e| format!("Tool execution failed: {}", e))?;
 
-                    // Add tool call part
-                    parts.push(Part::Text {
-                        id: format!("part-tool-{}", uuid::Uuid::new_v4()),
-                        session_id: session_id.to_string(),
-                        message_id: message_id.clone(),
-                        text: format!("🔧 {}: {}", tool_name, tool_result.output),
-                    });
+                    let end_time = std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .unwrap()
+                        .as_millis() as u64;
+
+                    // Update tool part with completed state
+                    if let Some(part) = parts.last_mut() {
+                        *part = Part::Tool {
+                            id: tool_part_id.clone(),
+                            session_id: session_id.to_string(),
+                            message_id: message_id.clone(),
+                            call_id: tool_call.id.clone(),
+                            tool: tool_name.clone(),
+                            state: crate::types::ToolState::Completed {
+                                input: args.clone(),
+                                output: tool_result.output.clone(),
+                                title: tool_name.clone(),
+                                time: crate::types::ToolTime {
+                                    start: now,
+                                    end: Some(end_time),
+                                },
+                            },
+                        };
+                    }
+
+                    // Check for doom loop after adding tool part
+                    if let Err(warning) = crate::agent::DoomLoopDetector::check(&parts) {
+                        eprintln!("{}", warning);
+                        // Add warning as text part for visibility
+                        parts.push(Part::Text {
+                            id: format!("part-warning-{}", uuid::Uuid::new_v4()),
+                            session_id: session_id.to_string(),
+                            message_id: message_id.clone(),
+                            text: warning.clone(),
+                        });
+                        // Also add to LLM context so agent knows to stop
+                        llm_messages.push(ChatCompletionRequestMessage::User(
+                            ChatCompletionRequestUserMessageArgs::default()
+                                .content(warning)
+                                .build()
+                                .map_err(|e| format!("Failed to build warning message: {}", e))?,
+                        ));
+                    }
 
                     // Add tool result to LLM context
                     llm_messages.push(ChatCompletionRequestMessage::Tool(

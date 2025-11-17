@@ -11,6 +11,7 @@
 //! opencode/packages/opencode/src/agent/
 
 pub mod builtins;
+pub mod doom_loop;
 pub mod dual;
 pub mod executor;
 pub mod perspective;
@@ -20,6 +21,7 @@ pub mod runtime;
 pub mod types;
 
 pub use builtins::get_builtin_agents;
+pub use doom_loop::DoomLoopDetector;
 pub use dual::{AgentRole, DualAgentResult, RawMessage, SessionType, SharedConversation};
 pub use executor::AgentExecutor;
 pub use prompt::SystemPromptBuilder;

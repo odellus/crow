@@ -11,6 +11,7 @@ pub mod glob;
 pub mod grep;
 pub mod list;
 pub mod read;
+pub mod task;
 pub mod todoread;
 pub mod todowrite;
 pub mod work_completed;
@@ -22,6 +23,7 @@ pub use glob::GlobTool;
 pub use grep::GrepTool;
 pub use list::ListTool;
 pub use read::ReadTool;
+pub use task::TaskTool;
 pub use todoread::TodoReadTool;
 pub use todowrite::TodoWriteTool;
 pub use work_completed::WorkCompletedTool;
@@ -86,6 +88,8 @@ impl ToolRegistry {
             // Todo management (critical for planning!)
             Box::new((*todo_write_shared).clone()),
             Box::new(TodoReadTool::new(todo_write_shared)),
+            // Subagent spawning
+            Box::new(TaskTool),
             // Dual-agent discriminator tool
             Box::new(WorkCompletedTool),
         ];
