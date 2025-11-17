@@ -219,11 +219,26 @@ async fn list_messages(
 }
 
 /// POST /session/:id/message - Send a message to a session
-/// For now, this just stores user messages. Agent execution will be added later.
+/// Input format matches OpenCode API - client sends minimal data, server generates IDs
+#[derive(serde::Deserialize)]
+struct PartInput {
+    #[serde(rename = "type")]
+    part_type: String,
+    #[serde(default)]
+    text: Option<String>,
+}
+
 #[derive(serde::Deserialize)]
 struct SendMessageRequest {
+    #[serde(default = "default_agent")]
     agent: String,
-    parts: Vec<Part>,
+    parts: Vec<PartInput>,
+    #[serde(rename = "noReply", default)]
+    no_reply: bool,
+}
+
+fn default_agent() -> String {
+    "default".to_string()
 }
 
 async fn send_message(
@@ -240,6 +255,35 @@ async fn send_message(
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
         .as_millis() as u64;
 
+    // Convert PartInput to Part objects with generated IDs
+    let parts: Vec<Part> = req
+        .parts
+        .iter()
+        .map(|input| {
+            let part_id = format!("prt-{}", uuid::Uuid::new_v4());
+            match input.part_type.as_str() {
+                "text" => Part::Text {
+                    id: part_id,
+                    session_id: session_id.clone(),
+                    message_id: message_id.clone(),
+                    text: input.text.clone().unwrap_or_default(),
+                },
+                "thinking" => Part::Thinking {
+                    id: part_id,
+                    session_id: session_id.clone(),
+                    message_id: message_id.clone(),
+                    text: input.text.clone().unwrap_or_default(),
+                },
+                _ => Part::Text {
+                    id: part_id,
+                    session_id: session_id.clone(),
+                    message_id: message_id.clone(),
+                    text: input.text.clone().unwrap_or_default(),
+                },
+            }
+        })
+        .collect();
+
     // Create user message
     let user_message = MessageWithParts {
         info: Message::User {
@@ -252,7 +296,7 @@ async fn send_message(
             summary: None,
             metadata: None,
         },
-        parts: req.parts.clone(),
+        parts: parts.clone(),
     };
 
     // Store the user message
@@ -266,6 +310,11 @@ async fn send_message(
                 (StatusCode::INTERNAL_SERVER_ERROR, e)
             }
         })?;
+
+    // If noReply is true, just return the user message (matching OpenCode behavior)
+    if req.no_reply {
+        return Ok(Json(user_message));
+    }
 
     // Execute agent to get response
     let provider_config = ProviderConfig::moonshot();
@@ -287,7 +336,7 @@ async fn send_message(
     let working_dir = std::path::PathBuf::from(&session.directory);
 
     let assistant_message = executor
-        .execute_turn(&session_id, &req.agent, &working_dir, req.parts)
+        .execute_turn(&session_id, &req.agent, &working_dir, parts)
         .await
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?;
 
@@ -319,10 +368,39 @@ async fn send_message_stream(
             .unwrap_or_default()
             .as_millis() as u64;
 
+        // Convert PartInput to Part objects with generated IDs
+        let parts: Vec<Part> = req
+            .parts
+            .iter()
+            .map(|input| {
+                let part_id = format!("prt-{}", uuid::Uuid::new_v4());
+                match input.part_type.as_str() {
+                    "text" => Part::Text {
+                        id: part_id,
+                        session_id: session_id.clone(),
+                        message_id: message_id.clone(),
+                        text: input.text.clone().unwrap_or_default(),
+                    },
+                    "thinking" => Part::Thinking {
+                        id: part_id,
+                        session_id: session_id.clone(),
+                        message_id: message_id.clone(),
+                        text: input.text.clone().unwrap_or_default(),
+                    },
+                    _ => Part::Text {
+                        id: part_id,
+                        session_id: session_id.clone(),
+                        message_id: message_id.clone(),
+                        text: input.text.clone().unwrap_or_default(),
+                    },
+                }
+            })
+            .collect();
+
         // Create user message
         let user_message = MessageWithParts {
             info: Message::User {
-                id: format!("msg-user-{}", uuid::Uuid::new_v4()),
+                id: message_id.clone(),
                 session_id: session_id.clone(),
                 time: MessageTime {
                     created: now,
@@ -331,7 +409,7 @@ async fn send_message_stream(
                 summary: None,
                 metadata: None,
             },
-            parts: req.parts.clone(),
+            parts: parts.clone(),
         };
 
         // Store user message
@@ -366,7 +444,7 @@ async fn send_message_stream(
 
         // Stream tool execution - for now just execute and send result
         match executor
-            .execute_turn(&session_id, "build", &working_dir, req.parts)
+            .execute_turn(&session_id, "build", &working_dir, parts)
             .await
         {
             Ok(assistant_message) => {
