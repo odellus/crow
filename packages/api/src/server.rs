@@ -72,11 +72,23 @@ pub async fn create_router_with_storage() -> Result<Router, String> {
         session_store.list(None).unwrap_or_default().len()
     );
 
+    let agent_registry = Arc::new(AgentRegistry::new());
+    let lock_manager = Arc::new(SessionLockManager::new());
+    let provider_config = ProviderConfig::moonshot();
+
+    // Create tool registry with dependencies for Task tool
+    let tool_registry = ToolRegistry::new_with_deps(
+        session_store.clone(),
+        agent_registry.clone(),
+        lock_manager.clone(),
+        provider_config,
+    );
+
     let state = AppState {
         session_store,
-        tool_registry: Arc::new(ToolRegistry::new()),
-        agent_registry: Arc::new(AgentRegistry::new()),
-        lock_manager: Arc::new(SessionLockManager::new()),
+        tool_registry,
+        agent_registry,
+        lock_manager,
     };
 
     Ok(Router::new()
@@ -570,9 +582,17 @@ async fn test_tool(
     Path(tool_name): Path<String>,
     Json(input): Json<serde_json::Value>,
 ) -> Result<Json<crate::tools::ToolResult>, (StatusCode, String)> {
+    // Create test context
+    let ctx = crate::tools::ToolContext {
+        session_id: "test-session".to_string(),
+        message_id: "test-message".to_string(),
+        agent: "test".to_string(),
+        working_dir: std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from(".")),
+    };
+
     state
         .tool_registry
-        .execute(&tool_name, input)
+        .execute(&tool_name, input, &ctx)
         .await
         .map(Json)
         .map_err(|e| (StatusCode::BAD_REQUEST, e))

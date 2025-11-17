@@ -1,6 +1,7 @@
 //! Write tool - writes file contents
 //! Mirrors OpenCode's write tool
 
+use super::ToolContext;
 use super::{Tool, ToolResult, ToolStatus};
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
@@ -57,7 +58,7 @@ Usage:
         })
     }
 
-    async fn execute(&self, input: Value) -> ToolResult {
+    async fn execute(&self, input: Value, _ctx: &ToolContext) -> ToolResult {
         // Parse input
         let write_input: WriteInput = match serde_json::from_value(input) {
             Ok(i) => i,
@@ -139,7 +140,8 @@ mod tests {
             "content": "hello world"
         });
 
-        let result = tool.execute(input).await;
+        let ctx = crate::tools::ToolContext { session_id: "test".to_string(), message_id: "test".to_string(), agent: "test".to_string(), working_dir: std::path::PathBuf::from("/tmp") };
+        let result = tool.execute(input, &ctx).await;
         assert_eq!(result.status, ToolStatus::Completed);
 
         let output: WriteOutput = serde_json::from_str(&result.output).unwrap();
@@ -167,7 +169,8 @@ mod tests {
             "content": "new content"
         });
 
-        let result = tool.execute(input).await;
+        let ctx = crate::tools::ToolContext { session_id: "test".to_string(), message_id: "test".to_string(), agent: "test".to_string(), working_dir: std::path::PathBuf::from("/tmp") };
+        let result = tool.execute(input, &ctx).await;
         assert_eq!(result.status, ToolStatus::Completed);
 
         let output: WriteOutput = serde_json::from_str(&result.output).unwrap();

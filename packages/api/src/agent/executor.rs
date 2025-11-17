@@ -104,6 +104,10 @@ impl AgentExecutor {
         // ReACT loop
         let mut parts = vec![];
 
+        // Track token usage across all iterations
+        let mut total_input_tokens = 0u64;
+        let mut total_output_tokens = 0u64;
+
         // Get tool definitions (filtered by agent permissions)
         let tool_defs = self.get_agent_tools(&agent);
 
@@ -115,6 +119,12 @@ impl AgentExecutor {
                 .chat_with_tools(llm_messages.clone(), tool_defs.clone(), None)
                 .await
                 .map_err(|e| format!("LLM call failed: {}", e))?;
+
+            // Track token usage from this call
+            if let Some(usage) = &response.usage {
+                total_input_tokens += usage.prompt_tokens as u64;
+                total_output_tokens += usage.completion_tokens as u64;
+            }
 
             let choice = response
                 .choices
@@ -179,10 +189,17 @@ impl AgentExecutor {
                         },
                     });
 
-                    // Execute tool
+                    // Execute tool with context
+                    let tool_ctx = crate::tools::ToolContext {
+                        session_id: session_id.to_string(),
+                        message_id: message_id.clone(),
+                        agent: agent_id.to_string(),
+                        working_dir: working_dir.to_path_buf(),
+                    };
+
                     let tool_result = self
                         .tools
-                        .execute(tool_name, args.clone())
+                        .execute(tool_name, args.clone(), &tool_ctx)
                         .await
                         .map_err(|e| format!("Tool execution failed: {}", e))?;
 
@@ -258,7 +275,14 @@ impl AgentExecutor {
             break;
         }
 
-        // Create assistant message
+        // Calculate cost based on kimi k2 pricing
+        // Input: $0.15 per million tokens
+        // Output: $2.50 per million tokens
+        let input_cost = (total_input_tokens as f64 / 1_000_000.0) * 0.15;
+        let output_cost = (total_output_tokens as f64 / 1_000_000.0) * 2.50;
+        let total_cost = input_cost + output_cost;
+
+        // Create assistant message with actual token counts and cost
         let assistant_message = MessageWithParts {
             info: Message::Assistant {
                 id: message_id.clone(),
@@ -275,10 +299,10 @@ impl AgentExecutor {
                     cwd: working_dir.to_string_lossy().to_string(),
                     root: working_dir.to_string_lossy().to_string(),
                 },
-                cost: 0.0,
+                cost: total_cost,
                 tokens: crate::types::TokenUsage {
-                    input: 0,
-                    output: 0,
+                    input: total_input_tokens,
+                    output: total_output_tokens,
                     reasoning: 0,
                     cache: crate::types::CacheTokens { read: 0, write: 0 },
                 },

@@ -1,6 +1,7 @@
 //! List tool - displays files and directories
 //! Accepts glob patterns to filter results
 
+use super::ToolContext;
 use super::{Tool, ToolResult, ToolStatus};
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
@@ -66,7 +67,7 @@ impl Tool for ListTool {
         })
     }
 
-    async fn execute(&self, input: Value) -> ToolResult {
+    async fn execute(&self, input: Value, _ctx: &ToolContext) -> ToolResult {
         let list_input: ListInput = match serde_json::from_value(input) {
             Ok(i) => i,
             Err(e) => {

@@ -1,10 +1,15 @@
 //! Task tool - launches subagents to handle complex tasks
 //! Based on opencode/packages/opencode/src/tool/task.ts
 
+use crate::agent::{AgentExecutor, AgentRegistry};
+use crate::providers::ProviderClient;
+use crate::session::SessionStore;
 use crate::tools::{Tool, ToolResult, ToolStatus};
+use crate::types::{Message, MessagePath, MessageTime, Part, Session, SessionTime};
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
+use std::sync::Arc;
 
 /// Task tool description template
 const DESCRIPTION: &str = r#"Launch a new agent to handle complex, multi-step tasks autonomously.
@@ -77,7 +82,31 @@ struct TaskInput {
     subagent_type: String,
 }
 
-pub struct TaskTool;
+pub struct TaskTool {
+    session_store: Arc<SessionStore>,
+    agent_registry: Arc<AgentRegistry>,
+    tool_registry: Arc<std::sync::RwLock<Option<Arc<crate::tools::ToolRegistry>>>>,
+    lock_manager: Arc<crate::session::SessionLockManager>,
+    provider_config: crate::providers::ProviderConfig,
+}
+
+impl TaskTool {
+    pub fn new(
+        session_store: Arc<SessionStore>,
+        agent_registry: Arc<AgentRegistry>,
+        tool_registry: Arc<std::sync::RwLock<Option<Arc<crate::tools::ToolRegistry>>>>,
+        lock_manager: Arc<crate::session::SessionLockManager>,
+        provider_config: crate::providers::ProviderConfig,
+    ) -> Self {
+        Self {
+            session_store,
+            agent_registry,
+            tool_registry,
+            lock_manager,
+            provider_config,
+        }
+    }
+}
 
 #[async_trait]
 impl Tool for TaskTool {
@@ -110,7 +139,7 @@ impl Tool for TaskTool {
         })
     }
 
-    async fn execute(&self, input: Value) -> ToolResult {
+    async fn execute(&self, input: Value, ctx: &crate::tools::ToolContext) -> ToolResult {
         // Parse input
         let task_input: TaskInput = match serde_json::from_value(input) {
             Ok(i) => i,
@@ -139,28 +168,154 @@ impl Tool for TaskTool {
             };
         }
 
-        // NOTE: Full implementation requires executor integration
-        // For now, return a structured response indicating the task was received
-        // The actual subagent spawning will be implemented when we wire up the executor
-
+        // Create child session ID
         let child_session_id = format!("ses-{}", uuid::Uuid::new_v4());
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_millis() as u64;
 
-        ToolResult {
-            status: ToolStatus::Completed,
-            output: format!(
-                "Task delegated to {} agent: {}\n\nPrompt: {}\n\n[Note: Full subagent execution pending executor integration. Child session ID: {}]",
-                task_input.subagent_type,
-                task_input.description,
-                task_input.prompt,
-                child_session_id
-            ),
-            error: None,
-            metadata: json!({
-                "title": task_input.description,
-                "sessionId": child_session_id,
-                "subagent": task_input.subagent_type,
-                "prompt": task_input.prompt,
-            }),
+        // Use working_dir from context for child session
+        let working_dir = ctx.working_dir.clone();
+
+        // Create child session using store's create method
+        let child_session = match self.session_store.create(
+            working_dir.to_string_lossy().to_string(),
+            Some(ctx.session_id.clone()),
+            Some(format!("Subagent: {}", task_input.description)),
+        ) {
+            Ok(s) => s,
+            Err(e) => {
+                return ToolResult {
+                    status: ToolStatus::Error,
+                    output: String::new(),
+                    error: Some(format!("Failed to create child session: {}", e)),
+                    metadata: json!({}),
+                };
+            }
+        };
+
+        // Create initial user message with the task prompt
+        let user_message_id = format!("msg-{}", uuid::Uuid::new_v4());
+        let user_message = crate::session::MessageWithParts {
+            info: Message::User {
+                id: user_message_id.clone(),
+                session_id: child_session.id.clone(),
+                time: MessageTime {
+                    created: now,
+                    completed: Some(now),
+                },
+                summary: None,
+                metadata: None,
+            },
+            parts: vec![Part::Text {
+                id: format!("part-{}", uuid::Uuid::new_v4()),
+                session_id: child_session.id.clone(),
+                message_id: user_message_id.clone(),
+                text: task_input.prompt.clone(),
+            }],
+        };
+
+        // Store user message
+        if let Err(e) = self
+            .session_store
+            .add_message(&child_session.id, user_message)
+        {
+            return ToolResult {
+                status: ToolStatus::Error,
+                output: String::new(),
+                error: Some(format!("Failed to add user message: {}", e)),
+                metadata: json!({}),
+            };
+        }
+
+        // Create provider client
+        let provider = match ProviderClient::new(self.provider_config.clone()) {
+            Ok(p) => p,
+            Err(e) => {
+                return ToolResult {
+                    status: ToolStatus::Error,
+                    output: String::new(),
+                    error: Some(format!("Failed to create provider: {}", e)),
+                    metadata: json!({}),
+                };
+            }
+        };
+
+        // Get tool registry from the RwLock
+        let tool_registry = match self.tool_registry.read() {
+            Ok(guard) => match guard.as_ref() {
+                Some(reg) => reg.clone(),
+                None => {
+                    return ToolResult {
+                        status: ToolStatus::Error,
+                        output: String::new(),
+                        error: Some("Tool registry not initialized".to_string()),
+                        metadata: json!({}),
+                    };
+                }
+            },
+            Err(e) => {
+                return ToolResult {
+                    status: ToolStatus::Error,
+                    output: String::new(),
+                    error: Some(format!("Failed to access tool registry: {}", e)),
+                    metadata: json!({}),
+                };
+            }
+        };
+
+        // Create executor
+        let executor = AgentExecutor::new(
+            provider,
+            tool_registry,
+            self.session_store.clone(),
+            self.agent_registry.clone(),
+            self.lock_manager.clone(),
+        );
+
+        // Execute the child agent
+        let result = executor
+            .execute_turn(
+                &child_session.id,
+                &task_input.subagent_type,
+                &working_dir,
+                vec![], // No additional user parts - already stored
+            )
+            .await;
+
+        match result {
+            Ok(response) => {
+                // Extract text from response parts
+                let output = response
+                    .parts
+                    .iter()
+                    .filter_map(|p| match p {
+                        Part::Text { text, .. } => Some(text.as_str()),
+                        _ => None,
+                    })
+                    .collect::<Vec<_>>()
+                    .join("\n");
+
+                ToolResult {
+                    status: ToolStatus::Completed,
+                    output,
+                    error: None,
+                    metadata: json!({
+                        "title": task_input.description,
+                        "sessionId": child_session.id,
+                        "subagent": task_input.subagent_type,
+                    }),
+                }
+            }
+            Err(e) => ToolResult {
+                status: ToolStatus::Error,
+                output: String::new(),
+                error: Some(format!("Subagent execution failed: {}", e)),
+                metadata: json!({
+                    "sessionId": child_session.id,
+                }),
+            },
         }
     }
 }
@@ -168,13 +323,47 @@ impl Tool for TaskTool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::path::PathBuf;
+
+    fn create_test_tool() -> TaskTool {
+        let session_store = Arc::new(SessionStore::new());
+        let agent_registry = Arc::new(AgentRegistry::new());
+        let tool_registry = Arc::new(std::sync::RwLock::new(Some(Arc::new(
+            crate::tools::ToolRegistry::new(),
+        ))));
+        let lock_manager = Arc::new(crate::session::SessionLockManager::new());
+        let provider_config = crate::providers::ProviderConfig {
+            provider: "moonshotai".to_string(),
+            model: "moonshot-v1-8k".to_string(),
+            api_key: "test-key".to_string(),
+            base_url: None,
+        };
+
+        TaskTool::new(
+            session_store,
+            agent_registry,
+            tool_registry,
+            lock_manager,
+            provider_config,
+        )
+    }
+
+    fn create_test_context() -> crate::tools::ToolContext {
+        crate::tools::ToolContext {
+            session_id: "test-session".to_string(),
+            message_id: "test-message".to_string(),
+            agent: "build".to_string(),
+            working_dir: PathBuf::from("/tmp/test"),
+        }
+    }
 
     #[tokio::test]
     async fn test_task_tool_validation() {
-        let tool = TaskTool;
+        let tool = create_test_tool();
+        let ctx = create_test_context();
 
         // Test missing parameters
-        let result = tool.execute(json!({"description": "test"})).await;
+        let result = tool.execute(json!({"description": "test"}), &ctx).await;
 
         assert_eq!(result.status, ToolStatus::Error);
         assert!(result.error.is_some());
@@ -182,34 +371,21 @@ mod tests {
 
     #[tokio::test]
     async fn test_task_tool_invalid_agent() {
-        let tool = TaskTool;
+        let tool = create_test_tool();
+        let ctx = create_test_context();
 
         let result = tool
-            .execute(json!({
-                "description": "test task",
-                "prompt": "do something",
-                "subagent_type": "invalid-agent"
-            }))
+            .execute(
+                json!({
+                    "description": "test task",
+                    "prompt": "do something",
+                    "subagent_type": "invalid-agent"
+                }),
+                &ctx,
+            )
             .await;
 
         assert_eq!(result.status, ToolStatus::Error);
         assert!(result.error.unwrap().contains("Unknown agent type"));
-    }
-
-    #[tokio::test]
-    async fn test_task_tool_valid() {
-        let tool = TaskTool;
-
-        let result = tool
-            .execute(json!({
-                "description": "test task",
-                "prompt": "do something",
-                "subagent_type": "general"
-            }))
-            .await;
-
-        assert_eq!(result.status, ToolStatus::Completed);
-        assert!(result.output.contains("Task delegated"));
-        assert!(result.output.contains("general"));
     }
 }

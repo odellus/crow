@@ -1,6 +1,7 @@
 //! Edit tool - modifies existing files using exact string replacements
 //! This is the primary way the LLM modifies code
 
+use super::ToolContext;
 use super::{Tool, ToolResult, ToolStatus};
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
@@ -73,7 +74,7 @@ Usage:
         })
     }
 
-    async fn execute(&self, input: Value) -> ToolResult {
+    async fn execute(&self, input: Value, _ctx: &ToolContext) -> ToolResult {
         let edit_input: EditInput = match serde_json::from_value(input) {
             Ok(i) => i,
             Err(e) => {
@@ -197,7 +198,8 @@ mod tests {
             "newString": "Hello Crow"
         });
 
-        let result = tool.execute(input).await;
+        let ctx = crate::tools::ToolContext { session_id: "test".to_string(), message_id: "test".to_string(), agent: "test".to_string(), working_dir: std::path::PathBuf::from("/tmp") };
+        let result = tool.execute(input, &ctx).await;
         assert_eq!(result.status, ToolStatus::Completed);
 
         let content = fs::read_to_string(test_path).await.unwrap();
@@ -219,7 +221,8 @@ mod tests {
             "replace_all": true
         });
 
-        let result = tool.execute(input).await;
+        let ctx = crate::tools::ToolContext { session_id: "test".to_string(), message_id: "test".to_string(), agent: "test".to_string(), working_dir: std::path::PathBuf::from("/tmp") };
+        let result = tool.execute(input, &ctx).await;
         assert_eq!(result.status, ToolStatus::Completed);
 
         let output: EditOutput = serde_json::from_str(&result.output).unwrap();

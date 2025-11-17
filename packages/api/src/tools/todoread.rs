@@ -1,6 +1,7 @@
 //! TodoRead tool - reads existing todo lists
 //! Retrieves the current task list state
 
+use super::ToolContext;
 use super::todowrite::{TodoItem, TodoWriteTool};
 use super::{Tool, ToolResult, ToolStatus};
 use async_trait::async_trait;
@@ -56,7 +57,7 @@ impl Tool for TodoReadTool {
         })
     }
 
-    async fn execute(&self, input: Value) -> ToolResult {
+    async fn execute(&self, input: Value, _ctx: &ToolContext) -> ToolResult {
         let todo_input: TodoReadInput = match serde_json::from_value(input) {
             Ok(i) => i,
             Err(e) => {

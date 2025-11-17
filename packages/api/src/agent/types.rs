@@ -162,8 +162,10 @@ impl AgentInfo {
             return true;
         }
 
-        // Otherwise, check explicit allow/deny
-        self.tools.get(tool_name).copied().unwrap_or(false)
+        // Check explicit allow/deny
+        // In OpenCode: undefined (not in map) = allow, false = deny, true = allow
+        // So we return true (allow) for tools not in the map, unless explicitly set to false
+        self.tools.get(tool_name).copied().unwrap_or(true)
     }
 
     /// Check if agent can be used in primary mode
@@ -205,9 +207,13 @@ mod tests {
         agent.tools.insert("bash".to_string(), true);
         agent.tools.insert("edit".to_string(), false);
 
-        assert!(agent.is_tool_enabled("bash"));
-        assert!(!agent.is_tool_enabled("edit"));
-        assert!(agent.is_tool_enabled("unknown")); // Default true
+        assert!(agent.is_tool_enabled("bash")); // Explicitly enabled
+        assert!(!agent.is_tool_enabled("edit")); // Explicitly disabled
+        assert!(agent.is_tool_enabled("unknown")); // Not in map = allow by default (matches OpenCode)
+
+        // Empty tools map allows everything
+        let agent2 = AgentInfo::new("test2");
+        assert!(agent2.is_tool_enabled("anything"));
     }
 
     #[test]

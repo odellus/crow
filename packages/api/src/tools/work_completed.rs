@@ -40,7 +40,7 @@ impl Tool for WorkCompletedTool {
         })
     }
 
-    async fn execute(&self, args: Value) -> ToolResult {
+    async fn execute(&self, args: Value, _ctx: &super::ToolContext) -> ToolResult {
         let args: WorkCompletedArgs = match serde_json::from_value(args) {
             Ok(a) => a,
             Err(e) => {
@@ -76,7 +76,13 @@ mod tests {
             "ready": true
         });
 
-        let result = tool.execute(args).await;
+        let ctx = crate::tools::ToolContext {
+            session_id: "test".to_string(),
+            message_id: "test".to_string(),
+            agent: "test".to_string(),
+            working_dir: std::path::PathBuf::from("/tmp"),
+        };
+        let result = tool.execute(args, &ctx).await;
         assert_eq!(result.status, ToolStatus::Completed);
         assert!(result.output.contains("complete"));
         assert_eq!(result.metadata["ready"], true);

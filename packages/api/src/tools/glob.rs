@@ -1,4 +1,5 @@
 //! Glob tool for file pattern matching
+use super::ToolContext;
 
 use async_trait::async_trait;
 use serde::Deserialize;
@@ -46,7 +47,7 @@ impl Tool for GlobTool {
         })
     }
 
-    async fn execute(&self, input: Value) -> ToolResult {
+    async fn execute(&self, input: Value, _ctx: &ToolContext) -> ToolResult {
         let input: GlobInput = match serde_json::from_value(input) {
             Ok(i) => i,
             Err(e) => {

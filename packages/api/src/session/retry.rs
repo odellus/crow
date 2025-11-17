@@ -108,20 +108,27 @@ mod tests {
 
     #[tokio::test]
     async fn test_retry_success_on_second_attempt() {
-        let mut attempts = 0;
+        use std::sync::atomic::{AtomicU32, Ordering};
+        use std::sync::Arc;
 
-        let result = SessionRetry::with_retry(|| async {
-            attempts += 1;
-            if attempts == 1 {
-                Err("timeout".to_string())
-            } else {
-                Ok("success")
+        let attempts = Arc::new(AtomicU32::new(0));
+        let attempts_clone = attempts.clone();
+
+        let result = SessionRetry::with_retry(move || {
+            let attempts = attempts_clone.clone();
+            async move {
+                let count = attempts.fetch_add(1, Ordering::SeqCst) + 1;
+                if count == 1 {
+                    Err("timeout".to_string())
+                } else {
+                    Ok("success")
+                }
             }
         })
         .await;
 
         assert_eq!(result.unwrap(), "success");
-        assert_eq!(attempts, 2);
+        assert_eq!(attempts.load(Ordering::SeqCst), 2);
     }
 
     #[tokio::test]

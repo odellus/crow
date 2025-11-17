@@ -49,6 +49,15 @@ pub enum ToolStatus {
     Error,
 }
 
+/// Tool execution context - provides session and environment info
+#[derive(Clone)]
+pub struct ToolContext {
+    pub session_id: String,
+    pub message_id: String,
+    pub agent: String,
+    pub working_dir: std::path::PathBuf,
+}
+
 /// Tool trait that all tools must implement
 #[async_trait]
 pub trait Tool: Send + Sync {
@@ -61,8 +70,8 @@ pub trait Tool: Send + Sync {
     /// JSON schema for tool parameters
     fn parameters_schema(&self) -> Value;
 
-    /// Execute the tool with given input
-    async fn execute(&self, input: Value) -> ToolResult;
+    /// Execute the tool with given input and context
+    async fn execute(&self, input: Value, ctx: &ToolContext) -> ToolResult;
 }
 
 /// Registry of all available tools
@@ -71,7 +80,8 @@ pub struct ToolRegistry {
 }
 
 impl ToolRegistry {
-    /// Create a new tool registry with standard tools
+    /// Create a new tool registry with standard tools (no Task tool)
+    /// For full functionality including Task tool, use new_with_deps()
     pub fn new() -> Self {
         // Create shared TodoWrite tool for TodoRead to reference
         let todo_write_shared = std::sync::Arc::new(TodoWriteTool::new());
@@ -88,13 +98,59 @@ impl ToolRegistry {
             // Todo management (critical for planning!)
             Box::new((*todo_write_shared).clone()),
             Box::new(TodoReadTool::new(todo_write_shared)),
-            // Subagent spawning
-            Box::new(TaskTool),
+            // Note: TaskTool requires dependencies, use new_with_deps() instead
             // Dual-agent discriminator tool
             Box::new(WorkCompletedTool),
         ];
 
         Self { tools }
+    }
+
+    /// Create a new tool registry with all tools including Task tool
+    pub fn new_with_deps(
+        session_store: std::sync::Arc<crate::session::SessionStore>,
+        agent_registry: std::sync::Arc<crate::agent::AgentRegistry>,
+        lock_manager: std::sync::Arc<crate::session::SessionLockManager>,
+        provider_config: crate::providers::ProviderConfig,
+    ) -> std::sync::Arc<Self> {
+        // Create shared TodoWrite tool for TodoRead to reference
+        let todo_write_shared = std::sync::Arc::new(TodoWriteTool::new());
+
+        // Create registry Arc that we'll populate
+        let registry = std::sync::Arc::new(std::sync::RwLock::new(None::<std::sync::Arc<Self>>));
+        let registry_for_task = registry.clone();
+
+        // Create tools including Task tool (it will get the registry later via Arc)
+        let tools: Vec<Box<dyn Tool>> = vec![
+            // File operations
+            Box::new(BashTool),
+            Box::new(EditTool),
+            Box::new(GlobTool),
+            Box::new(GrepTool),
+            Box::new(ListTool),
+            Box::new(ReadTool),
+            Box::new(WriteTool),
+            // Todo management (critical for planning!)
+            Box::new((*todo_write_shared).clone()),
+            Box::new(TodoReadTool::new(todo_write_shared)),
+            // Subagent spawning with dependencies
+            Box::new(TaskTool::new(
+                session_store,
+                agent_registry,
+                registry_for_task,
+                lock_manager,
+                provider_config,
+            )),
+            // Dual-agent discriminator tool
+            Box::new(WorkCompletedTool),
+        ];
+
+        let tool_registry = std::sync::Arc::new(Self { tools });
+
+        // Store the registry reference for TaskTool to use
+        *registry.write().unwrap() = Some(tool_registry.clone());
+
+        tool_registry
     }
 
     /// Get a tool by name
@@ -106,12 +162,17 @@ impl ToolRegistry {
     }
 
     /// Execute a tool by name
-    pub async fn execute(&self, name: &str, input: Value) -> Result<ToolResult, String> {
+    pub async fn execute(
+        &self,
+        name: &str,
+        input: Value,
+        ctx: &ToolContext,
+    ) -> Result<ToolResult, String> {
         let tool = self
             .get(name)
             .ok_or_else(|| format!("Tool not found: {}", name))?;
 
-        Ok(tool.execute(input).await)
+        Ok(tool.execute(input, ctx).await)
     }
 
     /// Convert tools to OpenAI ChatCompletionTool format

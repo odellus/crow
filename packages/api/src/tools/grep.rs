@@ -1,4 +1,5 @@
 //! Grep tool for searching text in files
+use super::ToolContext;
 
 use async_trait::async_trait;
 use serde::Deserialize;
@@ -58,7 +59,7 @@ impl Tool for GrepTool {
         })
     }
 
-    async fn execute(&self, input: Value) -> ToolResult {
+    async fn execute(&self, input: Value, _ctx: &ToolContext) -> ToolResult {
         let input: GrepInput = match serde_json::from_value(input) {
             Ok(i) => i,
             Err(e) => {

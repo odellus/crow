@@ -153,8 +153,9 @@ mod tests {
 
         let result = DoomLoopDetector::check(&parts);
         assert!(result.is_err());
-        assert!(result.unwrap_err().contains("DOOM LOOP DETECTED"));
-        assert!(result.unwrap_err().contains("read"));
+        let err = result.unwrap_err();
+        assert!(err.contains("DOOM LOOP DETECTED"));
+        assert!(err.contains("read"));
     }
 
     #[test]

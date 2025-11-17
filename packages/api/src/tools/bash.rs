@@ -1,6 +1,7 @@
 //! Bash tool - executes shell commands
 //! Mirrors OpenCode's bash tool
 
+use super::ToolContext;
 use super::{Tool, ToolResult, ToolStatus};
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
@@ -115,7 +116,7 @@ IMPORTANT: When the user asks you to create a pull request, follow these steps c
         })
     }
 
-    async fn execute(&self, input: Value) -> ToolResult {
+    async fn execute(&self, input: Value, _ctx: &ToolContext) -> ToolResult {
         // Parse input
         let bash_input: BashInput = match serde_json::from_value(input) {
             Ok(i) => i,
@@ -195,7 +196,8 @@ mod tests {
             "command": "echo 'hello world'"
         });
 
-        let result = tool.execute(input).await;
+        let ctx = crate::tools::ToolContext { session_id: "test".to_string(), message_id: "test".to_string(), agent: "test".to_string(), working_dir: std::path::PathBuf::from("/tmp") };
+        let result = tool.execute(input, &ctx).await;
         assert_eq!(result.status, ToolStatus::Completed);
 
         let output: BashOutput = serde_json::from_str(&result.output).unwrap();
@@ -210,7 +212,8 @@ mod tests {
             "command": "exit 1"
         });
 
-        let result = tool.execute(input).await;
+        let ctx = crate::tools::ToolContext { session_id: "test".to_string(), message_id: "test".to_string(), agent: "test".to_string(), working_dir: std::path::PathBuf::from("/tmp") };
+        let result = tool.execute(input, &ctx).await;
         assert_eq!(result.status, ToolStatus::Error);
         assert!(result.error.is_some());
     }
