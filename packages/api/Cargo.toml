@@ -8,6 +8,11 @@ name = "crow-serve"
 path = "src/bin/crow-serve.rs"
 required-features = ["server"]
 
+[[bin]]
+name = "crow"
+path = "src/bin/crow.rs"
+required-features = ["server"]
+
 [dependencies]
 dioxus = { workspace = true, features = ["fullstack"] }
 serde = { version = "1", features = ["derive"] }
@@ -17,6 +22,8 @@ dotenvy = { version = "0.15", optional = true }
 uuid = { version = "1", features = ["v4", "serde"] }
 async-trait = { version = "0.1", optional = true }
 regex = { version = "1", optional = true }
+dirs = "5"
+chrono = "0.4"
 
 # HTTP server
 axum = { version = "0.7", optional = true }

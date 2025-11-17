@@ -125,10 +125,31 @@ impl Tool for TodoWriteTool {
             }
         };
 
-        // Store todos
+        // Store todos in memory
         {
             let mut todos = self.todos.write().unwrap();
             todos.insert(todo_input.session_id.clone(), todo_input.todos.clone());
+        }
+
+        // Persist to disk (like OpenCode does)
+        // Write to ~/.local/share/crow/storage/todo/{sessionID}.json
+        if let Ok(global_paths) = std::env::var("HOME").map(|home| {
+            let data_home =
+                std::env::var("XDG_DATA_HOME").unwrap_or_else(|_| format!("{}/.local/share", home));
+            std::path::PathBuf::from(data_home).join("crow/storage/todo")
+        }) {
+            if let Err(e) = std::fs::create_dir_all(&global_paths) {
+                tracing::warn!("Failed to create todo storage directory: {}", e);
+            } else {
+                let todo_file = global_paths.join(format!("{}.json", todo_input.session_id));
+                if let Ok(json) = serde_json::to_string_pretty(&todo_input.todos) {
+                    if let Err(e) = std::fs::write(&todo_file, json) {
+                        tracing::warn!("Failed to write todo file: {}", e);
+                    } else {
+                        tracing::debug!("Saved todos to {}", todo_file.display());
+                    }
+                }
+            }
         }
 
         let output = TodoWriteOutput {
@@ -171,7 +192,12 @@ mod tests {
             ]
         });
 
-        let ctx = crate::tools::ToolContext { session_id: "test".to_string(), message_id: "test".to_string(), agent: "test".to_string(), working_dir: std::path::PathBuf::from("/tmp") };
+        let ctx = crate::tools::ToolContext {
+            session_id: "test".to_string(),
+            message_id: "test".to_string(),
+            agent: "test".to_string(),
+            working_dir: std::path::PathBuf::from("/tmp"),
+        };
         let result = tool.execute(input, &ctx).await;
         assert_eq!(result.status, ToolStatus::Completed);
 

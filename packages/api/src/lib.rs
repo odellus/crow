@@ -20,6 +20,9 @@ pub mod agent;
 pub mod storage;
 
 #[cfg(feature = "server")]
+pub mod global;
+
+#[cfg(feature = "server")]
 pub mod server;
 #[cfg(feature = "server")]
 pub use server::*;

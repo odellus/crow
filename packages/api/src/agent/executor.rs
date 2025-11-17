@@ -60,6 +60,13 @@ impl AgentExecutor {
         working_dir: &Path,
         user_parts: Vec<Part>,
     ) -> Result<MessageWithParts, String> {
+        tracing::info!(
+            "Executing turn: session={}, agent={}, working_dir={}",
+            session_id,
+            agent_id,
+            working_dir.display()
+        );
+
         // Get the agent
         let agent = self
             .agent_registry
@@ -197,11 +204,19 @@ impl AgentExecutor {
                         working_dir: working_dir.to_path_buf(),
                     };
 
+                    tracing::info!("Executing tool: {} with args: {:?}", tool_name, args);
+
                     let tool_result = self
                         .tools
                         .execute(tool_name, args.clone(), &tool_ctx)
                         .await
                         .map_err(|e| format!("Tool execution failed: {}", e))?;
+
+                    tracing::info!(
+                        "Tool {} completed: status={:?}",
+                        tool_name,
+                        tool_result.status
+                    );
 
                     let end_time = std::time::SystemTime::now()
                         .duration_since(std::time::UNIX_EPOCH)
@@ -282,6 +297,14 @@ impl AgentExecutor {
         let output_cost = (total_output_tokens as f64 / 1_000_000.0) * 2.50;
         let total_cost = input_cost + output_cost;
 
+        tracing::info!(
+            "Turn complete: session={}, tokens(in={}, out={}), cost=${:.6}",
+            session_id,
+            total_input_tokens,
+            total_output_tokens,
+            total_cost
+        );
+
         // Create assistant message with actual token counts and cost
         let assistant_message = MessageWithParts {
             info: Message::Assistant {
@@ -337,6 +360,13 @@ impl AgentExecutor {
         );
 
         let system_prompt = prompt_builder.build();
+
+        tracing::debug!(
+            "System prompt for agent '{}' ({} chars):\n{}",
+            agent.name,
+            system_prompt.len(),
+            system_prompt
+        );
 
         // Add system message
         messages.push(ChatCompletionRequestMessage::System(
