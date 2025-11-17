@@ -14,6 +14,7 @@ pub mod read;
 pub mod task;
 pub mod todoread;
 pub mod todowrite;
+pub mod websearch;
 pub mod work_completed;
 pub mod write;
 
@@ -26,6 +27,7 @@ pub use read::ReadTool;
 pub use task::TaskTool;
 pub use todoread::TodoReadTool;
 pub use todowrite::TodoWriteTool;
+pub use websearch::WebSearchTool;
 pub use work_completed::WorkCompletedTool;
 pub use write::WriteTool;
 
@@ -98,6 +100,8 @@ impl ToolRegistry {
             // Todo management (critical for planning!)
             Box::new((*todo_write_shared).clone()),
             Box::new(TodoReadTool::new(todo_write_shared)),
+            // Web search
+            Box::new(WebSearchTool::new()),
             // Note: TaskTool requires dependencies, use new_with_deps() instead
             // Dual-agent discriminator tool
             Box::new(WorkCompletedTool),
@@ -133,6 +137,8 @@ impl ToolRegistry {
             // Todo management (critical for planning!)
             Box::new((*todo_write_shared).clone()),
             Box::new(TodoReadTool::new(todo_write_shared)),
+            // Web search
+            Box::new(WebSearchTool::new()),
             // Subagent spawning with dependencies
             Box::new(
                 TaskTool::new(
