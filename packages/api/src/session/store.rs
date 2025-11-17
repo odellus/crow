@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
 
 #[cfg(feature = "server")]
-use crate::storage::Storage;
+use crate::storage::CrowStorage;
 
 /// Represents a complete message with its info and parts
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
@@ -20,7 +20,7 @@ pub struct SessionStore {
     /// Key: session_id, Value: Vec of messages
     messages: Arc<RwLock<HashMap<String, Vec<MessageWithParts>>>>,
     #[cfg(feature = "server")]
-    storage: Option<Arc<Storage>>,
+    storage: Option<Arc<CrowStorage>>,
 }
 
 impl SessionStore {
@@ -29,7 +29,7 @@ impl SessionStore {
             sessions: Arc::new(RwLock::new(HashMap::new())),
             messages: Arc::new(RwLock::new(HashMap::new())),
             #[cfg(feature = "server")]
-            storage: Some(Arc::new(Storage::new())),
+            storage: CrowStorage::new().ok().map(Arc::new),
         }
     }
 
@@ -268,7 +268,7 @@ impl SessionStore {
     /// Add a message to a session
     pub fn add_message(&self, session_id: &str, message: MessageWithParts) -> Result<(), String> {
         // Verify session exists
-        self.get(session_id)?;
+        let session = self.get(session_id)?;
 
         let mut messages = self
             .messages
@@ -291,6 +291,38 @@ impl SessionStore {
             tokio::spawn(async move {
                 if let Err(e) = storage.save_message(&message_clone).await {
                     eprintln!("Failed to persist message: {}", e);
+                }
+            });
+        }
+
+        // STREAMING EXPORT: Export session to markdown after every message
+        // This maintains real-time .crow/sessions/{id}.md files
+        #[cfg(feature = "server")]
+        {
+            use super::export::SessionExport;
+            use std::path::PathBuf;
+
+            let session_dir = PathBuf::from(&session.directory); // Use PathBuf for owned value
+            let store_clone = self.clone();
+            let session_id_clone = session_id.to_string();
+
+            eprintln!("[EXPORT] Starting export for session {}", session_id_clone);
+
+            // Export in background to avoid blocking
+            tokio::spawn(async move {
+                eprintln!(
+                    "[EXPORT] Inside tokio::spawn for session {}",
+                    session_id_clone
+                );
+                match SessionExport::stream_to_file(&store_clone, &session_id_clone, &session_dir) {
+                    Ok(_) => eprintln!(
+                        "[EXPORT] ✅ Successfully exported session {}",
+                        session_id_clone
+                    ),
+                    Err(e) => eprintln!(
+                        "[EXPORT] ❌ Failed to export session {}: {}",
+                        session_id_clone, e
+                    ),
                 }
             });
         }

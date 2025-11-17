@@ -16,6 +16,7 @@ use crate::{
 use async_openai::types::{
     ChatCompletionRequestAssistantMessageArgs, ChatCompletionRequestMessage,
     ChatCompletionRequestSystemMessageArgs, ChatCompletionRequestUserMessageArgs,
+    ChatCompletionRequestUserMessageContent, ChatCompletionRequestUserMessageContentPart,
 };
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -225,6 +226,7 @@ impl AgentExecutor {
                 },
                 error: None,
                 summary: None,
+                metadata: None,
             },
             parts,
         };
@@ -309,6 +311,43 @@ impl AgentExecutor {
                                 .map_err(|e| format!("Failed to build assistant message: {}", e))?,
                         ));
                     }
+                }
+            }
+        }
+
+        // Insert agent-specific reminders (matches OpenCode's insertReminders)
+        // For PLAN agent, inject read-only reminder into last user message
+        if let Some(reminder) = crate::session::prompt::insert_reminders(&agent.name) {
+            if let Some(last_msg) = messages.last_mut() {
+                if let ChatCompletionRequestMessage::User(user_msg) = last_msg {
+                    // Append reminder to existing content
+                    let current_content = user_msg.content.clone();
+                    let mut content_parts = vec![];
+
+                    match current_content {
+                        ChatCompletionRequestUserMessageContent::Text(text) => {
+                            content_parts.push(text);
+                        }
+                        ChatCompletionRequestUserMessageContent::Array(parts) => {
+                            for part in parts {
+                                if let ChatCompletionRequestUserMessageContentPart::Text(
+                                    text_part,
+                                ) = part
+                                {
+                                    content_parts.push(text_part.text);
+                                }
+                            }
+                        }
+                    }
+
+                    content_parts.push(reminder);
+
+                    *user_msg = ChatCompletionRequestUserMessageArgs::default()
+                        .content(content_parts.join("\n\n"))
+                        .build()
+                        .map_err(|e| {
+                            format!("Failed to build user message with reminder: {}", e)
+                        })?;
                 }
             }
         }

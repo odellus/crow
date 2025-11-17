@@ -164,6 +164,7 @@ pub async fn send_message(content: String) -> Result<Vec<Part>, ServerFnError> {
                     completed: None,
                 },
                 summary: None,
+                metadata: None,
             },
             parts: user_parts.clone(),
         };

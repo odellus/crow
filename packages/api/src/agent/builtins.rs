@@ -137,31 +137,24 @@ fn default_permissions() -> AgentPermissions {
 }
 
 /// Create Plan agent permissions (read-only bash whitelist)
+/// Matches OpenCode exactly from opencode/packages/opencode/src/agent/agent.ts:58-106
 fn plan_permissions() -> AgentPermissions {
     let mut bash = HashMap::new();
 
-    // Read-only commands
-    bash.insert("cat*".to_string(), Permission::Allow);
+    // Read-only commands (matches OpenCode exactly)
     bash.insert("cut*".to_string(), Permission::Allow);
     bash.insert("diff*".to_string(), Permission::Allow);
     bash.insert("du*".to_string(), Permission::Allow);
     bash.insert("file *".to_string(), Permission::Allow);
+
+    // Find with dangerous options requires ask
+    bash.insert("find * -delete*".to_string(), Permission::Ask);
+    bash.insert("find * -exec*".to_string(), Permission::Ask);
+    bash.insert("find * -fprint*".to_string(), Permission::Ask);
+    bash.insert("find * -fls*".to_string(), Permission::Ask);
+    bash.insert("find * -fprintf*".to_string(), Permission::Ask);
+    bash.insert("find * -ok*".to_string(), Permission::Ask);
     bash.insert("find *".to_string(), Permission::Allow);
-    bash.insert("grep*".to_string(), Permission::Allow);
-    bash.insert("head*".to_string(), Permission::Allow);
-    bash.insert("less*".to_string(), Permission::Allow);
-    bash.insert("ls*".to_string(), Permission::Allow);
-    bash.insert("more*".to_string(), Permission::Allow);
-    bash.insert("pwd*".to_string(), Permission::Allow);
-    bash.insert("rg*".to_string(), Permission::Allow);
-    bash.insert("sort*".to_string(), Permission::Allow);
-    bash.insert("stat*".to_string(), Permission::Allow);
-    bash.insert("tail*".to_string(), Permission::Allow);
-    bash.insert("tree*".to_string(), Permission::Allow);
-    bash.insert("uniq*".to_string(), Permission::Allow);
-    bash.insert("wc*".to_string(), Permission::Allow);
-    bash.insert("which*".to_string(), Permission::Allow);
-    bash.insert("whereis*".to_string(), Permission::Allow);
 
     // Git read-only
     bash.insert("git diff*".to_string(), Permission::Allow);
@@ -169,8 +162,35 @@ fn plan_permissions() -> AgentPermissions {
     bash.insert("git show*".to_string(), Permission::Allow);
     bash.insert("git status*".to_string(), Permission::Allow);
     bash.insert("git branch".to_string(), Permission::Allow);
+    bash.insert("git branch -v".to_string(), Permission::Allow);
 
-    // Ask for anything else
+    // Text processing
+    bash.insert("grep*".to_string(), Permission::Allow);
+    bash.insert("head*".to_string(), Permission::Allow);
+    bash.insert("less*".to_string(), Permission::Allow);
+    bash.insert("ls*".to_string(), Permission::Allow);
+    bash.insert("more*".to_string(), Permission::Allow);
+    bash.insert("pwd*".to_string(), Permission::Allow);
+    bash.insert("rg*".to_string(), Permission::Allow);
+
+    // Sort with output redirection requires ask
+    bash.insert("sort --output=*".to_string(), Permission::Ask);
+    bash.insert("sort -o *".to_string(), Permission::Ask);
+    bash.insert("sort*".to_string(), Permission::Allow);
+
+    bash.insert("stat*".to_string(), Permission::Allow);
+    bash.insert("tail*".to_string(), Permission::Allow);
+
+    // Tree with output redirection requires ask
+    bash.insert("tree -o *".to_string(), Permission::Ask);
+    bash.insert("tree*".to_string(), Permission::Allow);
+
+    bash.insert("uniq*".to_string(), Permission::Allow);
+    bash.insert("wc*".to_string(), Permission::Allow);
+    bash.insert("whereis*".to_string(), Permission::Allow);
+    bash.insert("which*".to_string(), Permission::Allow);
+
+    // Ask for anything else (default catch-all)
     bash.insert("*".to_string(), Permission::Ask);
 
     AgentPermissions {

@@ -250,6 +250,7 @@ async fn send_message(
                 completed: None,
             },
             summary: None,
+            metadata: None,
         },
         parts: req.parts.clone(),
     };
@@ -328,6 +329,7 @@ async fn send_message_stream(
                     completed: None,
                 },
                 summary: None,
+                metadata: None,
             },
             parts: req.parts.clone(),
         };

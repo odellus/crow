@@ -40,6 +40,7 @@ pub fn transform_for_executor(raw_messages: &[RawMessage], session_id: &str) -> 
                     },
                     error: None,
                     summary: None,
+                    metadata: None,
                 }
             }
             AgentRole::Discriminator => {
@@ -52,6 +53,7 @@ pub fn transform_for_executor(raw_messages: &[RawMessage], session_id: &str) -> 
                         completed: Some(raw.timestamp),
                     },
                     summary: None,
+                    metadata: None,
                 }
             }
             AgentRole::User => {
@@ -64,6 +66,7 @@ pub fn transform_for_executor(raw_messages: &[RawMessage], session_id: &str) -> 
                         completed: Some(raw.timestamp),
                     },
                     summary: None,
+                    metadata: None,
                 }
             }
         })
@@ -106,6 +109,7 @@ pub fn transform_for_discriminator(raw_messages: &[RawMessage], session_id: &str
                     },
                     error: None,
                     summary: None,
+                    metadata: None,
                 }
             }
             AgentRole::Executor => {
@@ -118,6 +122,7 @@ pub fn transform_for_discriminator(raw_messages: &[RawMessage], session_id: &str
                         completed: Some(raw.timestamp),
                     },
                     summary: None,
+                    metadata: None,
                 }
             }
             AgentRole::User => {
@@ -130,6 +135,7 @@ pub fn transform_for_discriminator(raw_messages: &[RawMessage], session_id: &str
                         completed: Some(raw.timestamp),
                     },
                     summary: None,
+                    metadata: None,
                 }
             }
         })
