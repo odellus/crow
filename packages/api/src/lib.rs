@@ -38,7 +38,14 @@ static SESSION_STORE: OnceLock<SessionStore> = OnceLock::new();
 
 #[cfg(feature = "server")]
 fn get_session_store() -> &'static SessionStore {
-    SESSION_STORE.get_or_init(|| SessionStore::new())
+    SESSION_STORE.get_or_init(|| {
+        let store = SessionStore::new();
+        // Initialize synchronously - load sessions from disk
+        if let Err(e) = store.init_sync() {
+            eprintln!("Failed to initialize session storage: {}", e);
+        }
+        store
+    })
 }
 
 /// Echo the user input on the server.

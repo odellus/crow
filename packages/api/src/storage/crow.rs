@@ -80,8 +80,45 @@ impl CrowStorage {
         Ok(())
     }
 
+    /// Initialize storage synchronously
+    pub fn init_sync(&self) -> Result<(), String> {
+        // Already initialized in new()
+        Ok(())
+    }
+
     /// List all sessions (loads full session objects)
     pub async fn list_sessions(&self) -> Result<Vec<Session>, String> {
+        let session_dir = self.root.join("storage/session");
+
+        let mut sessions = Vec::new();
+
+        if let Ok(entries) = std::fs::read_dir(&session_dir) {
+            let mut session_files: Vec<_> = entries
+                .flatten()
+                .filter(|e| {
+                    e.file_name()
+                        .to_str()
+                        .map_or(false, |s| s.ends_with(".json"))
+                })
+                .collect();
+
+            session_files.sort_by_key(|e| e.file_name());
+
+            for entry in session_files {
+                let path = entry.path();
+                if let Ok(content) = std::fs::read_to_string(&path) {
+                    if let Ok(session) = serde_json::from_str::<Session>(&content) {
+                        sessions.push(session);
+                    }
+                }
+            }
+        }
+
+        Ok(sessions)
+    }
+
+    /// List all sessions synchronously
+    pub fn list_sessions_sync(&self) -> Result<Vec<Session>, String> {
         let session_dir = self.root.join("storage/session");
 
         let mut sessions = Vec::new();
@@ -154,6 +191,47 @@ impl CrowStorage {
         Ok(messages)
     }
 
+    /// Load messages for a session synchronously
+    pub fn load_messages_sync(&self, session_id: &str) -> Result<Vec<MessageWithParts>, String> {
+        let message_dir = self.root.join("storage/message").join(session_id);
+
+        let mut messages = Vec::new();
+
+        if !message_dir.exists() {
+            return Ok(messages);
+        }
+
+        if let Ok(entries) = std::fs::read_dir(&message_dir) {
+            let mut message_files: Vec<_> = entries
+                .flatten()
+                .filter(|e| {
+                    e.file_name()
+                        .to_str()
+                        .map_or(false, |s| s.ends_with(".json"))
+                })
+                .collect();
+
+            message_files.sort_by_key(|e| e.file_name());
+
+            for entry in message_files {
+                let path = entry.path();
+                if let Ok(content) = std::fs::read_to_string(&path) {
+                    if let Ok(message_info) = serde_json::from_str::<Message>(&content) {
+                        let msg_id = message_id(&message_info).to_string();
+                        let parts = self.load_parts_sync(&msg_id)?;
+
+                        messages.push(MessageWithParts {
+                            info: message_info,
+                            parts,
+                        });
+                    }
+                }
+            }
+        }
+
+        Ok(messages)
+    }
+
     /// Load parts for a message
     async fn load_parts(&self, message_id: &str) -> Result<Vec<Part>, String> {
         let part_dir = self.root.join("storage/part").join(message_id);
@@ -175,6 +253,41 @@ impl CrowStorage {
                 .collect();
 
             // Sort by filename (part IDs are sortable)
+            part_files.sort_by_key(|e| e.file_name());
+
+            for entry in part_files {
+                let path = entry.path();
+                if let Ok(content) = std::fs::read_to_string(&path) {
+                    if let Ok(part) = serde_json::from_str::<Part>(&content) {
+                        parts.push(part);
+                    }
+                }
+            }
+        }
+
+        Ok(parts)
+    }
+
+    /// Load parts for a message synchronously
+    fn load_parts_sync(&self, message_id: &str) -> Result<Vec<Part>, String> {
+        let part_dir = self.root.join("storage/part").join(message_id);
+
+        let mut parts = Vec::new();
+
+        if !part_dir.exists() {
+            return Ok(parts);
+        }
+
+        if let Ok(entries) = std::fs::read_dir(&part_dir) {
+            let mut part_files: Vec<_> = entries
+                .flatten()
+                .filter(|e| {
+                    e.file_name()
+                        .to_str()
+                        .map_or(false, |s| s.ends_with(".json"))
+                })
+                .collect();
+
             part_files.sort_by_key(|e| e.file_name());
 
             for entry in part_files {

@@ -64,6 +64,37 @@ impl SessionStore {
         Ok(())
     }
 
+    /// Initialize storage synchronously (for use in OnceLock init)
+    #[cfg(feature = "server")]
+    pub fn init_sync(&self) -> Result<(), String> {
+        let storage = self.storage.as_ref().ok_or("Storage not available")?;
+
+        // Initialize storage directories synchronously
+        storage.init_sync()?;
+
+        // Load existing sessions
+        let sessions = storage.list_sessions_sync()?;
+        {
+            let mut sessions_lock = self.sessions.write().unwrap();
+            for session in sessions {
+                sessions_lock.insert(session.id.clone(), session);
+            }
+        }
+
+        // Load messages for each session
+        let session_ids: Vec<String> = {
+            let sessions_lock = self.sessions.read().unwrap();
+            sessions_lock.keys().cloned().collect()
+        };
+
+        for session_id in session_ids {
+            let messages = storage.load_messages_sync(&session_id)?;
+            self.messages.write().unwrap().insert(session_id, messages);
+        }
+
+        Ok(())
+    }
+
     /// Create a new session
     pub fn create(
         &self,
