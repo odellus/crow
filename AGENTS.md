@@ -1,74 +1,115 @@
 # Agent Architecture for Crow
 
+**Last Updated:** 2025-11-17  
+**Status:** ~80% Core Functionality Complete
+
 ## Current Status
 
 ### What Crow Has Now ✅
-- **Single-agent execution** working with LLM integration
-- **6 built-in agents:** general, build, plan, supervisor, architect, discriminator
-- **9 working tools:** bash, edit, write, read, grep, glob, todowrite, todoread, work_completed
-- **Permission system** with tool filtering
-- **Project directory isolation** - agents can spawn in any directory
-- **Session storage** with persistence to `~/.crow/sessions/`
-- **Dual-agent runtime** - executor + discriminator loop (basic implementation)
-- **API endpoints:** 
-  - `POST /session` - create session
-  - `POST /session/:id/message` - send message to agent
-  - `POST /session/dual` - run dual-agent (currently top-level, needs refactoring)
+
+**Core Infrastructure:**
+- ✅ **LLM Integration** - Moonshot kimi-k2-thinking (262k context)
+- ✅ **Auth System** - `~/.local/share/crow/auth.json` (matching OpenCode)
+- ✅ **XDG Storage** - Full directory structure matching OpenCode
+- ✅ **REST API** - Complete endpoints (`http://localhost:7070`)
+
+**Agents:**
+- ✅ **6 built-in agents:** general, build, plan, supervisor, architect, discriminator
+- ✅ **Agent registry** with dynamic tool permissions
+- ✅ **Agent executor** with system prompt building
+- ✅ **Subagent spawning** via Task tool
+
+**Tools (12 total):**
+- ✅ **File ops:** bash, edit, write, read, grep, glob, list
+- ✅ **Planning:** todowrite, todoread (session-specific storage)
+- ✅ **Subagents:** task (spawns child sessions with dynamic agent list)
+- ✅ **Web:** websearch (SearXNG integration)
+- ✅ **Dual-agent:** work_completed (discriminator tool)
+
+**Session Management:**
+- ✅ **Session store** with XDG persistence
+- ✅ **Parent/child linking** (parentID)
+- ✅ **Message persistence** per session
+- ✅ **Todo persistence** per session (fixed: uses ctx.session_id)
+- ✅ **Session export** to markdown
+
+**API Endpoints:**
+- ✅ `POST /session` - create session
+- ✅ `GET /session` - list sessions  
+- ✅ `GET /session/:id` - get session
+- ✅ `DELETE /session/:id` - delete session
+- ✅ `POST /session/:id/message` - send message to agent
+- ✅ `GET /session/:id/message` - list messages
+- ✅ `GET /session/:id/children` - list child sessions
+- ✅ `GET /experimental/tool/ids` - list tool IDs
 
 ### What's Missing ❌
-- **Task tool** - agents can't spawn subagents yet
-- **Proper dual-agent invocation** - currently top-level, should be subagent via task tool
-- **Session hierarchy** - parent/child session linking works but task tool doesn't use it
-- **Agent mode enforcement** - subagent vs primary distinction exists but not enforced
-- **Markdown telemetry** - started but not complete (see TELEMETRY_WORK_STATUS.md)
-- **Frontend** - Dioxus fullstack setup exists but is broken/neglected
 
-## The Architecture We Need
+**High Priority:**
+- ❌ **Dioxus Web UI** - Frontend to visualize sessions/tools/agents
+- ❌ **Streaming (SSE)** - Real-time message streaming
+- ❌ **Background Bash** - BashOutput, KillShell tools
+- ❌ **Plan/Explore agents** - Need OpenCode system prompts
 
-Based on OpenCode's proven pattern (see OPENCODE_SUBAGENT_SYSTEM.md):
+**Medium Priority:**
+- ❌ **Model switching** - Currently hardcoded, need session-level config
+- ❌ **Markdown telemetry** - Export format exists but needs refinement
+- ❌ **System prompt verification** - Compare against OpenCode exactly
 
-### 1. Task Tool (CRITICAL - Not Yet Implemented)
+**Low Priority:**
+- ❌ **Dual-agent endpoint** - `POST /session/dual` (may not be needed)
+- ❌ **MCP support** - Model Context Protocol
+- ❌ **LSP support** - Language Server Protocol
+
+## The Architecture We Have
+
+### 1. Task Tool ✅ IMPLEMENTED
 
 **Purpose:** Allows agents to spawn subagents autonomously
 
-**Signature:**
-```rust
-task(
-  description: "Short 3-5 word task description",
-  prompt: "Detailed task for the subagent",
-  subagent_type: "dual-agent" | "explore" | "plan" | "docs"
-)
-```
+**Location:** `crow/packages/api/src/tools/task.rs`
 
 **How it works:**
-1. Parent agent calls task tool in their response
+1. Parent agent calls task tool with subagent_type
 2. Task tool creates child session with `parentID` link
-3. If `subagent_type == "dual-agent"` → run DualAgentRuntime
-4. Otherwise → run single agent with SessionPrompt
-5. Return summary + output to parent agent
-6. Parent agent synthesizes result for user
+3. Spawns subagent of specified type
+4. Returns result to parent agent
+5. Parent synthesizes for user
 
-**Example:**
+**Dynamic Agent List:**
+```rust
+// Tool description is built dynamically from agent registry
+let agents = agent_registry.get_subagents().await;
+let description = DESCRIPTION.replace("{agents}", &agent_list);
+
+// Agents available:
+// - general: General-purpose agent
+// - build: Build agent for implementation
+// - plan: Planning agent
+// (etc - pulled from registry at runtime)
+```
+
+**Example Flow:**
 ```
 User: "Implement fibonacci function"
   ↓
-BUILD agent: "I'll use dual-agent for supervised execution"
+BUILD agent: "I'll spawn a subagent"
   🔧 task(
     description="Implement fibonacci", 
     prompt="Write fibonacci with tests",
-    subagent_type="dual-agent"
+    subagent_type="general"
   )
   ↓
 Task tool:
-  - Creates child session (ses-child-123)
-  - Runs DualAgentRuntime (executor + discriminator loop)
-  - Exports to .crow/sessions/ses-child-123.md
-  - Returns: { output: "Fibonacci implemented", metadata: {...} }
+  - Creates child session (ses-xxx)
+  - Sets parentID to current session
+  - Executes general agent
+  - Returns output
   ↓
-BUILD agent: "Fibonacci function has been implemented with tests. All tests passing."
+BUILD agent: "Fibonacci implemented"
 ```
 
-### 2. Agent Modes (Already Exists, Needs Enforcement)
+### 2. Agent Modes ✅ EXISTS
 
 ```rust
 pub enum AgentMode {
@@ -79,209 +120,192 @@ pub enum AgentMode {
 ```
 
 **Current agents:**
-- `general` - Primary (default for user)
-- `build` - Primary (but should default to spawning dual-agent)
-- `plan` - Subagent (read-only planning)
-- `supervisor` - Primary (task management)
-- `architect` - Primary (project management)
-- `discriminator` - Subagent (only used in dual-agent)
-- **`dual-agent`** - Subagent (NEW - needs to be registered)
+- `general` - Primary (default)
+- `build` - Primary  
+- `plan` - Subagent
+- `supervisor` - Primary
+- `architect` - Primary
+- `discriminator` - Subagent (dual-agent only)
 
-### 3. Dual-Agent as Subagent (Needs Refactoring)
-
-**Current problem:** `POST /session/dual` is a top-level endpoint
-
-**What we need:**
-- Remove `POST /session/dual` endpoint
-- Register dual-agent as a subagent
-- BUILD agent's system prompt should say: "Use task tool with subagent_type='dual-agent' for implementation tasks"
-- Task tool handles the spawning
-
-**Dual-agent prompt:**
-```markdown
----
-description: Supervised execution with executor/discriminator
-mode: subagent
----
-
-You are part of a DUAL-AGENT supervision system.
-
-## How This Works
-- EXECUTOR (build agent) - Implements the task
-- DISCRIMINATOR (supervisor agent) - Reviews and provides feedback
-- You see different perspectives of the same conversation
-- Only discriminator can call work_completed
-
-[Rest of dual-agent.md from OpenCode]
-```
-
-### 4. Session Hierarchy (Already Works)
+### 3. Session Hierarchy ✅ WORKS
 
 ```rust
 pub struct Session {
     pub id: String,
-    pub parent_id: Option<String>,  // ✅ Already exists
+    pub parent_id: Option<String>,  // ✅ Working
     pub directory: String,
-    pub metadata: Option<serde_json::Value>,  // ✅ Added
-    // ...
+    pub title: Option<String>,
+    pub version: String,
+    pub time: SessionTime,
+    pub metadata: Option<Value>,
 }
 ```
 
-**Task tool creates:**
+**Child sessions:**
+- Created by Task tool
+- Linked via `parent_id`
+- Listed via `GET /session/:id/children`
+- Persistent to XDG storage
+
+### 4. Tool Execution ✅ WORKS
+
+**All tools use ToolContext:**
 ```rust
-Session {
-    id: "ses-child-123",
-    parent_id: Some("ses-parent-456"),
-    title: "Implement fibonacci (@dual-agent subagent)",
-    metadata: Some(json!({
-        "includeParentContext": true,
-        "subagentType": "dual-agent",
-    })),
+pub struct ToolContext {
+    pub session_id: String,  // From execution context
+    pub message_id: String,
+    pub agent: String,
+    pub working_dir: PathBuf,
 }
 ```
 
-### 5. Markdown Telemetry (Partially Done)
+**Recent Fix:** TodoWrite now uses `ctx.session_id` instead of asking LLM for it.
 
-**Status:** SessionExport and CrowStorage exist but not wired up
+### 5. Storage Structure ✅ MATCHES OPENCODE
 
-**What's needed:**
-- Export both executor and discriminator sessions after each turn
-- Store in `.crow/sessions/{session-id}.md`
-- Include system prompts, tools available, all messages, tool calls
-
-See TELEMETRY_WORK_STATUS.md for details.
-
-## Agent Delegation Rules
-
-**We should implement these rules in the task tool:**
-
-```rust
-// BUILD can spawn any subagent
-if calling_agent == "build" {
-    // Allow dual-agent, explore, plan, docs, etc.
-}
-
-// SUPERVISOR can only spawn build
-if calling_agent == "supervisor" {
-    if subagent_type != "build" {
-        return Err("supervisor can only delegate to build agent")
-    }
-}
-
-// DISCRIMINATOR can spawn for verification
-if calling_agent == "discriminator" {
-    // Allow bash, read, grep, write, edit for fixes
-}
+```
+~/.local/share/crow/
+├── auth.json              # API keys
+├── log/                   # Server logs
+└── storage/
+    ├── message/           # Per-session messages
+    │   └── {session-id}/
+    │       ├── {msg-id}.json
+    │       └── ...
+    ├── session/           # Session metadata
+    │   └── {session-id}/
+    │       └── session.json
+    └── todo/              # Per-session todos
+        ├── {session-id}.json
+        └── ...
 ```
 
-**Hierarchy:**
+## What We're Building Next: Dioxus Web UI
+
+**Why Web First:**
+- OpenCode's TUI is terminal-only
+- We want cross-platform from day one
+- Dioxus compiles to web/desktop/mobile from same code
+- Web UI = easier testing, better UX, multi-user
+
+**Project Structure:**
 ```
-User
-  └─> General/Primary agents
-       └─> Supervisor
-            └─> Build (default: spawns dual-agent for implementation)
-                 └─> Dual-Agent (executor + discriminator)
-                 └─> Explore (research/search)
-                 └─> Plan (read-only planning)
-                 └─> Docs (documentation)
-```
-
-## Default Behavior
-
-**Key insight from OpenCode:** BUILD agent should DEFAULT to using dual-agent
-
-**BUILD agent system prompt should include:**
-```
-When implementing code or making significant changes, use the task tool 
-with subagent_type='dual-agent' for supervised execution. This ensures 
-quality through discriminator review.
-
-Example:
-🔧 task(
-  description="Implement feature X",
-  prompt="Write feature X with tests and error handling",
-  subagent_type="dual-agent"
-)
+crow/packages/
+├── api/     ✅ Done - REST backend
+├── ui/      🎯 Next - shared components  
+└── web/     🎯 Next - web frontend
 ```
 
-## Frontend Situation
+**What the UI needs to show:**
+1. **Session List** - All sessions with titles
+2. **Message View** - Messages with tool execution
+3. **Todo Panel** - Real-time todo updates
+4. **Session Tree** - Parent/child relationships
+5. **Tool Execution** - Visual display of tool calls
+6. **Agent Status** - Which agent is working
 
-**Current state:**
-- Dioxus 0.7.1 fullstack setup in `crow/packages/web/`, `crow/packages/desktop/`
-- Not actively developed
-- Broken/neglected
-- Uses Axum backend in `crow/packages/api/src/server.rs`
+**Architecture:**
+```
+Browser → Dioxus Web (port 8080)
+            ↓ HTTP
+         Crow API (port 7070)
+            ↓
+         Agents + Tools
+```
 
-**What we need eventually:**
-- Dioxus frontend consuming REST API
-- Session list view
-- Message stream view
-- Tool call rendering (like OpenCode's UI)
-- Fork/branch visualization
-- Agent selection UI
+## Implementation Status by Component
 
-**Priority:** LOW - focus on backend/agent system first
+### Backend (API) - 95% Complete ✅
 
-See crow/AGENTS.md (the Dioxus reference) for framework patterns.
+| Component | Status | Notes |
+|-----------|--------|-------|
+| Agent Registry | ✅ Done | Dynamic tool permissions |
+| Agent Executor | ✅ Done | System prompts, tool execution |
+| Session Store | ✅ Done | XDG persistence |
+| Message Store | ✅ Done | Per-session storage |
+| Tool Registry | ✅ Done | 12 tools registered |
+| Task Tool | ✅ Done | Dynamic agent spawning |
+| TodoWrite | ✅ Fixed | Uses session context |
+| WebSearch | ✅ Done | SearXNG integration |
+| REST API | ✅ Done | All endpoints working |
+| Streaming | ❌ TODO | SSE endpoint stub exists |
 
-## Implementation Priority for Next Session
+### Frontend (Web) - 0% Complete 🎯
 
-1. **Implement Task Tool** ⭐ CRITICAL
-   - Create `crow/packages/api/src/tools/task.rs`
-   - Spawn child session with parentID
-   - Check subagent_type
-   - If dual-agent → DualAgentRuntime
-   - Return summary to parent
+| Component | Status | Notes |
+|-----------|--------|-------|
+| Session List | ❌ TODO | List all sessions |
+| Message View | ❌ TODO | Show conversation |
+| Tool Renderer | ❌ TODO | Display tool calls |
+| Todo Panel | ❌ TODO | Live todo updates |
+| Session Tree | ❌ TODO | Parent/child view |
+| Agent Selector | ❌ TODO | Choose agent |
+| Model Selector | ❌ TODO | Switch models |
+| Streaming | ❌ TODO | Real-time messages |
 
-2. **Register Dual-Agent Subagent**
-   - Create `.crow/agent/dual-agent.md`
-   - Set mode: subagent
-   - Remove `POST /session/dual` endpoint
+### Tools - 80% Complete
 
-3. **Update BUILD Agent Prompt**
-   - Add task tool usage guidance
-   - Default to dual-agent for implementation
+| Tool | Status | Notes |
+|------|--------|-------|
+| bash | ✅ Done | Command execution |
+| read | ✅ Done | File reading |
+| write | ✅ Done | File writing |
+| edit | ✅ Done | File editing |
+| grep | ✅ Done | Content search |
+| glob | ✅ Done | File pattern matching |
+| list | ✅ Done | Directory listing |
+| todowrite | ✅ Fixed | Session-aware |
+| todoread | ✅ Done | Read session todos |
+| task | ✅ Done | Spawn subagents |
+| websearch | ✅ Done | Internet search |
+| work_completed | ✅ Done | Dual-agent tool |
+| BashOutput | ❌ TODO | Background bash |
+| KillShell | ❌ TODO | Kill background |
 
-4. **Wire Up Telemetry**
-   - Add export calls in DualAgentRuntime
-   - Export both sessions after each turn
+## Testing Results (2025-11-17)
 
-5. **Test End-to-End**
-   - User → BUILD → spawns dual-agent → returns result
-   - Check `.crow/sessions/` for markdown exports
+**Successful Tests:**
+```bash
+✅ LLM call with kimi-k2-thinking
+✅ Tool execution (all 12 tools)
+✅ Subagent spawning via Task tool
+✅ Child session creation with parentID
+✅ Todo persistence to session-specific files
+✅ WebSearch with SearXNG
+✅ Session management (CRUD)
+✅ Message persistence
+✅ Auth.json reading
+```
 
-## Files to Give Next Agent
+**Example Session:**
+```
+Session: ses-f1e2753a-d0e4-4c1d-90ca-b5f38eab25b0
+├── Created 7-step plan with TodoWrite
+├── Spawned child session: ses-369a9dea-e0bd-4d18-af21-1a19f83efd75
+├── Used kimi-k2-thinking (262k context)
+├── Saved todos to ses-f1e2753a....json ✅
+└── All tools executed successfully
+```
 
-### Must Read First:
-1. **OPENCODE_SUBAGENT_SYSTEM.md** - How task tool and subagents work
-2. **TELEMETRY_WORK_STATUS.md** - Current telemetry implementation status
+## Next Session: Build the Web UI 🚀
 
-### Reference:
-3. **STATUS.md** - What's already implemented in Crow
-4. **This file (AGENTS.md)** - Agent architecture overview
+**Goal:** Translate OpenCode's TUI to Dioxus web components
 
-### Codebase Entry Points:
-- `crow/packages/api/src/tools/` - Tool implementations
-- `crow/packages/api/src/agent/` - Agent executor, registry, runtime
-- `crow/packages/api/src/server.rs` - API endpoints
-- `crow/packages/api/src/session/` - Session management
+**Approach:**
+1. Read `opencode/packages/opencode/src/cli/cmd/tui/`
+2. Port React/Ink patterns to Dioxus RSX
+3. Connect to Crow's REST API
+4. Start with: Session List → Message View → Tool Display
 
-## Success Criteria
+**Why this is the right next step:**
+- Backend is solid and tested
+- We need visibility into what agents are doing
+- Web UI = better debugging
+- Foundation for desktop/mobile later
 
-**Task tool is working when:**
-1. BUILD agent can call `task(subagent_type="dual-agent", ...)`
-2. Child session is created with parentID
-3. DualAgentRuntime executes in child session
-4. Both executor and discriminator sessions export to `.crow/sessions/`
-5. Task tool returns summary to BUILD agent
-6. BUILD agent shows user the result
+**Reference Implementation:**
+- OpenCode TUI: `opencode/packages/opencode/src/cli/cmd/tui/`
+- Our API: `crow/packages/api/src/server.rs`
+- Our Components: `crow/packages/web/src/` (to be built)
 
-**Full system is working when:**
-1. User sends "Implement feature X" to BUILD agent
-2. BUILD agent automatically spawns dual-agent
-3. Executor implements, discriminator reviews
-4. Both sessions exported to markdown
-5. Task tool returns to BUILD agent
-6. BUILD agent tells user "Feature X implemented and verified"
-
-This is the architecture. Let's build it.
+The backend is ready. Time to make it visible! 🦅

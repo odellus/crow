@@ -1,75 +1,237 @@
-# Development
+# Crow - Rust Agent Framework
 
-Your new workspace contains a member crate for each of the web, desktop and mobile platforms, a `ui` crate for shared components and a `api` crate for shared backend logic:
+**OpenCode in Rust**: A fast, embeddable agent framework with web UI.
 
-```
-your_project/
-├─ README.md
-├─ Cargo.toml
-└─ packages/
-   ├─ web/
-   │  └─ ... # Web specific UI/logic
-   ├─ desktop/
-   │  └─ ... # Desktop specific UI/logic
-   ├─ mobile/
-   │  └─ ... # Mobile specific UI/logic
-   ├─ api/
-   │  └─ ... # All shared server logic
-   └─  ui/
-      └─ ... # Component shared between multiple platforms
-```
+## Quick Start
 
-## Platform crates
+### Launch Crow Web UI
 
-Each platform crate contains the entry point for the platform, and any assets, components and dependencies that are specific to that platform. For example, the desktop crate in the workspace looks something like this:
-
-```
-desktop/ # The desktop crate contains all platform specific UI, logic and dependencies for the desktop app
-├─ assets/ # Assets used by the desktop app - Any platform specific assets should go in this folder
-├─ src/
-│  ├─ main.rs # The entrypoint for the desktop app. It also defines the routes for the desktop platform
-│  ├─ views/ # The views each route will render in the desktop version of the app
-│  │  ├─ mod.rs # Defines the module for the views route and re-exports the components for each route
-│  │  ├─ blog.rs # The component that will render at the /blog/:id route
-│  │  ├─ home.rs # The component that will render at the / route
-├─ Cargo.toml # The desktop crate's Cargo.toml - This should include all desktop specific dependencies
-```
-
-When you start developing with the workspace setup each of the platform crates will look almost identical. The UI starts out exactly the same on all platforms. However, as you continue developing your application, this setup makes it easy to let the views for each platform change independently.
-
-## Shared UI crate
-
-The workspace contains a `ui` crate with components that are shared between multiple platforms. You should put any UI elements you want to use in multiple platforms in this crate. You can also put some shared client side logic in this crate, but be careful to not pull in platform specific dependencies. The `ui` crate starts out something like this:
-
-```
-ui/
-├─ src/
-│  ├─ lib.rs # The entrypoint for the ui crate
-│  ├─ hero.rs # The Hero component that will be used in every platform
-│  ├─ echo.rs # The shared echo component that communicates with the server
-│  ├─ navbar.rs # The Navbar component that will be used in the layout of every platform's router
-```
-
-## Shared backend logic
-
-The workspace contains a `api` crate with shared backend logic. This crate defines all of the shared server functions for all platforms. Server functions are async functions that expose a public API on the server. They can be called like a normal async function from the client. When you run `dx serve`, all of the server functions will be collected in the server build and hosted on a public API for the client to call. The `api` crate starts out something like this:
-
-```
-api/
-├─ src/
-│  ├─ lib.rs # Exports a server function that echos the input string
-```
-
-### Serving Your App
-
-Navigate to the platform crate of your choice:
-```bash
-cd web
-```
-
-and serve:
+From anywhere:
 
 ```bash
-dx serve
+cd /path/to/crow
+./crow          # Starts on port 8080
+./crow 3000     # Starts on custom port
 ```
 
+Or from the web directory:
+
+```bash
+cd packages/web
+dx serve --port 8080 --platform server
+```
+
+Then open `http://localhost:8080` in your browser.
+
+## What's Working ✅
+
+- **Web UI**: Dark-themed interface with Tailwind CSS
+- **Session Management**: Create, list, and view sessions
+- **Chat Interface**: Send messages and receive agent responses  
+- **API Backend**: REST endpoints on same server
+- **12 Tools**: Bash, Read, Write, Edit, Glob, Grep, List, Task, Patch, WebFetch, TodoWrite, WorkCompleted
+- **LLM Integration**: Moonshot AI (kimi-k2-thinking with 262k context)
+- **Storage**: XDG-compliant (`~/.local/share/crow/`)
+- **Subagents**: Task tool spawns child sessions
+- **Auth**: Reads from `~/.local/share/crow/auth.json`
+
+## What's Next ⏭️
+
+Current state: **UI renders, navigation not wired**
+
+1. **Wire up navigation** - Session clicks and "New Session" button
+2. **Message display** - Show conversation history
+3. **Tool rendering** - Dynamic tool output display
+4. **File references** - @ mentions for attaching files
+5. **Streaming** - Real-time message updates via WebSocket
+6. **Single binary** - Embed web UI into `crow` executable
+
+See `CROW_WEB_UI_PROGRESS.md` for detailed status.
+
+## Architecture
+
+```
+crow/
+├── packages/
+│   ├── api/          # Backend: REST API, tools, agents, LLM
+│   ├── ui/           # Shared components (Chat, Navbar, etc.)
+│   └── web/          # Dioxus fullstack web app
+├── crow              # Launcher script
+└── README.md
+```
+
+## Development
+
+### Prerequisites
+
+```bash
+# Install Rust
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+
+# Install Dioxus CLI
+cargo install dioxus-cli --version 0.7.1
+
+# Install Tailwind (handled automatically by Dioxus)
+```
+
+### Run Development Server
+
+```bash
+cd packages/web
+dx serve --port 8080 --platform server
+```
+
+Hot reload enabled - edit code and see changes instantly.
+
+### Build for Production
+
+```bash
+cd packages/web
+dx build --release --platform server
+```
+
+Output: `../../target/dx/web/release/web/`
+
+### Project Structure
+
+- **api**: Core agent framework
+  - `src/tools/`: 12 tool implementations
+  - `src/agent/`: Agent executor and registry
+  - `src/providers/`: LLM provider (Moonshot)
+  - `src/session/`: Session and message storage
+  - `src/server.rs`: REST API endpoints
+
+- **web**: Dioxus fullstack UI
+  - `src/views/sessions.rs`: Session list with sidebar
+  - `src/views/session_detail.rs`: Chat view with tabs
+  - `tailwind.css`: Tailwind input file (auto-compiled)
+  - `Dioxus.toml`: Dioxus configuration
+
+- **ui**: Shared components
+  - `chat.rs`: Chat interface with message rendering
+  - `navbar.rs`, `hero.rs`, etc.
+
+## Configuration
+
+### Auth (Moonshot API Key)
+
+Create `~/.local/share/crow/auth.json`:
+
+```json
+{
+  "moonshotai": {
+    "type": "api",
+    "key": "sk-YOUR_API_KEY_HERE"
+  }
+}
+```
+
+Or use environment variable:
+
+```bash
+export MOONSHOT_API_KEY="sk-YOUR_API_KEY_HERE"
+```
+
+### Dioxus Config
+
+`packages/web/Dioxus.toml`:
+
+```toml
+[application]
+name = "web"
+default_platform = "web"
+asset_dir = "assets"
+
+[web.app]
+title = "Crow"
+
+[web.resource]
+style = ["/tailwind.css"]  # Auto-compiled by Dioxus
+
+[web.resource.dev]
+style = []
+script = []
+```
+
+## API Endpoints
+
+All endpoints on `http://localhost:8080`:
+
+- `GET /session` - List all sessions
+- `POST /session/create` - Create new session
+- `GET /session/:id` - Get session details
+- `POST /session/:id/message` - Send message
+- `GET /session/:id/message` - List messages
+- `POST /api/send_message` - Quick message (auto-creates session)
+
+## Tech Stack
+
+- **Framework**: Dioxus 0.7 (Rust fullstack)
+- **Backend**: Axum web framework
+- **Styling**: Tailwind CSS (auto-compiled)
+- **State**: Dioxus Signals
+- **Storage**: File-based with atomic writes
+- **LLM**: Moonshot AI (Kimi models)
+
+## Comparison to OpenCode
+
+| Feature | OpenCode (TypeScript) | Crow (Rust) |
+|---------|----------------------|-------------|
+| Agent execution | ✅ | ✅ |
+| 12 core tools | ✅ | ✅ |
+| Web UI | TUI (terminal) | Web (browser) |
+| Storage | XDG directories | XDG directories |
+| Subagents | ✅ Task tool | ✅ Task tool |
+| Streaming | ✅ WebSocket | ⏭️ Planned |
+| File refs | ✅ @ mentions | ⏭️ Planned |
+| Themes | ✅ 23 themes | ⏭️ Planned |
+
+## Troubleshooting
+
+### "No CSS styling"
+
+- Ensure Tailwind compiled: Check `packages/web/assets/main.css` exists
+- Hard refresh: `Ctrl+Shift+R` (or `Cmd+Shift+R`)
+- Clear browser cache
+
+### "Build errors"
+
+```bash
+cd /path/to/crow
+cargo clean
+cd packages/web
+dx build --release --platform server
+```
+
+### "Port already in use"
+
+```bash
+# Find process using port 8080
+lsof -i :8080
+# Kill it
+kill -9 <PID>
+# Or use different port
+./crow 3000
+```
+
+## Contributing
+
+Currently in active development. The web UI needs:
+
+1. Navigation wiring (session clicks)
+2. Message history display
+3. Tool output rendering
+4. File attachment UI
+5. WebSocket streaming
+
+See `CROW_WEB_UI_PROGRESS.md` for detailed roadmap.
+
+## License
+
+MIT (matching OpenCode)
+
+## Links
+
+- OpenCode: https://github.com/opencode-ai/opencode
+- Dioxus: https://dioxuslabs.com
+- Documentation: `/path/to/crow/OPENCODE_TUI_*.md`

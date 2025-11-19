@@ -1,75 +1,99 @@
-//! Crow unified binary - API server + Web UI
-//! Like `opencode` - run from your project directory
+//! Crow main binary - serves web UI + API from anywhere
+//! Like `jupyter lab` or `opencode serve -p 4096`
 
 use api::create_router_with_storage;
-use api::global::GlobalPaths;
+use axum::{
+    http::{header, StatusCode, Uri},
+    response::{Html, IntoResponse, Response},
+    Router,
+};
+use rust_embed::RustEmbed;
+use tower_http::cors::CorsLayer;
+
+#[derive(RustEmbed)]
+#[folder = "../../target/dx/web/release/web/public/"]
+struct Assets;
+
+struct StaticFile<T>(pub T);
+
+impl<T> IntoResponse for StaticFile<T>
+where
+    T: Into<String>,
+{
+    fn into_response(self) -> Response {
+        let path = self.0.into();
+
+        match Assets::get(path.as_str()) {
+            Some(content) => {
+                let mime = mime_guess::from_path(path).first_or_octet_stream();
+                ([(header::CONTENT_TYPE, mime.as_ref())], content.data).into_response()
+            }
+            None => (StatusCode::NOT_FOUND, "404 Not Found").into_response(),
+        }
+    }
+}
+
+async fn static_handler(uri: Uri) -> Response {
+    let path = uri.path().trim_start_matches('/');
+
+    if path.is_empty() || path == "index.html" {
+        return index_html().await;
+    }
+
+    StaticFile(path.to_string()).into_response()
+}
+
+async fn index_html() -> Response {
+    match Assets::get("index.html") {
+        Some(content) => Html(content.data).into_response(),
+        None => {
+            // Fallback: serve a basic HTML that loads the WASM
+            Html(
+                r#"<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <title>Crow</title>
+    <link rel="stylesheet" href="/assets/main.css">
+</head>
+<body>
+    <div id="main"></div>
+    <script type="module">
+        import init from '/assets/web.js';
+        init();
+    </script>
+</body>
+</html>"#,
+            )
+            .into_response()
+        }
+    }
+}
 
 #[tokio::main]
 async fn main() {
-    // Initialize global paths (like OpenCode uses XDG)
-    let global_paths = GlobalPaths::new();
+    // Initialize tracing
+    tracing_subscriber::fmt::init();
 
-    // Create all necessary directories
-    if let Err(e) = global_paths.init() {
-        eprintln!("Failed to initialize directories: {}", e);
-        std::process::exit(1);
-    }
-
-    // Load config from XDG config directory
-    // Look for ~/.config/crow/config or ~/.config/crow/.env
-    let config_file = global_paths.config.join("config");
-    let env_file = global_paths.config.join(".env");
-
-    if config_file.exists() {
-        let _ = dotenvy::from_path(&config_file);
-    } else if env_file.exists() {
-        let _ = dotenvy::from_path(&env_file);
-    }
-
-    // Also allow environment variables to override
-    let _ = dotenvy::dotenv();
-
-    // Set up logging to file
-    let log_file = global_paths.log.join(format!(
-        "crow-{}.log",
-        chrono::Local::now().format("%Y-%m-%d")
-    ));
-
-    let log_file_handle = std::fs::OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(&log_file)
-        .expect("Failed to open log file");
-
-    // Check for verbose mode from env or arg
-    let verbose = std::env::var("CROW_VERBOSE").is_ok()
-        || std::env::args().any(|arg| arg == "--verbose" || arg == "-v");
-
-    // Initialize tracing with file output
-    let subscriber = tracing_subscriber::fmt()
-        .with_writer(std::sync::Mutex::new(log_file_handle))
-        .with_ansi(false);
-
-    if verbose {
-        subscriber.with_max_level(tracing::Level::DEBUG).init();
-        println!("🔍 Verbose mode enabled - logging everything!");
-    } else {
-        subscriber.with_max_level(tracing::Level::INFO).init();
-    }
-
-    // Get current working directory - this is the project directory
-    let cwd = std::env::current_dir().expect("Failed to get current directory");
-    println!("🦅 Crow starting in: {}", cwd.display());
-    println!("📁 Config: {}", global_paths.config.display());
-    println!("📝 Logs: {}", global_paths.log.display());
+    // Parse port from args
+    let port = std::env::args()
+        .nth(1)
+        .and_then(|arg| {
+            if arg == "-p" || arg == "--port" {
+                std::env::args().nth(2).and_then(|p| p.parse().ok())
+            } else {
+                arg.parse().ok()
+            }
+        })
+        .unwrap_or(8080);
 
     println!("Initializing storage...");
 
-    // Create the API router with storage initialization
+    // Create the API router
     let api_router = match create_router_with_storage().await {
-        Ok(app) => {
+        Ok(router) => {
             println!("Storage initialized successfully");
-            app
+            router
         }
         Err(e) => {
             eprintln!("Failed to initialize storage: {}", e);
@@ -77,23 +101,26 @@ async fn main() {
         }
     };
 
-    // TODO: Integrate Dioxus web UI here
-    // For now, just serve the API
-    // Will add web UI routes when we build the actual UI
+    // Combine API routes with static file serving
+    let app = Router::new()
+        .merge(api_router)
+        .fallback(static_handler)
+        .layer(CorsLayer::permissive());
 
-    println!("Starting Crow server...");
-    println!("  API: http://127.0.0.1:7070");
-    println!("  Web UI: http://127.0.0.1:7070 (coming soon)");
+    let addr = format!("127.0.0.1:{}", port);
+    println!("Binding to {}...", addr);
 
-    // Bind to port 7070
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:7070")
+    let listener = tokio::net::TcpListener::bind(&addr)
         .await
-        .expect("Failed to bind to port 7070");
+        .unwrap_or_else(|_| panic!("Failed to bind to {}", addr));
 
-    tracing::info!("Crow listening on http://127.0.0.1:7070");
+    tracing::info!("🚀 Crow server listening on http://{}", addr);
+    println!("🚀 Crow server started!");
+    println!("   Web UI:  http://{}", addr);
+    println!("   API:     http://{}/session", addr);
+    println!();
+    println!("Press Ctrl+C to stop");
 
     // Run the server
-    axum::serve(listener, api_router)
-        .await
-        .expect("Server error");
+    axum::serve(listener, app).await.expect("Server error");
 }

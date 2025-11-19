@@ -2,6 +2,8 @@
 //! Handles transient failures like rate limits and timeouts
 
 use std::time::Duration;
+
+#[cfg(feature = "server")]
 use tokio::time::sleep;
 
 pub struct SessionRetry;
@@ -19,6 +21,7 @@ impl SessionRetry {
     }
 
     /// Retry async operation with exponential backoff
+    #[cfg(feature = "server")]
     pub async fn with_retry<F, Fut, T>(mut f: F) -> Result<T, String>
     where
         F: FnMut() -> Fut,

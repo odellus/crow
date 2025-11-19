@@ -1,0 +1,10 @@
+{
+  "name": "crow-web",
+  "version": "0.1.0",
+  "scripts": {
+    "tailwind:build": "tailwindcss -i ./assets/tailwind.css -o ./assets/main.css --watch"
+  },
+  "devDependencies": {
+    "tailwindcss": "^3.4.0"
+  }
+}

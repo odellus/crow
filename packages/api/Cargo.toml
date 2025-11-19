@@ -6,7 +6,6 @@ edition = "2021"
 [[bin]]
 name = "crow-serve"
 path = "src/bin/crow-serve.rs"
-required-features = ["server"]
 
 [[bin]]
 name = "crow"
@@ -14,27 +13,61 @@ path = "src/bin/crow.rs"
 required-features = ["server"]
 
 [dependencies]
+# Workspace shared dependencies
 dioxus = { workspace = true, features = ["fullstack"] }
-serde = { version = "1", features = ["derive"] }
-serde_json = "1"
-async-openai = { version = "0.30", optional = true }
-reqwest = { version = "0.12", features = ["json"], optional = true }
+serde = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true }
+uuid = { workspace = true, features = ["v4", "serde"] }
+
+# Web server
+axum = { version = "0.8", features = ["macros"], optional = true }
+tower-http = { version = "0.6", features = ["fs", "cors"], optional = true }
+tokio = { version = "1", features = ["full"], optional = true }
+
+# LLM provider
+async-openai = { version = "0.28", optional = true }
 dotenvy = { version = "0.15", optional = true }
-uuid = { version = "1", features = ["v4", "serde"] }
+
+# Static file embedding
+rust-embed = { version = "8.5", optional = true }
+
+# SSE streaming (stub for now)
+futures = { version = "0.3", optional = true }
+
+# Logging
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"], optional = true }
+
+# HTTP client for WebSearch
+reqwest = { version = "0.12", features = ["json"], optional = true }
+
+# Static file serving
+mime_guess = { version = "2.0", optional = true }
+
+# Tools support
 async-trait = { version = "0.1", optional = true }
 regex = { version = "1", optional = true }
+tokio-stream = { version = "0.1", optional = true }
+
+# Core dependencies
 dirs = "5"
 chrono = "0.4"
 
-# HTTP server
-axum = { version = "0.7", optional = true }
-tokio = { version = "1", features = ["full"], optional = true }
-tower-http = { version = "0.5", features = ["cors"], optional = true }
-tracing = { version = "0.1", optional = true }
-tracing-subscriber = { version = "0.3", optional = true }
-futures = { version = "0.3", optional = true }
-tokio-stream = { version = "0.1", optional = true }
-
 [features]
-default = ["server"]
-server = ["dioxus/server", "dep:async-openai", "dep:reqwest", "dep:dotenvy", "dep:axum", "dep:tokio", "dep:tower-http", "dep:tracing", "dep:tracing-subscriber", "dep:async-trait", "dep:futures", "dep:tokio-stream", "dep:regex"]
+default = []
+server = [
+    "dioxus/server",
+    "dep:async-openai",
+    "dep:axum",
+    "dep:dotenvy",
+    "dep:futures",
+    "dep:tokio",
+    "dep:tower-http",
+    "dep:tracing-subscriber",
+    "dep:reqwest",
+    "dep:rust-embed",
+    "dep:mime_guess",
+    "dep:async-trait",
+    "dep:regex",
+    "dep:tokio-stream",
+]

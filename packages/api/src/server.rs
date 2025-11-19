@@ -44,14 +44,14 @@ pub fn create_router() -> Router {
         // Session endpoints
         .route("/session", get(list_sessions))
         .route("/session", post(create_session))
-        .route("/session/:id", get(get_session))
-        .route("/session/:id", delete(delete_session))
-        .route("/session/:id", patch(update_session))
+        .route("/session/{id}", get(get_session))
+        .route("/session/{id}", delete(delete_session))
+        .route("/session/{id}", patch(update_session))
         // Message endpoints
-        .route("/session/:id/message", get(list_messages))
-        .route("/session/:id/message", post(send_message))
+        .route("/session/{id}/message", get(list_messages))
+        .route("/session/{id}/message", post(send_message))
         // Test endpoint for tools
-        .route("/test/tool/:name", post(test_tool))
+        .route("/test/tool/{name}", post(test_tool))
         // TODO: Other endpoints
         // .route("/config", get(get_config))
         // .route("/config/providers", get(list_providers))
@@ -96,19 +96,19 @@ pub async fn create_router_with_storage() -> Result<Router, String> {
         // Session endpoints
         .route("/session", get(list_sessions))
         .route("/session", post(create_session))
-        .route("/session/:id", get(get_session))
-        .route("/session/:id", delete(delete_session))
-        .route("/session/:id", patch(update_session))
-        .route("/session/:id/fork", post(fork_session))
-        .route("/session/:id/abort", post(abort_session))
-        .route("/session/:id/children", get(get_session_children))
-        .route("/session/:id/todo", get(get_session_todo))
+        .route("/session/{id}", get(get_session))
+        .route("/session/{id}", delete(delete_session))
+        .route("/session/{id}", patch(update_session))
+        .route("/session/{id}/fork", post(fork_session))
+        .route("/session/{id}/abort", post(abort_session))
+        .route("/session/{id}/children", get(get_session_children))
+        .route("/session/{id}/todo", get(get_session_todo))
         // Message endpoints
-        .route("/session/:id/message", get(list_messages))
-        .route("/session/:id/message", post(send_message))
-        .route("/session/:id/message/:message_id", get(get_message))
+        .route("/session/{id}/message", get(list_messages))
+        .route("/session/{id}/message", post(send_message))
+        .route("/session/{id}/message/{message_id}", get(get_message))
         // Streaming message endpoint
-        .route("/session/:id/message/stream", post(send_message_stream))
+        .route("/session/{id}/message/stream", post(send_message_stream))
         // Dual-agent endpoint
         .route("/session/dual", post(create_dual_session))
         // File endpoints
@@ -122,7 +122,7 @@ pub async fn create_router_with_storage() -> Result<Router, String> {
         .route("/experimental/tool", get(list_tools))
         .route("/agent", get(list_agents))
         // Test endpoint for tools
-        .route("/test/tool/:name", post(test_tool))
+        .route("/test/tool/{name}", post(test_tool))
         .layer(CorsLayer::permissive())
         .with_state(state))
 }
@@ -160,7 +160,7 @@ async fn create_session(
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))
 }
 
-/// GET /session/:id - Get a session by ID
+/// GET /session/{id} - Get a session by ID
 async fn get_session(
     State(state): State<AppState>,
     Path(id): Path<String>,
@@ -172,7 +172,7 @@ async fn get_session(
         .map_err(|_| (StatusCode::NOT_FOUND, format!("Session not found: {}", id)))
 }
 
-/// DELETE /session/:id - Delete a session
+/// DELETE /session/{id} - Delete a session
 async fn delete_session(
     State(state): State<AppState>,
     Path(id): Path<String>,
@@ -184,7 +184,7 @@ async fn delete_session(
         .map_err(|_| (StatusCode::NOT_FOUND, format!("Session not found: {}", id)))
 }
 
-/// PATCH /session/:id - Update a session
+/// PATCH /session/{id} - Update a session
 #[derive(serde::Deserialize)]
 struct UpdateSessionRequest {
     title: Option<String>,
@@ -216,7 +216,7 @@ pub struct CreateSessionRequest {
 // Message Endpoints
 // ============================================================================
 
-/// GET /session/:id/message - List all messages in a session
+/// GET /session/{id}/message - List all messages in a session
 async fn list_messages(
     State(state): State<AppState>,
     Path(id): Path<String>,
@@ -234,7 +234,7 @@ async fn list_messages(
         })
 }
 
-/// POST /session/:id/message - Send a message to a session
+/// POST /session/{id}/message - Send a message to a session
 /// Input format matches OpenCode API - client sends minimal data, server generates IDs
 #[derive(serde::Deserialize)]
 struct PartInput {
@@ -360,7 +360,7 @@ async fn send_message(
     Ok(Json(assistant_message))
 }
 
-/// POST /session/:id/message/stream - Send a message with streaming response
+/// POST /session/{id}/message/stream - Send a message with streaming response
 async fn send_message_stream(
     State(state): State<AppState>,
     Path(session_id): Path<String>,
@@ -577,7 +577,7 @@ async fn create_dual_session(
 // Test Endpoints (for development)
 // ============================================================================
 
-/// POST /test/tool/:name - Test a tool directly
+/// POST /test/tool/{name} - Test a tool directly
 async fn test_tool(
     State(state): State<AppState>,
     Path(tool_name): Path<String>,
@@ -599,7 +599,7 @@ async fn test_tool(
         .map_err(|e| (StatusCode::BAD_REQUEST, e))
 }
 
-/// POST /session/:id/fork - Fork a session at a specific message
+/// POST /session/{id}/fork - Fork a session at a specific message
 #[derive(serde::Deserialize)]
 struct ForkSessionRequest {
     #[serde(rename = "messageID")]
@@ -653,7 +653,7 @@ async fn fork_session(
     Ok(Json(new_session))
 }
 
-/// POST /session/:id/abort - Abort a running session
+/// POST /session/{id}/abort - Abort a running session
 async fn abort_session(
     State(state): State<AppState>,
     Path(session_id): Path<String>,
@@ -669,7 +669,7 @@ async fn abort_session(
     })))
 }
 
-/// GET /session/:id/children - Get child sessions
+/// GET /session/{id}/children - Get child sessions
 async fn get_session_children(
     State(state): State<AppState>,
     Path(session_id): Path<String>,
@@ -688,7 +688,7 @@ async fn get_session_children(
     Ok(Json(children))
 }
 
-/// GET /session/:id/todo - Get todo list for session
+/// GET /session/{id}/todo - Get todo list for session
 async fn get_session_todo(
     State(_state): State<AppState>,
     Path(session_id): Path<String>,
@@ -700,7 +700,7 @@ async fn get_session_todo(
     })))
 }
 
-/// GET /session/:id/message/:message_id - Get a specific message
+/// GET /session/{id}/message/{message_id} - Get a specific message
 async fn get_message(
     State(state): State<AppState>,
     Path((session_id, message_id)): Path<(String, String)>,
