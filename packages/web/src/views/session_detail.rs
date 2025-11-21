@@ -9,7 +9,7 @@ pub fn SessionDetail(session_id: String) -> Element {
 
     // Clone for use in different closures
     let session_id_clone = session_id.clone();
-    let current_session = use_resource(move || {
+    let _current_session = use_resource(move || {
         let id = session_id_clone.clone();
         async move { get_session(id).await }
     });

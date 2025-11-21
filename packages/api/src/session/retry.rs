@@ -9,6 +9,7 @@ use tokio::time::sleep;
 pub struct SessionRetry;
 
 impl SessionRetry {
+    #[cfg(feature = "server")]
     const MAX_RETRIES: u32 = 10;
     const BASE_DELAY_MS: u64 = 1000;
     const MAX_DELAY_MS: u64 = 30000;
@@ -63,6 +64,7 @@ impl SessionRetry {
     }
 
     /// Determine if error is retryable
+    #[cfg(feature = "server")]
     fn is_retryable(error: &str) -> bool {
         let error_lower = error.to_lowercase();
 
@@ -97,6 +99,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "server")]
     fn test_is_retryable() {
         assert!(SessionRetry::is_retryable("Rate limit exceeded"));
         assert!(SessionRetry::is_retryable("Connection timeout"));

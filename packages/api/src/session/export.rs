@@ -305,7 +305,6 @@ fn is_leap_year(year: u64) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
 
     #[test]
     #[cfg(feature = "server")]
