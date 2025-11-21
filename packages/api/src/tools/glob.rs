@@ -4,7 +4,6 @@ use super::ToolContext;
 use async_trait::async_trait;
 use serde::Deserialize;
 use serde_json::Value;
-use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use crate::tools::{Tool, ToolResult, ToolStatus};
@@ -61,7 +60,7 @@ impl Tool for GlobTool {
         };
 
         let search_path = input.path.unwrap_or_else(|| ".".to_string());
-        
+
         // Use ripgrep with --files and --glob for fast file listing
         let output = Command::new("rg")
             .arg("--files")
@@ -76,10 +75,10 @@ impl Tool for GlobTool {
                     let stdout = String::from_utf8_lossy(&output.stdout).to_string();
                     let files: Vec<&str> = stdout.lines().collect();
                     let count = files.len();
-                    
+
                     let truncated = count > 100;
                     let limit = if truncated { 100 } else { count };
-                    
+
                     let mut output_lines = Vec::new();
                     if count == 0 {
                         output_lines.push("No files found".to_string());

@@ -1,6 +1,12 @@
 use crate::types::{Message, Part, Session, SessionTime};
 use std::collections::HashMap;
-use std::sync::{Arc, RwLock};
+use std::sync::Arc;
+
+#[cfg(feature = "server")]
+use parking_lot::RwLock;
+
+#[cfg(not(feature = "server"))]
+use std::sync::RwLock;
 
 #[cfg(feature = "server")]
 use crate::storage::CrowStorage;
@@ -44,7 +50,7 @@ impl SessionStore {
         // Load existing sessions
         let sessions = storage.list_sessions().await?;
         {
-            let mut sessions_lock = self.sessions.write().unwrap();
+            let mut sessions_lock = self.sessions.write();
             for session in sessions {
                 sessions_lock.insert(session.id.clone(), session);
             }
@@ -52,13 +58,13 @@ impl SessionStore {
 
         // Load messages for each session
         let session_ids: Vec<String> = {
-            let sessions_lock = self.sessions.read().unwrap();
+            let sessions_lock = self.sessions.read();
             sessions_lock.keys().cloned().collect()
         };
 
         for session_id in session_ids {
             let messages = storage.load_messages(&session_id).await?;
-            self.messages.write().unwrap().insert(session_id, messages);
+            self.messages.write().insert(session_id, messages);
         }
 
         Ok(())
@@ -75,7 +81,7 @@ impl SessionStore {
         // Load existing sessions
         let sessions = storage.list_sessions_sync()?;
         {
-            let mut sessions_lock = self.sessions.write().unwrap();
+            let mut sessions_lock = self.sessions.write();
             for session in sessions {
                 sessions_lock.insert(session.id.clone(), session);
             }
@@ -83,13 +89,13 @@ impl SessionStore {
 
         // Load messages for each session
         let session_ids: Vec<String> = {
-            let sessions_lock = self.sessions.read().unwrap();
+            let sessions_lock = self.sessions.read();
             sessions_lock.keys().cloned().collect()
         };
 
         for session_id in session_ids {
             let messages = storage.load_messages_sync(&session_id)?;
-            self.messages.write().unwrap().insert(session_id, messages);
+            self.messages.write().insert(session_id, messages);
         }
 
         Ok(())
@@ -107,17 +113,25 @@ impl SessionStore {
             .map_err(|e| format!("Time error: {}", e))?
             .as_millis() as u64;
 
-        let id = format!("ses-{}", uuid::Uuid::new_v4());
-        let project_id = "default".to_string(); // TODO: Get from actual project
+        let id = crate::utils::generate_session_id();
+        let project_id = crate::utils::compute_project_id(std::path::Path::new(&directory));
+
+        // Generate title with timestamp like OpenCode
+        let title = title.unwrap_or_else(|| {
+            format!(
+                "New session - {}",
+                chrono::Utc::now().format("%Y-%m-%dT%H:%M:%S%.3fZ")
+            )
+        });
 
         let session = Session {
             id: id.clone(),
             project_id,
-            directory,
+            directory: directory.clone(),
             parent_id,
             summary: None,
             share: None,
-            title: title.unwrap_or_else(|| "New Session".to_string()),
+            title,
             version: "1.0.0".to_string(),
             time: SessionTime {
                 created: now,
@@ -128,10 +142,7 @@ impl SessionStore {
             metadata: None,
         };
 
-        let mut sessions = self
-            .sessions
-            .write()
-            .map_err(|e| format!("Lock error: {}", e))?;
+        let mut sessions = self.sessions.write();
         sessions.insert(id.clone(), session.clone());
 
         // Persist to disk in background
@@ -151,10 +162,7 @@ impl SessionStore {
 
     /// Get a session by ID
     pub fn get(&self, id: &str) -> Result<Session, String> {
-        let sessions = self
-            .sessions
-            .read()
-            .map_err(|e| format!("Lock error: {}", e))?;
+        let sessions = self.sessions.read();
         sessions
             .get(id)
             .cloned()
@@ -163,10 +171,7 @@ impl SessionStore {
 
     /// List all sessions
     pub fn list(&self, directory: Option<String>) -> Result<Vec<Session>, String> {
-        let sessions = self
-            .sessions
-            .read()
-            .map_err(|e| format!("Lock error: {}", e))?;
+        let sessions = self.sessions.read();
 
         let mut result: Vec<Session> = sessions
             .values()
@@ -188,10 +193,7 @@ impl SessionStore {
 
     /// Update a session
     pub fn update(&self, id: &str, title: Option<String>) -> Result<Session, String> {
-        let mut sessions = self
-            .sessions
-            .write()
-            .map_err(|e| format!("Lock error: {}", e))?;
+        let mut sessions = self.sessions.write();
 
         let session = sessions
             .get_mut(id)
@@ -230,10 +232,7 @@ impl SessionStore {
         id: &str,
         metadata: serde_json::Value,
     ) -> Result<Session, String> {
-        let mut sessions = self
-            .sessions
-            .write()
-            .map_err(|e| format!("Lock error: {}", e))?;
+        let mut sessions = self.sessions.write();
 
         let session = sessions
             .get_mut(id)
@@ -266,20 +265,13 @@ impl SessionStore {
 
     /// Delete a session
     pub fn delete(&self, id: &str) -> Result<bool, String> {
-        let mut sessions = self
-            .sessions
-            .write()
-            .map_err(|e| format!("Lock error: {}", e))?;
-
+        let mut sessions = self.sessions.write();
         Ok(sessions.remove(id).is_some())
     }
 
     /// Get child sessions
     pub fn get_children(&self, parent_id: &str) -> Result<Vec<Session>, String> {
-        let sessions = self
-            .sessions
-            .read()
-            .map_err(|e| format!("Lock error: {}", e))?;
+        let sessions = self.sessions.read();
 
         let mut children: Vec<Session> = sessions
             .values()
@@ -301,10 +293,7 @@ impl SessionStore {
         // Verify session exists
         let session = self.get(session_id)?;
 
-        let mut messages = self
-            .messages
-            .write()
-            .map_err(|e| format!("Lock error: {}", e))?;
+        let mut messages = self.messages.write();
 
         messages
             .entry(session_id.to_string())
@@ -366,11 +355,7 @@ impl SessionStore {
         // Verify session exists
         self.get(session_id)?;
 
-        let messages = self
-            .messages
-            .read()
-            .map_err(|e| format!("Lock error: {}", e))?;
-
+        let messages = self.messages.read();
         Ok(messages.get(session_id).cloned().unwrap_or_else(Vec::new))
     }
 

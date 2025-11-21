@@ -6,6 +6,7 @@
 //! 4. Executes tools (with permission checking)
 //! 5. Loops until complete
 
+use crate::logging::{log_llm_interaction, LLMLogEntry, LogMessage, LogTokens};
 use crate::{
     agent::{AgentInfo, AgentRegistry, SystemPromptBuilder},
     providers::ProviderClient,
@@ -18,15 +19,18 @@ use async_openai::types::{
     ChatCompletionRequestSystemMessageArgs, ChatCompletionRequestUserMessageArgs,
     ChatCompletionRequestUserMessageContent, ChatCompletionRequestUserMessageContentPart,
 };
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::sync::Arc;
+use tokio_util::sync::CancellationToken;
 
 pub struct AgentExecutor {
     provider: ProviderClient,
     tools: Arc<ToolRegistry>,
     session_store: Arc<SessionStore>,
     agent_registry: Arc<AgentRegistry>,
+    #[allow(dead_code)]
     lock_manager: Arc<crate::session::SessionLockManager>,
+    cancellation: CancellationToken,
 }
 
 impl AgentExecutor {
@@ -43,7 +47,23 @@ impl AgentExecutor {
             session_store,
             agent_registry,
             lock_manager,
+            cancellation: CancellationToken::new(),
         }
+    }
+
+    /// Get a clone of the cancellation token (for sharing with abort endpoint)
+    pub fn cancellation_token(&self) -> CancellationToken {
+        self.cancellation.clone()
+    }
+
+    /// Abort the current execution
+    pub fn abort(&self) {
+        self.cancellation.cancel();
+    }
+
+    /// Check if execution has been aborted
+    pub fn is_aborted(&self) -> bool {
+        self.cancellation.is_cancelled()
     }
 
     /// Execute a turn - this is the main ReACT loop
@@ -123,6 +143,11 @@ impl AgentExecutor {
 
         let max_iterations = 10;
         for _iteration in 0..max_iterations {
+            // Check abort at start of each iteration
+            if self.is_aborted() {
+                return Err("Session aborted".to_string());
+            }
+
             // Call LLM with tools, using agent's temperature and top_p
             let response = self
                 .provider
@@ -199,12 +224,22 @@ impl AgentExecutor {
                         },
                     });
 
+                    // Check if aborted before executing tool
+                    if self.is_aborted() {
+                        return Err("Session aborted".to_string());
+                    }
+
                     // Execute tool with context
                     let tool_ctx = crate::tools::ToolContext {
                         session_id: session_id.to_string(),
                         message_id: message_id.clone(),
                         agent: agent_id.to_string(),
                         working_dir: working_dir.to_path_buf(),
+                        project_root: crate::tools::find_project_root(working_dir),
+                        call_id: Some(tool_call.id.clone()),
+                        provider_id: Some(self.provider.config().name.clone()),
+                        model_id: Some(self.provider.config().default_model.clone()),
+                        abort: Some(self.cancellation.clone()),
                     };
 
                     tracing::info!("Executing tool: {} with args: {:?}", tool_name, args);
@@ -307,6 +342,65 @@ impl AgentExecutor {
             total_output_tokens,
             total_cost
         );
+
+        // Log full interaction for debugging (when CROW_VERBOSE_LOG=1)
+        let log_messages: Vec<LogMessage> = llm_messages
+            .iter()
+            .filter_map(|msg| match msg {
+                ChatCompletionRequestMessage::System(m) => Some(LogMessage {
+                    role: "system".to_string(),
+                    content: match &m.content {
+                        async_openai::types::ChatCompletionRequestSystemMessageContent::Text(t) => {
+                            t.clone()
+                        }
+                        _ => "[non-text]".to_string(),
+                    },
+                }),
+                ChatCompletionRequestMessage::User(m) => Some(LogMessage {
+                    role: "user".to_string(),
+                    content: match &m.content {
+                        ChatCompletionRequestUserMessageContent::Text(t) => t.clone(),
+                        _ => "[non-text]".to_string(),
+                    },
+                }),
+                ChatCompletionRequestMessage::Assistant(m) => Some(LogMessage {
+                    role: "assistant".to_string(),
+                    content: m.content.clone().map(|c| {
+                        match c {
+                            async_openai::types::ChatCompletionRequestAssistantMessageContent::Text(t) => t,
+                            _ => "[non-text]".to_string(),
+                        }
+                    }).unwrap_or_default(),
+                }),
+                _ => None,
+            })
+            .collect();
+
+        // Extract system prompt from first message
+        let system_prompt = log_messages
+            .first()
+            .filter(|m| m.role == "system")
+            .map(|m| m.content.clone())
+            .unwrap_or_default();
+
+        log_llm_interaction(LLMLogEntry {
+            timestamp: chrono::Utc::now().to_rfc3339(),
+            session_id: session_id.to_string(),
+            message_id: message_id.clone(),
+            agent: agent_id.to_string(),
+            provider: self.provider.config().name.clone(),
+            model: self.provider.config().default_model.clone(),
+            system_prompt,
+            messages: log_messages,
+            tools: tool_defs.iter().map(|t| t.function.name.clone()).collect(),
+            response: None, // Could add final response here
+            tokens: Some(LogTokens {
+                input: total_input_tokens,
+                output: total_output_tokens,
+            }),
+            cost: Some(total_cost),
+            duration_ms: None, // Could track timing
+        });
 
         // Create assistant message with actual token counts and cost
         let assistant_message = MessageWithParts {

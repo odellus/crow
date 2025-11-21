@@ -5,9 +5,9 @@ use crate::agent::{AgentExecutor, AgentRegistry};
 use crate::providers::ProviderClient;
 use crate::session::SessionStore;
 use crate::tools::{Tool, ToolResult, ToolStatus};
-use crate::types::{Message, MessagePath, MessageTime, Part, Session, SessionTime};
+use crate::types::{Message, MessageTime, Part};
 use async_trait::async_trait;
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 use serde_json::{json, Value};
 use std::sync::Arc;
 
@@ -83,7 +83,7 @@ struct TaskInput {
 pub struct TaskTool {
     session_store: Arc<SessionStore>,
     agent_registry: Arc<AgentRegistry>,
-    tool_registry: Arc<std::sync::RwLock<Option<Arc<crate::tools::ToolRegistry>>>>,
+    tool_registry: Arc<parking_lot::RwLock<Option<Arc<crate::tools::ToolRegistry>>>>,
     lock_manager: Arc<crate::session::SessionLockManager>,
     provider_config: crate::providers::ProviderConfig,
     description: String,
@@ -93,7 +93,7 @@ impl TaskTool {
     pub async fn new(
         session_store: Arc<SessionStore>,
         agent_registry: Arc<AgentRegistry>,
-        tool_registry: Arc<std::sync::RwLock<Option<Arc<crate::tools::ToolRegistry>>>>,
+        tool_registry: Arc<parking_lot::RwLock<Option<Arc<crate::tools::ToolRegistry>>>>,
         lock_manager: Arc<crate::session::SessionLockManager>,
         provider_config: crate::providers::ProviderConfig,
     ) -> Self {
@@ -186,8 +186,7 @@ impl Tool for TaskTool {
             };
         }
 
-        // Create child session ID
-        let child_session_id = format!("ses-{}", uuid::Uuid::new_v4());
+        // Get current time
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap()
@@ -260,24 +259,14 @@ impl Tool for TaskTool {
             }
         };
 
-        // Get tool registry from the RwLock
-        let tool_registry = match self.tool_registry.read() {
-            Ok(guard) => match guard.as_ref() {
-                Some(reg) => reg.clone(),
-                None => {
-                    return ToolResult {
-                        status: ToolStatus::Error,
-                        output: String::new(),
-                        error: Some("Tool registry not initialized".to_string()),
-                        metadata: json!({}),
-                    };
-                }
-            },
-            Err(e) => {
+        // Get tool registry from the RwLock (parking_lot doesn't poison)
+        let tool_registry = match self.tool_registry.read().as_ref() {
+            Some(reg) => reg.clone(),
+            None => {
                 return ToolResult {
                     status: ToolStatus::Error,
                     output: String::new(),
-                    error: Some(format!("Failed to access tool registry: {}", e)),
+                    error: Some("Tool registry not initialized".to_string()),
                     metadata: json!({}),
                 };
             }
@@ -343,18 +332,18 @@ mod tests {
     use super::*;
     use std::path::PathBuf;
 
-    fn create_test_tool() -> TaskTool {
+    async fn create_test_tool() -> TaskTool {
         let session_store = Arc::new(SessionStore::new());
         let agent_registry = Arc::new(AgentRegistry::new());
-        let tool_registry = Arc::new(std::sync::RwLock::new(Some(Arc::new(
+        let tool_registry = Arc::new(parking_lot::RwLock::new(Some(Arc::new(
             crate::tools::ToolRegistry::new(),
         ))));
         let lock_manager = Arc::new(crate::session::SessionLockManager::new());
         let provider_config = crate::providers::ProviderConfig {
-            provider: "moonshotai".to_string(),
-            model: "kimi-k2-thinking".to_string(),
-            api_key: "test-key".to_string(),
-            base_url: None,
+            name: "moonshotai".to_string(),
+            base_url: "https://api.moonshot.ai/v1".to_string(),
+            api_key_env: "MOONSHOT_API_KEY".to_string(),
+            default_model: "kimi-k2-thinking".to_string(),
         };
 
         TaskTool::new(
@@ -364,20 +353,21 @@ mod tests {
             lock_manager,
             provider_config,
         )
+        .await
     }
 
     fn create_test_context() -> crate::tools::ToolContext {
-        crate::tools::ToolContext {
-            session_id: "test-session".to_string(),
-            message_id: "test-message".to_string(),
-            agent: "build".to_string(),
-            working_dir: PathBuf::from("/tmp/test"),
-        }
+        crate::tools::ToolContext::new(
+            "test-session".to_string(),
+            "test-message".to_string(),
+            "build".to_string(),
+            PathBuf::from("/tmp/test"),
+        )
     }
 
     #[tokio::test]
     async fn test_task_tool_validation() {
-        let tool = create_test_tool();
+        let tool = create_test_tool().await;
         let ctx = create_test_context();
 
         // Test missing parameters
@@ -389,7 +379,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_task_tool_invalid_agent() {
-        let tool = create_test_tool();
+        let tool = create_test_tool().await;
         let ctx = create_test_context();
 
         let result = tool

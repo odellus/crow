@@ -26,6 +26,15 @@ pub mod auth;
 pub mod global;
 
 #[cfg(feature = "server")]
+pub mod config;
+
+#[cfg(feature = "server")]
+pub mod logging;
+
+#[cfg(feature = "server")]
+pub mod utils;
+
+#[cfg(feature = "server")]
 pub mod server;
 #[cfg(feature = "server")]
 pub use server::*;

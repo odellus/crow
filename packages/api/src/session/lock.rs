@@ -3,7 +3,13 @@
 
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, RwLock};
+use std::sync::Arc;
+
+#[cfg(feature = "server")]
+use parking_lot::RwLock;
+
+#[cfg(not(feature = "server"))]
+use std::sync::RwLock;
 
 /// Session lock with abort signal
 pub struct SessionLock {
@@ -53,8 +59,27 @@ impl SessionLockManager {
     }
 
     /// Acquire lock for a session
+    #[cfg(feature = "server")]
     pub fn acquire(&self, session_id: &str) -> Result<Arc<SessionLock>, String> {
-        let mut locks = self.locks.write().unwrap();
+        let mut locks = self.locks.write();
+
+        if locks.contains_key(session_id) {
+            return Err(format!("Session {} is already locked", session_id));
+        }
+
+        let lock = Arc::new(SessionLock::new(session_id.to_string()));
+        locks.insert(session_id.to_string(), lock.clone());
+
+        eprintln!("[LOCK] Acquired lock for session {}", session_id);
+        Ok(lock)
+    }
+
+    #[cfg(not(feature = "server"))]
+    pub fn acquire(&self, session_id: &str) -> Result<Arc<SessionLock>, String> {
+        let mut locks = self
+            .locks
+            .write()
+            .map_err(|e| format!("Lock error: {}", e))?;
 
         if locks.contains_key(session_id) {
             return Err(format!("Session {} is already locked", session_id));
@@ -68,21 +93,55 @@ impl SessionLockManager {
     }
 
     /// Release lock for a session
+    #[cfg(feature = "server")]
     pub fn release(&self, session_id: &str) {
-        let mut locks = self.locks.write().unwrap();
+        let mut locks = self.locks.write();
         locks.remove(session_id);
         eprintln!("[LOCK] Released lock for session {}", session_id);
     }
 
+    #[cfg(not(feature = "server"))]
+    pub fn release(&self, session_id: &str) {
+        if let Ok(mut locks) = self.locks.write() {
+            locks.remove(session_id);
+            eprintln!("[LOCK] Released lock for session {}", session_id);
+        }
+    }
+
     /// Get existing lock (if any)
+    #[cfg(feature = "server")]
     pub fn get(&self, session_id: &str) -> Option<Arc<SessionLock>> {
-        let locks = self.locks.read().unwrap();
+        let locks = self.locks.read();
+        locks.get(session_id).cloned()
+    }
+
+    #[cfg(not(feature = "server"))]
+    pub fn get(&self, session_id: &str) -> Option<Arc<SessionLock>> {
+        let locks = self.locks.read().ok()?;
         locks.get(session_id).cloned()
     }
 
     /// Abort a session (sets abort signal on its lock)
+    #[cfg(feature = "server")]
     pub fn abort(&self, session_id: &str) -> Result<(), String> {
-        let locks = self.locks.read().unwrap();
+        let locks = self.locks.read();
+        if let Some(lock) = locks.get(session_id) {
+            lock.abort();
+            Ok(())
+        } else {
+            Err(format!(
+                "Session {} is not locked (not running)",
+                session_id
+            ))
+        }
+    }
+
+    #[cfg(not(feature = "server"))]
+    pub fn abort(&self, session_id: &str) -> Result<(), String> {
+        let locks = self
+            .locks
+            .read()
+            .map_err(|e| format!("Lock error: {}", e))?;
         if let Some(lock) = locks.get(session_id) {
             lock.abort();
             Ok(())
@@ -95,9 +154,19 @@ impl SessionLockManager {
     }
 
     /// Check if session is currently locked
+    #[cfg(feature = "server")]
     pub fn is_locked(&self, session_id: &str) -> bool {
-        let locks = self.locks.read().unwrap();
+        let locks = self.locks.read();
         locks.contains_key(session_id)
+    }
+
+    #[cfg(not(feature = "server"))]
+    pub fn is_locked(&self, session_id: &str) -> bool {
+        if let Ok(locks) = self.locks.read() {
+            locks.contains_key(session_id)
+        } else {
+            false
+        }
     }
 }
 

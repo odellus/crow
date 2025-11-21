@@ -1,10 +1,7 @@
 use super::ProviderConfig;
 use async_openai::{
     config::OpenAIConfig,
-    types::{
-        ChatCompletionRequestMessage, ChatCompletionTool, CreateChatCompletionRequestArgs,
-        FunctionObject,
-    },
+    types::{ChatCompletionRequestMessage, ChatCompletionTool, CreateChatCompletionRequestArgs},
     Client,
 };
 

@@ -116,7 +116,17 @@ IMPORTANT: When the user asks you to create a pull request, follow these steps c
         })
     }
 
-    async fn execute(&self, input: Value, _ctx: &ToolContext) -> ToolResult {
+    async fn execute(&self, input: Value, ctx: &ToolContext) -> ToolResult {
+        // Check abort before starting
+        if ctx.should_abort() {
+            return ToolResult {
+                status: ToolStatus::Error,
+                output: String::new(),
+                error: Some("Aborted".to_string()),
+                metadata: json!({}),
+            };
+        }
+
         // Parse input
         let bash_input: BashInput = match serde_json::from_value(input) {
             Ok(i) => i,
@@ -130,25 +140,82 @@ IMPORTANT: When the user asks you to create a pull request, follow these steps c
             }
         };
 
-        // Execute command
-        let output = match Command::new("bash")
+        // Execute command with cancellation support
+        let child = Command::new("bash")
             .arg("-c")
             .arg(&bash_input.command)
             .current_dir(&bash_input.cwd)
-            .output()
-            .await
-        {
-            Ok(output) => output,
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .spawn();
+
+        let child = match child {
+            Ok(child) => child,
             Err(e) => {
                 return ToolResult {
                     status: ToolStatus::Error,
                     output: String::new(),
-                    error: Some(format!("Failed to execute command: {}", e)),
+                    error: Some(format!("Failed to spawn command: {}", e)),
                     metadata: json!({
                         "command": bash_input.command,
                         "cwd": bash_input.cwd,
                     }),
                 };
+            }
+        };
+
+        // Wait for command with cancellation support
+        let output = if let Some(cancel_token) = &ctx.abort {
+            let cancel_token = cancel_token.clone();
+            let wait_future = child.wait_with_output();
+
+            tokio::select! {
+                biased;
+                _ = cancel_token.cancelled() => {
+                    // Note: child is moved into wait_future, but we can't kill it after select
+                    // The process will be orphaned but will eventually complete
+                    return ToolResult {
+                        status: ToolStatus::Error,
+                        output: String::new(),
+                        error: Some("Aborted".to_string()),
+                        metadata: json!({
+                            "command": bash_input.command,
+                            "cwd": bash_input.cwd,
+                            "aborted": true,
+                        }),
+                    };
+                }
+                result = wait_future => {
+                    match result {
+                        Ok(output) => output,
+                        Err(e) => {
+                            return ToolResult {
+                                status: ToolStatus::Error,
+                                output: String::new(),
+                                error: Some(format!("Failed to execute command: {}", e)),
+                                metadata: json!({
+                                    "command": bash_input.command,
+                                    "cwd": bash_input.cwd,
+                                }),
+                            };
+                        }
+                    }
+                }
+            }
+        } else {
+            match child.wait_with_output().await {
+                Ok(output) => output,
+                Err(e) => {
+                    return ToolResult {
+                        status: ToolStatus::Error,
+                        output: String::new(),
+                        error: Some(format!("Failed to execute command: {}", e)),
+                        metadata: json!({
+                            "command": bash_input.command,
+                            "cwd": bash_input.cwd,
+                        }),
+                    };
+                }
             }
         };
 
@@ -196,7 +263,12 @@ mod tests {
             "command": "echo 'hello world'"
         });
 
-        let ctx = crate::tools::ToolContext { session_id: "test".to_string(), message_id: "test".to_string(), agent: "test".to_string(), working_dir: std::path::PathBuf::from("/tmp") };
+        let ctx = crate::tools::ToolContext::new(
+            "test".to_string(),
+            "test".to_string(),
+            "test".to_string(),
+            std::path::PathBuf::from("/tmp"),
+        );
         let result = tool.execute(input, &ctx).await;
         assert_eq!(result.status, ToolStatus::Completed);
 
@@ -212,7 +284,12 @@ mod tests {
             "command": "exit 1"
         });
 
-        let ctx = crate::tools::ToolContext { session_id: "test".to_string(), message_id: "test".to_string(), agent: "test".to_string(), working_dir: std::path::PathBuf::from("/tmp") };
+        let ctx = crate::tools::ToolContext::new(
+            "test".to_string(),
+            "test".to_string(),
+            "test".to_string(),
+            std::path::PathBuf::from("/tmp"),
+        );
         let result = tool.execute(input, &ctx).await;
         assert_eq!(result.status, ToolStatus::Error);
         assert!(result.error.is_some());

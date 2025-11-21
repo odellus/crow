@@ -8,7 +8,7 @@ use axum::{
     routing::{delete, get, patch, post},
     Json, Router,
 };
-use futures::stream::{self, Stream};
+use futures::stream::Stream;
 use std::convert::Infallible;
 use std::sync::Arc;
 use std::time::Duration;
@@ -16,6 +16,7 @@ use tower_http::cors::CorsLayer;
 
 use crate::{
     agent::{AgentExecutor, AgentRegistry},
+    config::ConfigLoader,
     providers::ProviderConfig,
     session::{MessageWithParts, SessionLockManager, SessionStore},
     tools::ToolRegistry,
@@ -62,6 +63,22 @@ pub fn create_router() -> Router {
 
 /// Initialize storage and build router
 pub async fn create_router_with_storage() -> Result<Router, String> {
+    // Load configuration
+    let config_loader = ConfigLoader::new();
+    let config = config_loader.load().unwrap_or_else(|e| {
+        tracing::warn!("Failed to load config, using defaults: {}", e);
+        crate::config::Config::default()
+    });
+
+    // Get provider config from loaded config
+    let provider_config = get_provider_config_from_config(&config);
+
+    tracing::info!(
+        "Loaded config: model={:?}, provider={}",
+        config.model,
+        provider_config.name
+    );
+
     let session_store = Arc::new(SessionStore::new());
 
     // Initialize storage and load existing data
@@ -74,7 +91,6 @@ pub async fn create_router_with_storage() -> Result<Router, String> {
 
     let agent_registry = Arc::new(AgentRegistry::new());
     let lock_manager = Arc::new(SessionLockManager::new());
-    let provider_config = ProviderConfig::moonshot();
 
     // Create tool registry with dependencies for Task tool
     let tool_registry = ToolRegistry::new_with_deps(
@@ -254,7 +270,7 @@ struct SendMessageRequest {
 }
 
 fn default_agent() -> String {
-    "default".to_string()
+    "build".to_string()
 }
 
 async fn send_message(
@@ -584,12 +600,12 @@ async fn test_tool(
     Json(input): Json<serde_json::Value>,
 ) -> Result<Json<crate::tools::ToolResult>, (StatusCode, String)> {
     // Create test context
-    let ctx = crate::tools::ToolContext {
-        session_id: "test-session".to_string(),
-        message_id: "test-message".to_string(),
-        agent: "test".to_string(),
-        working_dir: std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from(".")),
-    };
+    let ctx = crate::tools::ToolContext::new(
+        "test-session".to_string(),
+        "test-message".to_string(),
+        "test".to_string(),
+        std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from(".")),
+    );
 
     state
         .tool_registry
@@ -811,6 +827,7 @@ async fn list_tool_ids(
 
 /// GET /experimental/tool - List tools with schemas
 #[derive(serde::Deserialize)]
+#[allow(dead_code)]
 struct ListToolsQuery {
     provider: Option<String>,
     model: Option<String>,
@@ -848,4 +865,57 @@ async fn list_agents(
         .collect();
 
     Ok(Json(agent_list))
+}
+
+/// Convert loaded Config to ProviderConfig
+fn get_provider_config_from_config(config: &crate::config::Config) -> ProviderConfig {
+    // Get default model from config
+    let (provider_id, model_id) = config.get_default_model();
+
+    // Check if we have provider-specific config
+    if let Some(providers) = &config.provider {
+        if let Some(provider_cfg) = providers.get(&provider_id) {
+            if let Some(options) = &provider_cfg.options {
+                // Build custom provider config from loaded settings
+                let base_url =
+                    options
+                        .base_url
+                        .clone()
+                        .unwrap_or_else(|| match provider_id.as_str() {
+                            "moonshotai" => "https://api.moonshot.ai/v1".to_string(),
+                            "openai" => "https://api.openai.com/v1".to_string(),
+                            "anthropic" => "https://api.anthropic.com/v1".to_string(),
+                            _ => "http://localhost:8080/v1".to_string(),
+                        });
+
+                let api_key_env = match provider_id.as_str() {
+                    "moonshotai" => "MOONSHOT_API_KEY",
+                    "openai" => "OPENAI_API_KEY",
+                    "anthropic" => "ANTHROPIC_API_KEY",
+                    _ => "API_KEY",
+                };
+
+                return ProviderConfig::custom(
+                    provider_id.clone(),
+                    base_url,
+                    api_key_env.to_string(),
+                    model_id,
+                );
+            }
+        }
+    }
+
+    // Fall back to built-in provider configs
+    match provider_id.as_str() {
+        "openai" => {
+            let mut cfg = ProviderConfig::openai();
+            cfg.default_model = model_id;
+            cfg
+        }
+        "moonshotai" | _ => {
+            let mut cfg = ProviderConfig::moonshot();
+            cfg.default_model = model_id;
+            cfg
+        }
+    }
 }

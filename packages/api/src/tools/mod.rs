@@ -4,6 +4,7 @@
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use tokio_util::sync::CancellationToken;
 
 pub mod bash;
 pub mod edit;
@@ -14,6 +15,7 @@ pub mod read;
 pub mod task;
 pub mod todoread;
 pub mod todowrite;
+pub mod webfetch;
 pub mod websearch;
 pub mod work_completed;
 pub mod write;
@@ -27,6 +29,7 @@ pub use read::ReadTool;
 pub use task::TaskTool;
 pub use todoread::TodoReadTool;
 pub use todowrite::TodoWriteTool;
+pub use webfetch::WebFetchTool;
 pub use websearch::WebSearchTool;
 pub use work_completed::WorkCompletedTool;
 pub use write::WriteTool;
@@ -54,10 +57,75 @@ pub enum ToolStatus {
 /// Tool execution context - provides session and environment info
 #[derive(Clone)]
 pub struct ToolContext {
+    // Required fields
     pub session_id: String,
     pub message_id: String,
     pub agent: String,
     pub working_dir: std::path::PathBuf,
+
+    // Additional context matching OpenCode
+    pub project_root: std::path::PathBuf, // Git root or working_dir
+    pub call_id: Option<String>,          // Unique tool call ID
+    pub provider_id: Option<String>,      // LLM provider
+    pub model_id: Option<String>,         // LLM model
+
+    // Cancellation support
+    pub abort: Option<CancellationToken>, // Cancellation token for aborting
+}
+
+impl ToolContext {
+    /// Get project root, defaulting to working_dir
+    pub fn root(&self) -> &std::path::Path {
+        &self.project_root
+    }
+
+    /// Check if tool should abort
+    pub fn should_abort(&self) -> bool {
+        self.abort
+            .as_ref()
+            .map(|t| t.is_cancelled())
+            .unwrap_or(false)
+    }
+
+    /// Create a basic context (for backwards compatibility)
+    pub fn new(
+        session_id: String,
+        message_id: String,
+        agent: String,
+        working_dir: std::path::PathBuf,
+    ) -> Self {
+        let project_root = find_project_root(&working_dir);
+        Self {
+            session_id,
+            message_id,
+            agent,
+            working_dir,
+            project_root,
+            call_id: None,
+            provider_id: None,
+            model_id: None,
+            abort: None,
+        }
+    }
+}
+
+/// Find project root (git root or current directory)
+pub fn find_project_root(working_dir: &std::path::Path) -> std::path::PathBuf {
+    // Try git root first
+    let output = std::process::Command::new("git")
+        .args(["rev-parse", "--show-toplevel"])
+        .current_dir(working_dir)
+        .output();
+
+    if let Ok(output) = output {
+        if output.status.success() {
+            let root = String::from_utf8_lossy(&output.stdout).trim().to_string();
+            return std::path::PathBuf::from(root);
+        }
+    }
+
+    // Fall back to working directory
+    working_dir.to_path_buf()
 }
 
 /// Tool trait that all tools must implement
@@ -100,7 +168,8 @@ impl ToolRegistry {
             // Todo management (critical for planning!)
             Box::new((*todo_write_shared).clone()),
             Box::new(TodoReadTool::new(todo_write_shared)),
-            // Web search
+            // Web tools
+            Box::new(WebFetchTool),
             Box::new(WebSearchTool::new()),
             // Note: TaskTool requires dependencies, use new_with_deps() instead
             // Dual-agent discriminator tool
@@ -120,8 +189,8 @@ impl ToolRegistry {
         // Create shared TodoWrite tool for TodoRead to reference
         let todo_write_shared = std::sync::Arc::new(TodoWriteTool::new());
 
-        // Create registry Arc that we'll populate
-        let registry = std::sync::Arc::new(std::sync::RwLock::new(None::<std::sync::Arc<Self>>));
+        // Create registry Arc that we'll populate (using parking_lot to avoid poisoning)
+        let registry = std::sync::Arc::new(parking_lot::RwLock::new(None::<std::sync::Arc<Self>>));
         let registry_for_task = registry.clone();
 
         // Create tools including Task tool (it will get the registry later via Arc)
@@ -137,7 +206,8 @@ impl ToolRegistry {
             // Todo management (critical for planning!)
             Box::new((*todo_write_shared).clone()),
             Box::new(TodoReadTool::new(todo_write_shared)),
-            // Web search
+            // Web tools
+            Box::new(WebFetchTool),
             Box::new(WebSearchTool::new()),
             // Subagent spawning with dependencies
             Box::new(
@@ -157,7 +227,7 @@ impl ToolRegistry {
         let tool_registry = std::sync::Arc::new(Self { tools });
 
         // Store the registry reference for TaskTool to use
-        *registry.write().unwrap() = Some(tool_registry.clone());
+        *registry.write() = Some(tool_registry.clone());
 
         tool_registry
     }

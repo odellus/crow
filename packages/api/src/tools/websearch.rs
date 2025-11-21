@@ -207,7 +207,7 @@ mod tests {
     async fn test_websearch_schema() {
         let tool = WebSearchTool::new();
         assert_eq!(tool.name(), "websearch");
-        let params = tool.parameters();
+        let params = tool.parameters_schema();
         assert!(params["properties"]["query"].is_object());
         assert!(params["properties"]["limit"].is_object());
     }

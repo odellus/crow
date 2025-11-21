@@ -7,7 +7,13 @@ use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::collections::HashMap;
-use std::sync::{Arc, RwLock};
+use std::sync::Arc;
+
+#[cfg(feature = "server")]
+use parking_lot::RwLock;
+
+#[cfg(not(feature = "server"))]
+use std::sync::RwLock;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TodoItem {
@@ -39,12 +45,21 @@ impl TodoWriteTool {
         }
     }
 
+    #[cfg(feature = "server")]
     pub fn get_todos(&self, session_id: &str) -> Vec<TodoItem> {
         self.todos
             .read()
-            .unwrap()
             .get(session_id)
             .cloned()
+            .unwrap_or_default()
+    }
+
+    #[cfg(not(feature = "server"))]
+    pub fn get_todos(&self, session_id: &str) -> Vec<TodoItem> {
+        self.todos
+            .read()
+            .ok()
+            .and_then(|todos| todos.get(session_id).cloned())
             .unwrap_or_default()
     }
 }
@@ -123,9 +138,16 @@ impl Tool for TodoWriteTool {
         let session_id = &ctx.session_id;
 
         // Store todos in memory
+        #[cfg(feature = "server")]
         {
-            let mut todos = self.todos.write().unwrap();
+            let mut todos = self.todos.write();
             todos.insert(session_id.clone(), todo_input.todos.clone());
+        }
+        #[cfg(not(feature = "server"))]
+        {
+            if let Ok(mut todos) = self.todos.write() {
+                todos.insert(session_id.clone(), todo_input.todos.clone());
+            }
         }
 
         // Persist to disk (like OpenCode does)
@@ -189,12 +211,12 @@ mod tests {
             ]
         });
 
-        let ctx = crate::tools::ToolContext {
-            session_id: "test".to_string(),
-            message_id: "test".to_string(),
-            agent: "test".to_string(),
-            working_dir: std::path::PathBuf::from("/tmp"),
-        };
+        let ctx = crate::tools::ToolContext::new(
+            "test".to_string(),
+            "test".to_string(),
+            "test".to_string(),
+            std::path::PathBuf::from("/tmp"),
+        );
         let result = tool.execute(input, &ctx).await;
         assert_eq!(result.status, ToolStatus::Completed);
 

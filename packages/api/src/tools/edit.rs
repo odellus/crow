@@ -198,7 +198,12 @@ mod tests {
             "newString": "Hello Crow"
         });
 
-        let ctx = crate::tools::ToolContext { session_id: "test".to_string(), message_id: "test".to_string(), agent: "test".to_string(), working_dir: std::path::PathBuf::from("/tmp") };
+        let ctx = crate::tools::ToolContext::new(
+            "test".to_string(),
+            "test".to_string(),
+            "test".to_string(),
+            std::path::PathBuf::from("/tmp"),
+        );
         let result = tool.execute(input, &ctx).await;
         assert_eq!(result.status, ToolStatus::Completed);
 
@@ -221,7 +226,12 @@ mod tests {
             "replace_all": true
         });
 
-        let ctx = crate::tools::ToolContext { session_id: "test".to_string(), message_id: "test".to_string(), agent: "test".to_string(), working_dir: std::path::PathBuf::from("/tmp") };
+        let ctx = crate::tools::ToolContext::new(
+            "test".to_string(),
+            "test".to_string(),
+            "test".to_string(),
+            std::path::PathBuf::from("/tmp"),
+        );
         let result = tool.execute(input, &ctx).await;
         assert_eq!(result.status, ToolStatus::Completed);
 

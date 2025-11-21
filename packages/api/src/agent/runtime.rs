@@ -4,13 +4,11 @@
 use super::dual::{AgentRole, DualAgentResult, RawMessage, SessionType, SharedConversation};
 use super::executor::AgentExecutor;
 use super::perspective::{transform_for_discriminator, transform_for_executor};
-use super::types::AgentInfo;
 use super::AgentRegistry;
 use crate::providers::ProviderClient;
-use crate::session::{MessageWithParts, SessionExport, SessionStore};
-use crate::storage::CrowStorage;
+use crate::session::SessionStore;
 use crate::tools::ToolRegistry;
-use crate::types::{Message, Part};
+use crate::types::Part;
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -41,7 +39,7 @@ impl DualAgentRuntime {
     /// Create a new dual-agent pair for a task
     pub fn create_sessions(
         task: String,
-        project_id: String,
+        _project_id: String,
     ) -> (SessionType, SessionType, SharedConversation) {
         let executor_id = format!("ses-{}", uuid::Uuid::new_v4());
         let discriminator_id = format!("ses-{}", uuid::Uuid::new_v4());
@@ -77,12 +75,12 @@ impl DualAgentRuntime {
         shared_conversation: &mut SharedConversation,
         working_dir: &PathBuf,
     ) -> Result<DualAgentResult, String> {
-        let executor_agent = self
+        let _executor_agent = self
             .agents
             .get("build")
             .await
             .ok_or("Build agent not found")?;
-        let discriminator_agent = self
+        let _discriminator_agent = self
             .agents
             .get("discriminator")
             .await
@@ -137,7 +135,7 @@ impl DualAgentRuntime {
             match current_agent {
                 AgentRole::Executor => {
                     // Executor turn - get their view of the conversation
-                    let executor_view = transform_for_executor(
+                    let _executor_view = transform_for_executor(
                         &shared_conversation.messages,
                         &shared_conversation.executor_session_id,
                     );
@@ -168,7 +166,7 @@ impl DualAgentRuntime {
                 }
                 AgentRole::Discriminator => {
                     // Discriminator turn - get their view of the conversation
-                    let discriminator_view = transform_for_discriminator(
+                    let _discriminator_view = transform_for_discriminator(
                         &shared_conversation.messages,
                         &shared_conversation.discriminator_session_id,
                     );

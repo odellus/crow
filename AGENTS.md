@@ -262,7 +262,75 @@ Browser → Dioxus Web (port 8080)
 | BashOutput | ❌ TODO | Background bash |
 | KillShell | ❌ TODO | Kill background |
 
-## Testing Results (2025-11-17)
+## Running Crow
+
+### Prerequisites
+
+1. **SearXNG** running on `localhost:8082` (for websearch tool)
+2. **Auth configured** at `~/.local/share/crow/auth.json`:
+   ```json
+   {"moonshotai":{"type":"api","key":"your-api-key-here"}}
+   ```
+
+### Build & Run
+
+```bash
+# Build the server
+cd crow/packages/api
+cargo build --release --features server --bin crow-serve
+
+# Run the server
+cd crow
+./target/release/crow-serve
+# Server starts on http://127.0.0.1:7070
+```
+
+### Testing the API
+
+```bash
+# Create a session
+SESSION=$(curl -s -X POST http://127.0.0.1:7070/session \
+  -H "Content-Type: application/json" \
+  -d '{"directory": "/tmp"}' | jq -r '.id')
+
+# Send a message
+curl -s -X POST "http://127.0.0.1:7070/session/$SESSION/message" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "agent": "build",
+    "parts": [{"type": "text", "text": "Use websearch to find Rust 2024 features"}]
+  }' | jq '.parts[] | select(.type == "tool") | .tool'
+
+# List all tools
+curl -s http://127.0.0.1:7070/experimental/tool/ids | jq '.'
+```
+
+### Troubleshooting
+
+**Lock poisoning error:** `Lock error: poisoned lock: another task failed inside`
+
+This happens when the server panics during a request. The RwLock becomes poisoned and all subsequent requests fail.
+
+**Solution:** Restart the server
+```bash
+pkill -9 crow-serve
+./target/release/crow-serve
+```
+
+**Empty responses or timeouts:**
+- Check that Moonshot API key is valid in `~/.local/share/crow/auth.json`
+- Check that SearXNG is running: `curl http://localhost:8082/search?q=test&format=json`
+- Check server logs: `~/.local/share/crow/log/`
+
+### Storage Locations
+
+- **Sessions & Messages:** `~/.local/share/crow/storage/`
+- **Auth:** `~/.local/share/crow/auth.json`
+- **Logs:** `~/.local/share/crow/log/`
+
+---
+
+## Testing Results (2025-11-19)
 
 **Successful Tests:**
 ```bash
@@ -271,7 +339,7 @@ Browser → Dioxus Web (port 8080)
 ✅ Subagent spawning via Task tool
 ✅ Child session creation with parentID
 ✅ Todo persistence to session-specific files
-✅ WebSearch with SearXNG
+✅ WebSearch with SearXNG (verified end-to-end)
 ✅ Session management (CRUD)
 ✅ Message persistence
 ✅ Auth.json reading

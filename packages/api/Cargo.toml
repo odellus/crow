@@ -48,10 +48,14 @@ mime_guess = { version = "2.0", optional = true }
 async-trait = { version = "0.1", optional = true }
 regex = { version = "1", optional = true }
 tokio-stream = { version = "0.1", optional = true }
+tokio-util = { version = "0.7", optional = true }
+getrandom = { version = "0.2", optional = true }
+parking_lot = { version = "0.12", optional = true }
 
 # Core dependencies
 dirs = "5"
 chrono = "0.4"
+serde_yaml = "0.9"
 
 [features]
 default = []
@@ -70,4 +74,7 @@ server = [
     "dep:async-trait",
     "dep:regex",
     "dep:tokio-stream",
+    "dep:tokio-util",
+    "dep:getrandom",
+    "dep:parking_lot",
 ]
