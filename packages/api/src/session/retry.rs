@@ -109,6 +109,7 @@ mod tests {
         assert!(!SessionRetry::is_retryable("404 not found"));
     }
 
+    #[cfg(feature = "server")]
     #[tokio::test]
     async fn test_retry_success_on_second_attempt() {
         use std::sync::atomic::{AtomicU32, Ordering};
@@ -134,6 +135,7 @@ mod tests {
         assert_eq!(attempts.load(Ordering::SeqCst), 2);
     }
 
+    #[cfg(feature = "server")]
     #[tokio::test]
     async fn test_retry_fails_on_non_retryable() {
         let result =
