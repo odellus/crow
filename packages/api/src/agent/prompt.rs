@@ -20,7 +20,11 @@ impl SystemPromptBuilder {
         }
     }
 
-    /// Build the complete system prompt as a single string
+    /// Build the complete system prompt as two messages (matching OpenCode exactly)
+    ///
+    /// Returns Vec<String> with exactly 2 elements:
+    /// - First: Header (provider-specific)
+    /// - Second: All other parts joined with \n
     ///
     /// Layers (in order):
     /// 1. Header (provider-specific)
@@ -30,30 +34,31 @@ impl SystemPromptBuilder {
     ///
     /// NOTE: Dynamic reminders are NOT in system prompt!
     /// They are injected into user messages via insert_reminders() in executor
-    pub fn build(&self, model_id: &str) -> String {
-        let mut prompt = String::new();
+    pub fn build(&self, model_id: &str) -> Vec<String> {
+        let mut system: Vec<String> = vec![];
 
-        // Layer 1: Header
+        // Layer 1: Header (provider-specific)
         let header = self.header();
         if !header.is_empty() {
-            prompt.push_str(&header);
-            prompt.push_str("\n\n");
+            system.push(header);
         }
 
         // Layer 2: Agent prompt or provider default
-        prompt.push_str(&self.agent_or_provider_prompt(model_id));
-        prompt.push_str("\n\n");
+        system.push(self.agent_or_provider_prompt(model_id));
 
         // Layer 3: Environment context
-        prompt.push_str(&self.environment_context());
+        system.push(self.environment_context());
 
         // Layer 4: Custom instructions (if any)
         if let Some(instructions) = self.load_custom_instructions() {
-            prompt.push_str("\n\n");
-            prompt.push_str(&instructions);
+            system.push(instructions);
         }
 
-        prompt
+        // Return exactly 2 messages like OpenCode:
+        // First = first element, Second = rest joined with \n
+        let first = system.remove(0);
+        let rest = system.join("\n");
+        vec![first, rest]
     }
 
     /// Layer 1: Provider-specific header (shameless copy from OpenCode)
@@ -136,121 +141,158 @@ impl SystemPromptBuilder {
         parts.push("</env>".to_string());
 
         // File tree (matches OpenCode's <files> tag)
+        // OpenCode indents with "  " then the tree content directly
         parts.push("<files>".to_string());
         let tree = self.generate_project_tree();
         if !tree.is_empty() {
-            // Indent the tree content
-            for line in tree.lines() {
-                parts.push(format!("  {}", line));
-            }
+            parts.push(format!("  {}", tree));
         }
         parts.push("</files>".to_string());
 
         parts.join("\n")
     }
 
-    /// Generate project tree (ls output)
-    /// Uses simple directory traversal with limits
+    /// Generate project tree using ripgrep (matches OpenCode's Ripgrep.tree() exactly)
+    /// Uses `rg --files --follow --hidden --glob=!.git/*` with breadth-first rendering
+    /// Runs from working_dir like OpenCode does (Instance.directory)
     fn generate_project_tree(&self) -> String {
-        const MAX_ITEMS: usize = 200;
-        const MAX_DEPTH: usize = 5;
+        let limit: usize = 200;
 
-        let mut items = Vec::new();
-        let mut total_items = 0;
+        let output = std::process::Command::new("rg")
+            .args(["--files", "--follow", "--hidden", "--glob=!.git/*"])
+            .current_dir(&self.working_dir)
+            .output();
 
-        self.collect_tree_items(
-            &self.working_dir,
-            0,
-            MAX_DEPTH,
-            &mut items,
-            &mut total_items,
-            MAX_ITEMS,
-        );
-
-        let mut tree = String::new();
-        for (depth, name, is_dir) in &items {
-            let indent = "  ".repeat(*depth);
-            let suffix = if *is_dir { "/" } else { "" };
-            tree.push_str(&format!("{}{}{}\n", indent, name, suffix));
-        }
-
-        if total_items > MAX_ITEMS {
-            tree.push_str(&format!(
-                "\n[{} more items truncated]\n",
-                total_items - MAX_ITEMS
-            ));
-        }
-
-        tree
-    }
-
-    /// Recursively collect tree items with depth limiting
-    fn collect_tree_items(
-        &self,
-        dir: &Path,
-        depth: usize,
-        max_depth: usize,
-        items: &mut Vec<(usize, String, bool)>,
-        total_items: &mut usize,
-        max_items: usize,
-    ) {
-        if depth >= max_depth || items.len() >= max_items {
-            return;
-        }
-
-        let entries = match std::fs::read_dir(dir) {
-            Ok(e) => e,
-            Err(_) => return,
+        let files: Vec<String> = match output {
+            Ok(out) => String::from_utf8_lossy(&out.stdout)
+                .lines()
+                .filter(|l| !l.contains(".opencode"))
+                .map(|s| s.to_string())
+                .collect(),
+            Err(_) => return String::new(),
         };
 
-        let mut entries: Vec<_> = entries.filter_map(|e| e.ok()).collect();
+        #[derive(Default, Clone)]
+        struct Node {
+            path: Vec<String>,
+            children: Vec<Node>,
+        }
 
-        // Sort: directories first, then alphabetically
-        entries.sort_by(|a, b| {
-            let a_is_dir = a.path().is_dir();
-            let b_is_dir = b.path().is_dir();
-
-            match (a_is_dir, b_is_dir) {
-                (true, false) => std::cmp::Ordering::Less,
-                (false, true) => std::cmp::Ordering::Greater,
-                _ => a.file_name().cmp(&b.file_name()),
+        fn get_path<'a>(
+            node: &'a mut Node,
+            parts: &[String],
+            create: bool,
+        ) -> Option<&'a mut Node> {
+            if parts.is_empty() {
+                return Some(node);
             }
-        });
-
-        for entry in entries {
-            if items.len() >= max_items {
-                break;
+            let mut current = node;
+            for part in parts {
+                let idx = current
+                    .children
+                    .iter()
+                    .position(|c| c.path.last() == Some(part));
+                if let Some(i) = idx {
+                    current = &mut current.children[i];
+                } else if create {
+                    let mut new_path = current.path.clone();
+                    new_path.push(part.clone());
+                    current.children.push(Node {
+                        path: new_path,
+                        children: vec![],
+                    });
+                    let len = current.children.len();
+                    current = &mut current.children[len - 1];
+                } else {
+                    return None;
+                }
             }
+            Some(current)
+        }
 
-            *total_items += 1;
+        let mut root = Node::default();
+        for file in &files {
+            let parts: Vec<String> = file.split('/').map(|s| s.to_string()).collect();
+            get_path(&mut root, &parts, true);
+        }
 
-            let file_name = entry.file_name().to_string_lossy().to_string();
-
-            // Skip hidden files and common ignore patterns
-            if file_name.starts_with('.')
-                || file_name == "node_modules"
-                || file_name == "target"
-                || file_name == "__pycache__"
-            {
-                continue;
-            }
-
-            let is_dir = entry.path().is_dir();
-
-            items.push((depth, file_name.clone(), is_dir));
-
-            // Recurse into directories
-            if is_dir {
-                self.collect_tree_items(
-                    &entry.path(),
-                    depth + 1,
-                    max_depth,
-                    items,
-                    total_items,
-                    max_items,
-                );
+        fn sort_node(node: &mut Node) {
+            node.children.sort_by(|a, b| {
+                let a_is_dir = !a.children.is_empty();
+                let b_is_dir = !b.children.is_empty();
+                match (a_is_dir, b_is_dir) {
+                    (true, false) => std::cmp::Ordering::Less,
+                    (false, true) => std::cmp::Ordering::Greater,
+                    _ => a.path.last().cmp(&b.path.last()),
+                }
+            });
+            for child in &mut node.children {
+                sort_node(child);
             }
         }
+        sort_node(&mut root);
+
+        let mut current: Vec<Node> = vec![root.clone()];
+        let mut result = Node {
+            path: vec![],
+            children: vec![],
+        };
+
+        let mut processed = 0;
+        while !current.is_empty() {
+            let mut next = vec![];
+            for node in &current {
+                if !node.children.is_empty() {
+                    next.extend(node.children.clone());
+                }
+            }
+            let max_children = current.iter().map(|n| n.children.len()).max().unwrap_or(0);
+            'outer: for i in 0..max_children {
+                for node in &current {
+                    if i < node.children.len() {
+                        let child = &node.children[i];
+                        get_path(&mut result, &child.path, true);
+                        processed += 1;
+                        if processed >= limit {
+                            break 'outer;
+                        }
+                    }
+                }
+            }
+            if processed >= limit {
+                for node in current.iter().chain(next.iter()) {
+                    if let Some(compare) = get_path(&mut result, &node.path, false) {
+                        if compare.children.len() != node.children.len() {
+                            let diff = node.children.len() - compare.children.len();
+                            let mut trunc_path = compare.path.clone();
+                            trunc_path.push(format!("[{} truncated]", diff));
+                            compare.children.push(Node {
+                                path: trunc_path,
+                                children: vec![],
+                            });
+                        }
+                    }
+                }
+                break;
+            }
+            current = next;
+        }
+
+        let mut lines = vec![];
+        fn render(node: &Node, depth: usize, lines: &mut Vec<String>) {
+            let indent = "\t".repeat(depth);
+            let name = node.path.last().map(|s| s.as_str()).unwrap_or("");
+            let suffix = if !node.children.is_empty() { "/" } else { "" };
+            lines.push(format!("{}{}{}", indent, name, suffix));
+            for child in &node.children {
+                render(child, depth + 1, lines);
+            }
+        }
+        for child in &result.children {
+            render(child, 0, &mut lines);
+        }
+
+        lines.join("\n")
     }
 
     /// Layer 4: Load custom instructions from AGENTS.md, CLAUDE.md, etc.

@@ -751,22 +751,24 @@ impl AgentExecutor {
             self.provider.config().name.clone(),
         );
 
-        let system_prompt = prompt_builder.build(model_id);
+        let system_prompts = prompt_builder.build(model_id);
 
         tracing::debug!(
-            "System prompt for agent '{}' ({} chars):\n{}",
+            "System prompts for agent '{}' (2 messages, {} + {} chars)",
             agent.name,
-            system_prompt.len(),
-            system_prompt
+            system_prompts[0].len(),
+            system_prompts[1].len()
         );
 
-        // Add system message
-        messages.push(ChatCompletionRequestMessage::System(
-            ChatCompletionRequestSystemMessageArgs::default()
-                .content(system_prompt)
-                .build()
-                .map_err(|e| format!("Failed to build system message: {}", e))?,
-        ));
+        // Add 2 system messages (matching OpenCode exactly)
+        for system_prompt in system_prompts {
+            messages.push(ChatCompletionRequestMessage::System(
+                ChatCompletionRequestSystemMessageArgs::default()
+                    .content(system_prompt)
+                    .build()
+                    .map_err(|e| format!("Failed to build system message: {}", e))?,
+            ));
+        }
 
         // Get session messages
         let session_messages = self.session_store.get_messages(session_id)?;

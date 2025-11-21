@@ -114,15 +114,68 @@ impl ProviderClient {
         );
 
         let mut request_builder = CreateChatCompletionRequestArgs::default();
-        request_builder.model(model).messages(messages);
+        request_builder.model(model).messages(messages.clone());
 
         if !tools.is_empty() {
-            request_builder.tools(tools);
+            request_builder.tools(tools.clone());
         }
 
         let request = request_builder
             .build()
             .map_err(|e| format!("Failed to build request: {}", e))?;
+
+        // Log full request if CROW_VERBOSE_LOG is set
+        if std::env::var("CROW_VERBOSE_LOG").is_ok() {
+            let log_dir = dirs::data_dir()
+                .unwrap_or_else(|| std::path::PathBuf::from("."))
+                .join("crow")
+                .join("requests");
+            let _ = std::fs::create_dir_all(&log_dir);
+
+            let timestamp = chrono::Local::now().format("%Y%m%dT%H%M%S").to_string();
+            let log_file = log_dir.join(format!("{}-request.json", timestamp));
+
+            let log_data = serde_json::json!({
+                "timestamp": chrono::Local::now().to_rfc3339(),
+                "model": model,
+                "messages": messages.iter().map(|m| {
+                    match m {
+                        ChatCompletionRequestMessage::System(s) => serde_json::json!({
+                            "role": "system",
+                            "content": s.content
+                        }),
+                        ChatCompletionRequestMessage::User(u) => serde_json::json!({
+                            "role": "user",
+                            "content": format!("{:?}", u.content)
+                        }),
+                        ChatCompletionRequestMessage::Assistant(a) => serde_json::json!({
+                            "role": "assistant",
+                            "content": a.content,
+                            "tool_calls": a.tool_calls
+                        }),
+                        ChatCompletionRequestMessage::Tool(t) => serde_json::json!({
+                            "role": "tool",
+                            "tool_call_id": t.tool_call_id,
+                            "content": t.content
+                        }),
+                        _ => serde_json::json!({"role": "unknown"})
+                    }
+                }).collect::<Vec<_>>(),
+                "tools": tools.iter().map(|t| {
+                    serde_json::json!({
+                        "name": t.function.name,
+                        "description": t.function.description,
+                        "parameters": t.function.parameters
+                    })
+                }).collect::<Vec<_>>(),
+                "tool_count": tools.len()
+            });
+
+            if let Ok(json) = serde_json::to_string_pretty(&log_data) {
+                let _ = std::fs::write(&log_file, json);
+                eprintln!("[VERBOSE] Request logged to: {}", log_file.display());
+            }
+        }
 
         self.client
             .chat()
@@ -150,19 +203,77 @@ impl ProviderClient {
         let mut request_builder = CreateChatCompletionRequestArgs::default();
         request_builder
             .model(model)
-            .messages(messages)
+            .messages(messages.clone())
             .stream(true)
             .stream_options(async_openai::types::ChatCompletionStreamOptions {
                 include_usage: true,
             });
 
         if !tools.is_empty() {
-            request_builder.tools(tools);
+            request_builder.tools(tools.clone());
         }
 
         let request = request_builder
             .build()
             .map_err(|e| format!("Failed to build request: {}", e))?;
+
+        // Log full request if CROW_VERBOSE_LOG is set
+        eprintln!("[VERBOSE] Checking CROW_VERBOSE_LOG env var...");
+        if std::env::var("CROW_VERBOSE_LOG").is_ok() {
+            eprintln!("[VERBOSE] Logging request...");
+            let log_dir = dirs::data_dir()
+                .unwrap_or_else(|| std::path::PathBuf::from("."))
+                .join("crow")
+                .join("requests");
+            eprintln!("[VERBOSE] Log dir: {}", log_dir.display());
+            if let Err(e) = std::fs::create_dir_all(&log_dir) {
+                eprintln!("[VERBOSE] Failed to create dir: {}", e);
+            }
+
+            let timestamp = chrono::Local::now().format("%Y%m%dT%H%M%S").to_string();
+            let log_file = log_dir.join(format!("{}-request.json", timestamp));
+
+            let log_data = serde_json::json!({
+                "timestamp": chrono::Local::now().to_rfc3339(),
+                "model": model,
+                "messages": messages.iter().map(|m| {
+                    match m {
+                        ChatCompletionRequestMessage::System(s) => serde_json::json!({
+                            "role": "system",
+                            "content": s.content
+                        }),
+                        ChatCompletionRequestMessage::User(u) => serde_json::json!({
+                            "role": "user",
+                            "content": format!("{:?}", u.content)
+                        }),
+                        ChatCompletionRequestMessage::Assistant(a) => serde_json::json!({
+                            "role": "assistant",
+                            "content": a.content,
+                            "tool_calls": a.tool_calls
+                        }),
+                        ChatCompletionRequestMessage::Tool(t) => serde_json::json!({
+                            "role": "tool",
+                            "tool_call_id": t.tool_call_id,
+                            "content": t.content
+                        }),
+                        _ => serde_json::json!({"role": "unknown"})
+                    }
+                }).collect::<Vec<_>>(),
+                "tools": tools.iter().map(|t| {
+                    serde_json::json!({
+                        "name": t.function.name,
+                        "description": t.function.description,
+                        "parameters": t.function.parameters
+                    })
+                }).collect::<Vec<_>>(),
+                "tool_count": tools.len()
+            });
+
+            if let Ok(json) = serde_json::to_string_pretty(&log_data) {
+                let _ = std::fs::write(&log_file, json);
+                eprintln!("[VERBOSE] Request logged to: {}", log_file.display());
+            }
+        }
 
         let mut stream = self
             .client

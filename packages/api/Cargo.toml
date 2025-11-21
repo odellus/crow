@@ -6,6 +6,7 @@ edition = "2021"
 [[bin]]
 name = "crow-serve"
 path = "src/bin/crow-serve.rs"
+required-features = ["server"]
 
 [[bin]]
 name = "crow"

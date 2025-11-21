@@ -44,10 +44,19 @@ impl ConfigLoader {
         // 3. Load from .crow directory
         let crow_dir = cwd.join(".crow");
         if crow_dir.exists() {
-            // Load crow.json from .crow directory
+            // Load config.jsonc or crow.json from .crow directory
+            let config_jsonc = crow_dir.join("config.jsonc");
             let crow_config = crow_dir.join("crow.json");
-            if crow_config.exists() {
-                let dir_config = self.load_file(&crow_config)?;
+            let config_path = if config_jsonc.exists() {
+                Some(config_jsonc)
+            } else if crow_config.exists() {
+                Some(crow_config)
+            } else {
+                None
+            };
+
+            if let Some(path) = config_path {
+                let dir_config = self.load_file(&path)?;
                 config = self.merge(config, dir_config);
             }
 

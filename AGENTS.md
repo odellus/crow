@@ -1,379 +1,157 @@
-# Agent Architecture for Crow
+# Crow Development Guide
 
-**Last Updated:** 2025-11-17  
-**Status:** ~80% Core Functionality Complete
-
-## Current Status
-
-### What Crow Has Now ✅
-
-**Core Infrastructure:**
-- ✅ **LLM Integration** - Moonshot kimi-k2-thinking (262k context)
-- ✅ **Auth System** - `~/.local/share/crow/auth.json` (matching OpenCode)
-- ✅ **XDG Storage** - Full directory structure matching OpenCode
-- ✅ **REST API** - Complete endpoints (`http://localhost:7070`)
-
-**Agents:**
-- ✅ **6 built-in agents:** general, build, plan, supervisor, architect, discriminator
-- ✅ **Agent registry** with dynamic tool permissions
-- ✅ **Agent executor** with system prompt building
-- ✅ **Subagent spawning** via Task tool
-
-**Tools (12 total):**
-- ✅ **File ops:** bash, edit, write, read, grep, glob, list
-- ✅ **Planning:** todowrite, todoread (session-specific storage)
-- ✅ **Subagents:** task (spawns child sessions with dynamic agent list)
-- ✅ **Web:** websearch (SearXNG integration)
-- ✅ **Dual-agent:** work_completed (discriminator tool)
-
-**Session Management:**
-- ✅ **Session store** with XDG persistence
-- ✅ **Parent/child linking** (parentID)
-- ✅ **Message persistence** per session
-- ✅ **Todo persistence** per session (fixed: uses ctx.session_id)
-- ✅ **Session export** to markdown
-
-**API Endpoints:**
-- ✅ `POST /session` - create session
-- ✅ `GET /session` - list sessions  
-- ✅ `GET /session/:id` - get session
-- ✅ `DELETE /session/:id` - delete session
-- ✅ `POST /session/:id/message` - send message to agent
-- ✅ `GET /session/:id/message` - list messages
-- ✅ `GET /session/:id/children` - list child sessions
-- ✅ `GET /experimental/tool/ids` - list tool IDs
-
-### What's Missing ❌
-
-**High Priority:**
-- ❌ **Dioxus Web UI** - Frontend to visualize sessions/tools/agents
-- ❌ **Streaming (SSE)** - Real-time message streaming
-- ❌ **Background Bash** - BashOutput, KillShell tools
-- ❌ **Plan/Explore agents** - Need OpenCode system prompts
-
-**Medium Priority:**
-- ❌ **Model switching** - Currently hardcoded, need session-level config
-- ❌ **Markdown telemetry** - Export format exists but needs refinement
-- ❌ **System prompt verification** - Compare against OpenCode exactly
-
-**Low Priority:**
-- ❌ **Dual-agent endpoint** - `POST /session/dual` (may not be needed)
-- ❌ **MCP support** - Model Context Protocol
-- ❌ **LSP support** - Language Server Protocol
-
-## The Architecture We Have
-
-### 1. Task Tool ✅ IMPLEMENTED
-
-**Purpose:** Allows agents to spawn subagents autonomously
-
-**Location:** `crow/packages/api/src/tools/task.rs`
-
-**How it works:**
-1. Parent agent calls task tool with subagent_type
-2. Task tool creates child session with `parentID` link
-3. Spawns subagent of specified type
-4. Returns result to parent agent
-5. Parent synthesizes for user
-
-**Dynamic Agent List:**
-```rust
-// Tool description is built dynamically from agent registry
-let agents = agent_registry.get_subagents().await;
-let description = DESCRIPTION.replace("{agents}", &agent_list);
-
-// Agents available:
-// - general: General-purpose agent
-// - build: Build agent for implementation
-// - plan: Planning agent
-// (etc - pulled from registry at runtime)
-```
-
-**Example Flow:**
-```
-User: "Implement fibonacci function"
-  ↓
-BUILD agent: "I'll spawn a subagent"
-  🔧 task(
-    description="Implement fibonacci", 
-    prompt="Write fibonacci with tests",
-    subagent_type="general"
-  )
-  ↓
-Task tool:
-  - Creates child session (ses-xxx)
-  - Sets parentID to current session
-  - Executes general agent
-  - Returns output
-  ↓
-BUILD agent: "Fibonacci implemented"
-```
-
-### 2. Agent Modes ✅ EXISTS
-
-```rust
-pub enum AgentMode {
-    Primary,   // Can be used directly by user
-    Subagent,  // Only via task tool
-    All,       // Both
-}
-```
-
-**Current agents:**
-- `general` - Primary (default)
-- `build` - Primary  
-- `plan` - Subagent
-- `supervisor` - Primary
-- `architect` - Primary
-- `discriminator` - Subagent (dual-agent only)
-
-### 3. Session Hierarchy ✅ WORKS
-
-```rust
-pub struct Session {
-    pub id: String,
-    pub parent_id: Option<String>,  // ✅ Working
-    pub directory: String,
-    pub title: Option<String>,
-    pub version: String,
-    pub time: SessionTime,
-    pub metadata: Option<Value>,
-}
-```
-
-**Child sessions:**
-- Created by Task tool
-- Linked via `parent_id`
-- Listed via `GET /session/:id/children`
-- Persistent to XDG storage
-
-### 4. Tool Execution ✅ WORKS
-
-**All tools use ToolContext:**
-```rust
-pub struct ToolContext {
-    pub session_id: String,  // From execution context
-    pub message_id: String,
-    pub agent: String,
-    pub working_dir: PathBuf,
-}
-```
-
-**Recent Fix:** TodoWrite now uses `ctx.session_id` instead of asking LLM for it.
-
-### 5. Storage Structure ✅ MATCHES OPENCODE
-
-```
-~/.local/share/crow/
-├── auth.json              # API keys
-├── log/                   # Server logs
-└── storage/
-    ├── message/           # Per-session messages
-    │   └── {session-id}/
-    │       ├── {msg-id}.json
-    │       └── ...
-    ├── session/           # Session metadata
-    │   └── {session-id}/
-    │       └── session.json
-    └── todo/              # Per-session todos
-        ├── {session-id}.json
-        └── ...
-```
-
-## What We're Building Next: Dioxus Web UI
-
-**Why Web First:**
-- OpenCode's TUI is terminal-only
-- We want cross-platform from day one
-- Dioxus compiles to web/desktop/mobile from same code
-- Web UI = easier testing, better UX, multi-user
-
-**Project Structure:**
-```
-crow/packages/
-├── api/     ✅ Done - REST backend
-├── ui/      🎯 Next - shared components  
-└── web/     🎯 Next - web frontend
-```
-
-**What the UI needs to show:**
-1. **Session List** - All sessions with titles
-2. **Message View** - Messages with tool execution
-3. **Todo Panel** - Real-time todo updates
-4. **Session Tree** - Parent/child relationships
-5. **Tool Execution** - Visual display of tool calls
-6. **Agent Status** - Which agent is working
-
-**Architecture:**
-```
-Browser → Dioxus Web (port 8080)
-            ↓ HTTP
-         Crow API (port 7070)
-            ↓
-         Agents + Tools
-```
-
-## Implementation Status by Component
-
-### Backend (API) - 95% Complete ✅
-
-| Component | Status | Notes |
-|-----------|--------|-------|
-| Agent Registry | ✅ Done | Dynamic tool permissions |
-| Agent Executor | ✅ Done | System prompts, tool execution |
-| Session Store | ✅ Done | XDG persistence |
-| Message Store | ✅ Done | Per-session storage |
-| Tool Registry | ✅ Done | 12 tools registered |
-| Task Tool | ✅ Done | Dynamic agent spawning |
-| TodoWrite | ✅ Fixed | Uses session context |
-| WebSearch | ✅ Done | SearXNG integration |
-| REST API | ✅ Done | All endpoints working |
-| Streaming | ❌ TODO | SSE endpoint stub exists |
-
-### Frontend (Web) - 0% Complete 🎯
-
-| Component | Status | Notes |
-|-----------|--------|-------|
-| Session List | ❌ TODO | List all sessions |
-| Message View | ❌ TODO | Show conversation |
-| Tool Renderer | ❌ TODO | Display tool calls |
-| Todo Panel | ❌ TODO | Live todo updates |
-| Session Tree | ❌ TODO | Parent/child view |
-| Agent Selector | ❌ TODO | Choose agent |
-| Model Selector | ❌ TODO | Switch models |
-| Streaming | ❌ TODO | Real-time messages |
-
-### Tools - 80% Complete
-
-| Tool | Status | Notes |
-|------|--------|-------|
-| bash | ✅ Done | Command execution |
-| read | ✅ Done | File reading |
-| write | ✅ Done | File writing |
-| edit | ✅ Done | File editing |
-| grep | ✅ Done | Content search |
-| glob | ✅ Done | File pattern matching |
-| list | ✅ Done | Directory listing |
-| todowrite | ✅ Fixed | Session-aware |
-| todoread | ✅ Done | Read session todos |
-| task | ✅ Done | Spawn subagents |
-| websearch | ✅ Done | Internet search |
-| work_completed | ✅ Done | Dual-agent tool |
-| BashOutput | ❌ TODO | Background bash |
-| KillShell | ❌ TODO | Kill background |
-
-## Running Crow
-
-### Prerequisites
-
-1. **SearXNG** running on `localhost:8082` (for websearch tool)
-2. **Auth configured** at `~/.local/share/crow/auth.json`:
-   ```json
-   {"moonshotai":{"type":"api","key":"your-api-key-here"}}
-   ```
+## Quick Start
 
 ### Build & Run
 
 ```bash
-# Build the server
-cd crow/packages/api
-cargo build --release --features server --bin crow-serve
-
-# Run the server
-cd crow
-./target/release/crow-serve
-# Server starts on http://127.0.0.1:7070
+cd /home/thomas/src/projects/opencode-project/crow
+cargo build --release --bin crow-serve --features server
+./target/release/crow-serve --port 7070
 ```
 
-### Testing the API
+### Prerequisites
 
+1. **Auth** at `~/.local/share/crow/auth.json`:
+   ```json
+   {"moonshotai":{"type":"api","key":"your-api-key"}}
+   ```
+
+2. **Config** at `.crow/config.jsonc` in project directory:
+   ```json
+   {
+     "model": "moonshotai/kimi-k2-thinking"
+   }
+   ```
+
+## API Usage
+
+**Important:** Endpoints use `/session` not `/sessions`
+
+### Create Session
 ```bash
-# Create a session
-SESSION=$(curl -s -X POST http://127.0.0.1:7070/session \
+curl -s http://localhost:7070/session -X POST \
   -H "Content-Type: application/json" \
-  -d '{"directory": "/tmp"}' | jq -r '.id')
+  -d '{"path":"/your/project/directory"}'
+```
 
-# Send a message
-curl -s -X POST "http://127.0.0.1:7070/session/$SESSION/message" \
+### Send Message
+```bash
+curl -s "http://localhost:7070/session/$SESSION_ID/message" -X POST \
   -H "Content-Type: application/json" \
-  -d '{
-    "agent": "build",
-    "parts": [{"type": "text", "text": "Use websearch to find Rust 2024 features"}]
-  }' | jq '.parts[] | select(.type == "tool") | .tool'
-
-# List all tools
-curl -s http://127.0.0.1:7070/experimental/tool/ids | jq '.'
+  -d '{"parts":[{"type":"text","text":"your message"}]}'
 ```
 
-### Troubleshooting
+### Other Endpoints
+- `GET /session` - list sessions
+- `GET /session/:id` - get session
+- `DELETE /session/:id` - delete session
+- `GET /session/:id/message` - list messages
+- `GET /session/:id/children` - list child sessions
 
-**Lock poisoning error:** `Lock error: poisoned lock: another task failed inside`
+## Comparing with OpenCode
 
-This happens when the server panics during a request. The RwLock becomes poisoned and all subsequent requests fail.
+Run both from the same directory to compare prompts:
 
-**Solution:** Restart the server
 ```bash
-pkill -9 crow-serve
-./target/release/crow-serve
+cd /home/thomas/src/projects/opencode-project/test-dummy
+
+# Start OpenCode
+OPENCODE_VERBOSE_LOG=1 opencode serve -p 4200 &
+
+# Start Crow
+CROW_VERBOSE_LOG=1 ../crow/target/release/crow-serve --port 4201 &
+
+# Create sessions and send messages
+OC_SID=$(curl -s http://localhost:4200/session -X POST -d '{}' -H "Content-Type: application/json" | jq -r '.id')
+CROW_SID=$(curl -s http://localhost:4201/session -X POST -d '{"path":"/home/thomas/src/projects/opencode-project/test-dummy"}' -H "Content-Type: application/json" | jq -r '.id')
+
+curl -s "http://localhost:4200/session/$OC_SID/message" -X POST -d '{"parts":[{"type":"text","text":"hi"}]}' -H "Content-Type: application/json"
+curl -s "http://localhost:4201/session/$CROW_SID/message" -X POST -d '{"parts":[{"type":"text","text":"hi"}]}' -H "Content-Type: application/json"
 ```
 
-**Empty responses or timeouts:**
-- Check that Moonshot API key is valid in `~/.local/share/crow/auth.json`
-- Check that SearXNG is running: `curl http://localhost:8082/search?q=test&format=json`
-- Check server logs: `~/.local/share/crow/log/`
+### Verbose Log Locations
 
-### Storage Locations
+- **OpenCode:** `~/.local/share/opencode/verbose/`
+- **Crow:** `~/.local/share/crow/requests/`
 
-- **Sessions & Messages:** `~/.local/share/crow/storage/`
-- **Auth:** `~/.local/share/crow/auth.json`
-- **Logs:** `~/.local/share/crow/log/`
-
----
-
-## Testing Results (2025-11-19)
-
-**Successful Tests:**
+Compare with:
 ```bash
-✅ LLM call with kimi-k2-thinking
-✅ Tool execution (all 12 tools)
-✅ Subagent spawning via Task tool
-✅ Child session creation with parentID
-✅ Todo persistence to session-specific files
-✅ WebSearch with SearXNG (verified end-to-end)
-✅ Session management (CRUD)
-✅ Message persistence
-✅ Auth.json reading
+OC_LOG=$(ls -t ~/.local/share/opencode/verbose/ | head -1)
+CROW_LOG=$(ls -t ~/.local/share/crow/requests/ | head -1)
+
+# System prompt lengths
+cat ~/.local/share/opencode/verbose/$OC_LOG | jq '[.messages[] | select(.role == "system") | .content | length]'
+cat ~/.local/share/crow/requests/$CROW_LOG | jq '[.messages[] | select(.role == "system") | .content | length]'
+
+# Diff prompts
+cat ~/.local/share/opencode/verbose/$OC_LOG | jq -r '.messages[1].content' > /tmp/oc.txt
+cat ~/.local/share/crow/requests/$CROW_LOG | jq -r '.messages[1].content' > /tmp/crow.txt
+diff /tmp/oc.txt /tmp/crow.txt
 ```
 
-**Example Session:**
+## Project Structure
+
 ```
-Session: ses-f1e2753a-d0e4-4c1d-90ca-b5f38eab25b0
-├── Created 7-step plan with TodoWrite
-├── Spawned child session: ses-369a9dea-e0bd-4d18-af21-1a19f83efd75
-├── Used kimi-k2-thinking (262k context)
-├── Saved todos to ses-f1e2753a....json ✅
-└── All tools executed successfully
+crow/
+├── packages/
+│   └── api/
+│       └── src/
+│           ├── agent/
+│           │   ├── executor.rs    # Agent execution loop
+│           │   ├── prompt.rs      # System prompt building
+│           │   ├── registry.rs    # Agent definitions
+│           │   └── types.rs       # Agent types
+│           ├── providers/
+│           │   └── client.rs      # LLM API calls
+│           ├── session/
+│           │   └── store.rs       # Session persistence
+│           ├── tools/
+│           │   ├── mod.rs         # Tool registry
+│           │   └── *.rs           # Individual tools
+│           ├── config/
+│           │   └── loader.rs      # Config loading
+│           └── server.rs          # HTTP endpoints
+└── Cargo.toml
 ```
 
-## Next Session: Build the Web UI 🚀
+### Key Files for Prompt Parity
 
-**Goal:** Translate OpenCode's TUI to Dioxus web components
+| Crow | OpenCode | Purpose |
+|------|----------|---------|
+| `agent/prompt.rs` | `session/system.ts` | System prompt building |
+| `agent/executor.rs` | `session/prompt.ts` | Message construction |
+| `providers/client.rs` | Provider SDK | LLM API calls |
+| `tools/mod.rs` | `tool/registry.ts` | Tool definitions |
 
-**Approach:**
-1. Read `opencode/packages/opencode/src/cli/cmd/tui/`
-2. Port React/Ink patterns to Dioxus RSX
-3. Connect to Crow's REST API
-4. Start with: Session List → Message View → Tool Display
+## Storage
 
-**Why this is the right next step:**
-- Backend is solid and tested
-- We need visibility into what agents are doing
-- Web UI = better debugging
-- Foundation for desktop/mobile later
+```
+~/.local/share/crow/
+├── auth.json           # API keys
+├── requests/           # Verbose request logs
+├── storage/
+│   ├── session/        # Session metadata
+│   ├── message/        # Messages per session
+│   └── todo/           # Todos per session
+└── log/                # Server logs
+```
 
-**Reference Implementation:**
-- OpenCode TUI: `opencode/packages/opencode/src/cli/cmd/tui/`
-- Our API: `crow/packages/api/src/server.rs`
-- Our Components: `crow/packages/web/src/` (to be built)
+## Current Status
 
-The backend is ready. Time to make it visible! 🦅
+**Working:**
+- 2 system messages matching OpenCode structure
+- File tree generation from working directory
+- 13 tools (bash, edit, write, read, grep, glob, list, todowrite, todoread, task, webfetch, websearch, invalid)
+- Config loading from `.crow/config.jsonc`
+- Session management with XDG persistence
+
+**Prompt parity:** System message 1 matches exactly. Message 2 is ~400 chars longer due to file tree differences (breadth-first traversal variations).
+
+## Troubleshooting
+
+**Lock poisoning:** Restart server with `pkill -9 crow-serve`
+
+**Empty verbose logs:** Ensure `CROW_VERBOSE_LOG=1` is set
+
+**Wrong model:** Check `.crow/config.jsonc` has correct model string

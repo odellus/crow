@@ -5,6 +5,7 @@ use async_trait::async_trait;
 use serde::Deserialize;
 use serde_json::Value;
 use std::process::Command;
+use tokio::fs;
 
 use crate::tools::{Tool, ToolResult, ToolStatus};
 
@@ -148,12 +149,29 @@ impl Tool for GrepTool {
                     });
                 }
 
+                // Get file metadata and sort by modification time (most recent first)
+                let mut matches_with_mtime = Vec::new();
+                for m in matches {
+                    if let Ok(metadata) = fs::metadata(&m.path).await {
+                        if let Ok(modified) = metadata.modified() {
+                            matches_with_mtime.push((m, modified));
+                        }
+                    }
+                }
+
+                // Sort by modification time, most recent first
+                matches_with_mtime.sort_by(|a, b| b.1.cmp(&a.1));
+
+                // Extract sorted matches
+                let sorted_matches: Vec<Match> =
+                    matches_with_mtime.into_iter().map(|(m, _)| m).collect();
+
                 let limit = 100;
-                let truncated = matches.len() > limit;
+                let truncated = sorted_matches.len() > limit;
                 let final_matches: Vec<Match> = if truncated {
-                    matches.into_iter().take(limit).collect()
+                    sorted_matches.into_iter().take(limit).collect()
                 } else {
-                    matches
+                    sorted_matches
                 };
 
                 if final_matches.is_empty() {

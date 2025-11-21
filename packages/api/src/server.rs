@@ -349,7 +349,14 @@ async fn send_message(
     }
 
     // Execute agent to get response
-    let provider_config = ProviderConfig::moonshot();
+    // Load config to get default model
+    let config_loader = ConfigLoader::new();
+    let config = config_loader.load().unwrap_or_default();
+    let (_provider_id, model_id) = config.get_default_model();
+
+    let mut provider_config = ProviderConfig::moonshot();
+    provider_config.default_model = model_id;
+
     let provider = crate::providers::ProviderClient::new(provider_config)
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?;
 
@@ -454,7 +461,14 @@ async fn send_message_stream(
         }
 
         // Execute agent
-        let provider_config = ProviderConfig::moonshot();
+        // Load config to get default model
+        let config_loader = ConfigLoader::new();
+        let config = config_loader.load().unwrap_or_default();
+        let (_provider_id, model_id) = config.get_default_model();
+
+        let mut provider_config = ProviderConfig::moonshot();
+        provider_config.default_model = model_id;
+
         let provider = match crate::providers::ProviderClient::new(provider_config) {
             Ok(p) => p,
             Err(e) => {

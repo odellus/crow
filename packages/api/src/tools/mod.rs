@@ -10,6 +10,7 @@ pub mod bash;
 pub mod edit;
 pub mod glob;
 pub mod grep;
+pub mod invalid;
 pub mod list;
 pub mod read;
 pub mod task;
@@ -24,6 +25,7 @@ pub use bash::BashTool;
 pub use edit::EditTool;
 pub use glob::GlobTool;
 pub use grep::GrepTool;
+pub use invalid::InvalidTool;
 pub use list::ListTool;
 pub use read::ReadTool;
 pub use task::TaskTool;
@@ -172,8 +174,9 @@ impl ToolRegistry {
             Box::new(WebFetchTool),
             Box::new(WebSearchTool::new()),
             // Note: TaskTool requires dependencies, use new_with_deps() instead
-            // Dual-agent discriminator tool
-            Box::new(WorkCompletedTool),
+            // Error handling
+            Box::new(InvalidTool),
+            // Note: WorkCompletedTool hidden for now
         ];
 
         Self { tools }
@@ -220,8 +223,9 @@ impl ToolRegistry {
                 )
                 .await,
             ), // NOW ASYNC!
-            // Dual-agent discriminator tool
-            Box::new(WorkCompletedTool),
+            // Error handling
+            Box::new(InvalidTool),
+            // Note: WorkCompletedTool hidden for now
         ];
 
         let tool_registry = std::sync::Arc::new(Self { tools });
