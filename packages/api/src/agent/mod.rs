@@ -23,7 +23,7 @@ pub mod types;
 pub use builtins::get_builtin_agents;
 pub use doom_loop::DoomLoopDetector;
 pub use dual::{AgentRole, DualAgentResult, RawMessage, SessionType, SharedConversation};
-pub use executor::AgentExecutor;
+pub use executor::{AgentExecutor, ExecutionEvent};
 pub use prompt::SystemPromptBuilder;
 pub use registry::AgentRegistry;
 pub use runtime::DualAgentRuntime;

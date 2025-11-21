@@ -30,7 +30,7 @@ impl SystemPromptBuilder {
     ///
     /// NOTE: Dynamic reminders are NOT in system prompt!
     /// They are injected into user messages via insert_reminders() in executor
-    pub fn build(&self) -> String {
+    pub fn build(&self, model_id: &str) -> String {
         let mut prompt = String::new();
 
         // Layer 1: Header
@@ -41,7 +41,7 @@ impl SystemPromptBuilder {
         }
 
         // Layer 2: Agent prompt or provider default
-        prompt.push_str(&self.agent_or_provider_prompt());
+        prompt.push_str(&self.agent_or_provider_prompt(model_id));
         prompt.push_str("\n\n");
 
         // Layer 3: Environment context
@@ -68,30 +68,29 @@ impl SystemPromptBuilder {
     }
 
     /// Layer 2: Agent-specific prompt OR provider default
-    fn agent_or_provider_prompt(&self) -> String {
+    fn agent_or_provider_prompt(&self, model_id: &str) -> String {
         // If agent has custom prompt, use it
         if let Some(ref prompt) = self.agent.prompt {
             return prompt.clone();
         }
 
-        // Otherwise use provider default
-        self.provider_default_prompt()
+        // Otherwise use provider default based on MODEL ID (not provider)
+        self.provider_default_prompt(model_id)
     }
 
     /// Provider default prompts (shameless copy from OpenCode)
-    fn provider_default_prompt(&self) -> String {
-        let provider = self.provider_id.as_str();
-
+    /// NOTE: OpenCode matches on modelID, not providerID!
+    fn provider_default_prompt(&self, model_id: &str) -> String {
         // Match OpenCode's logic exactly from session/system.ts:provider()
-        if provider.contains("gpt-5") {
+        if model_id.contains("gpt-5") {
             include_str!("../prompts/codex.txt").to_string()
-        } else if provider.contains("gpt-") || provider.contains("o1") || provider.contains("o3") {
+        } else if model_id.contains("gpt-") || model_id.contains("o1") || model_id.contains("o3") {
             include_str!("../prompts/beast.txt").to_string()
-        } else if provider.contains("gemini-") {
+        } else if model_id.contains("gemini-") {
             include_str!("../prompts/gemini.txt").to_string()
-        } else if provider.contains("claude") {
+        } else if model_id.contains("claude") {
             include_str!("../prompts/anthropic.txt").to_string()
-        } else if provider.contains("polaris-alpha") {
+        } else if model_id.contains("polaris-alpha") {
             include_str!("../prompts/polaris.txt").to_string()
         } else {
             // Default: PROMPT_ANTHROPIC_WITHOUT_TODO = qwen.txt
@@ -136,8 +135,8 @@ impl SystemPromptBuilder {
 
         parts.push("</env>".to_string());
 
-        // Project structure
-        parts.push("<project>".to_string());
+        // File tree (matches OpenCode's <files> tag)
+        parts.push("<files>".to_string());
         let tree = self.generate_project_tree();
         if !tree.is_empty() {
             // Indent the tree content
@@ -145,7 +144,7 @@ impl SystemPromptBuilder {
                 parts.push(format!("  {}", line));
             }
         }
-        parts.push("</project>".to_string());
+        parts.push("</files>".to_string());
 
         parts.join("\n")
     }
@@ -390,7 +389,7 @@ mod tests {
         let builder =
             SystemPromptBuilder::new(agent, PathBuf::from("/tmp/test"), "moonshot".to_string());
 
-        let prompt = builder.build();
+        let prompt = builder.build("some-model");
 
         assert!(prompt.contains("Custom agent prompt here"));
         assert!(prompt.contains("Working directory: /tmp/test"));
@@ -401,13 +400,13 @@ mod tests {
     fn test_environment_format() {
         let agent = AgentInfo::new("test");
         let builder = SystemPromptBuilder::new(agent, PathBuf::from("."), "moonshot".to_string());
-        let prompt = builder.build();
+        let prompt = builder.build("some-model");
 
         // Check for OpenCode-style XML tags
         assert!(prompt.contains("<env>"));
         assert!(prompt.contains("</env>"));
-        assert!(prompt.contains("<project>"));
-        assert!(prompt.contains("</project>"));
+        assert!(prompt.contains("<files>"));
+        assert!(prompt.contains("</files>"));
         assert!(prompt.contains("Today's date:"));
         assert!(prompt.contains("Is directory a git repo:"));
     }
@@ -416,16 +415,16 @@ mod tests {
     fn test_provider_prompts() {
         let agent = AgentInfo::new("test");
 
-        // Test default (qwen.txt)
+        // Test default (qwen.txt) - model doesn't match any known pattern
         let builder =
             SystemPromptBuilder::new(agent.clone(), PathBuf::from("."), "moonshot".to_string());
-        let prompt = builder.build();
+        let prompt = builder.build("unknown-model");
         // qwen.txt should be loaded (PROMPT_ANTHROPIC_WITHOUT_TODO)
         assert!(!prompt.is_empty());
 
-        // Test anthropic header
+        // Test anthropic header and claude model
         let builder2 = SystemPromptBuilder::new(agent, PathBuf::from("."), "anthropic".to_string());
-        let prompt2 = builder2.build();
+        let prompt2 = builder2.build("claude-3-5-sonnet");
         assert!(prompt2.contains("Claude")); // From anthropic_spoof.txt header
     }
 }

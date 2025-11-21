@@ -476,37 +476,52 @@ async fn send_message_stream(
         // Get working directory
         let working_dir = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
 
-        // Stream tool execution - for now just execute and send result
-        match executor
-            .execute_turn(&session_id, "build", &working_dir, parts)
-            .await
-        {
-            Ok(assistant_message) => {
-                // Stream each part
-                for part in &assistant_message.parts {
+        // Create channel for streaming events
+        let (event_tx, mut event_rx) = tokio::sync::mpsc::unbounded_channel();
+
+        // Spawn executor in background
+        let executor_handle = tokio::spawn(async move {
+            executor
+                .execute_turn_streaming(&session_id, "build", &working_dir, parts, event_tx)
+                .await
+        });
+
+        // Forward events to SSE stream
+        while let Some(event) = event_rx.recv().await {
+            match event {
+                crate::agent::ExecutionEvent::TextDelta { id, delta } => {
+                    let delta_json = serde_json::json!({ "id": id, "delta": delta });
+                    let _ = tx.send(Ok(Event::default()
+                        .event("text.delta")
+                        .data(delta_json.to_string())));
+                }
+                crate::agent::ExecutionEvent::Part(part) => {
                     let part_json = serde_json::to_string(&part).unwrap_or_default();
                     let _ = tx.send(Ok(Event::default().event("part").data(part_json)));
                 }
-
-                // Send completion event
-                let message_json = serde_json::to_string(&assistant_message).unwrap_or_default();
-                let _ = tx.send(Ok(Event::default()
-                    .event("message.complete")
-                    .data(message_json)));
-            }
-            Err(e) => {
-                let _ = tx.send(Ok(Event::default()
-                    .event("error")
-                    .data(format!("{{\"error\":\"{}\"}}", e))));
+                crate::agent::ExecutionEvent::Complete(msg) => {
+                    let message_json = serde_json::to_string(&msg).unwrap_or_default();
+                    let _ = tx.send(Ok(Event::default()
+                        .event("message.complete")
+                        .data(message_json)));
+                }
+                crate::agent::ExecutionEvent::Error(e) => {
+                    let _ = tx.send(Ok(Event::default()
+                        .event("error")
+                        .data(format!("{{\"error\":\"{}\"}}", e))));
+                }
             }
         }
+
+        // Wait for executor to finish
+        let _ = executor_handle.await;
     });
 
     // Convert receiver to stream
     let stream = tokio_stream::wrappers::UnboundedReceiverStream::new(rx);
     Sse::new(stream).keep_alive(
         axum::response::sse::KeepAlive::new()
-            .interval(Duration::from_secs(1))
+            .interval(Duration::from_secs(15))
             .text("keep-alive"),
     )
 }

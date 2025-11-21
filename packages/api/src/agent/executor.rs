@@ -21,7 +21,22 @@ use async_openai::types::{
 };
 use std::path::Path;
 use std::sync::Arc;
+use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
+
+/// Events emitted during execution for streaming
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(tag = "event", content = "data")]
+pub enum ExecutionEvent {
+    /// Text delta (streaming token by token)
+    TextDelta { id: String, delta: String },
+    /// A new part was created (tool call started, text generated, etc.)
+    Part(Part),
+    /// Execution completed with final message
+    Complete(MessageWithParts),
+    /// An error occurred
+    Error(String),
+}
 
 pub struct AgentExecutor {
     provider: ProviderClient,
@@ -104,7 +119,8 @@ impl AgentExecutor {
         let message_id = format!("msg-{}", uuid::Uuid::new_v4());
 
         // Build LLM context with agent-specific system prompt
-        let llm_messages = self.build_llm_context(session_id, &agent, working_dir)?;
+        let model_id = self.provider.config().default_model.clone();
+        let llm_messages = self.build_llm_context(session_id, &agent, working_dir, &model_id)?;
 
         // Add user message to context if provided
         let mut llm_messages = llm_messages;
@@ -440,12 +456,291 @@ impl AgentExecutor {
         Ok(assistant_message)
     }
 
+    /// Execute a turn with streaming - emits events as parts are created
+    pub async fn execute_turn_streaming(
+        &self,
+        session_id: &str,
+        agent_id: &str,
+        working_dir: &Path,
+        user_parts: Vec<Part>,
+        event_tx: mpsc::UnboundedSender<ExecutionEvent>,
+    ) -> Result<MessageWithParts, String> {
+        // Get the agent
+        let agent = self
+            .agent_registry
+            .get(agent_id)
+            .await
+            .ok_or_else(|| format!("Agent not found: {}", agent_id))?;
+
+        // Get current time
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_err(|e| format!("Time error: {}", e))?
+            .as_millis() as u64;
+
+        // Generate message ID
+        let message_id = format!("msg-{}", uuid::Uuid::new_v4());
+
+        // Build LLM context
+        let model_id = self.provider.config().default_model.clone();
+        let mut llm_messages =
+            self.build_llm_context(session_id, &agent, working_dir, &model_id)?;
+
+        // Add user message to context
+        if !user_parts.is_empty() {
+            let user_text = user_parts
+                .iter()
+                .filter_map(|p| match p {
+                    Part::Text { text, .. } => Some(text.as_str()),
+                    _ => None,
+                })
+                .collect::<Vec<_>>()
+                .join("\n");
+
+            if !user_text.is_empty() {
+                llm_messages.push(ChatCompletionRequestMessage::User(
+                    ChatCompletionRequestUserMessageArgs::default()
+                        .content(user_text)
+                        .build()
+                        .map_err(|e| format!("Failed to build user message: {}", e))?,
+                ));
+            }
+        }
+
+        Self::insert_reminders(&mut llm_messages, &agent.name);
+
+        let mut parts = vec![];
+        let mut total_input_tokens = 0u64;
+        let mut total_output_tokens = 0u64;
+        let tool_defs = self.get_agent_tools(&agent);
+
+        let max_iterations = 10;
+        for _iteration in 0..max_iterations {
+            if self.is_aborted() {
+                return Err("Session aborted".to_string());
+            }
+
+            // Create channel for streaming deltas
+            let (delta_tx, mut delta_rx) = mpsc::unbounded_channel();
+
+            // Clone what we need for the streaming task
+            let provider = self.provider.clone();
+            let msgs = llm_messages.clone();
+            let tools = tool_defs.clone();
+
+            // Spawn streaming task
+            let stream_handle = tokio::spawn(async move {
+                provider
+                    .chat_with_tools_stream(msgs, tools, None, delta_tx)
+                    .await
+            });
+
+            // Collect the response while streaming deltas
+            let mut accumulated_text = String::new();
+            let mut tool_calls: std::collections::HashMap<usize, (String, String, String)> =
+                std::collections::HashMap::new();
+            let text_part_id = format!("part-text-{}", uuid::Uuid::new_v4());
+
+            while let Some(delta) = delta_rx.recv().await {
+                match delta {
+                    crate::providers::StreamDelta::Text(text) => {
+                        // Emit text delta event
+                        let _ = event_tx.send(ExecutionEvent::TextDelta {
+                            id: text_part_id.clone(),
+                            delta: text.clone(),
+                        });
+                        accumulated_text.push_str(&text);
+                    }
+                    crate::providers::StreamDelta::ToolCall {
+                        index,
+                        id,
+                        name,
+                        arguments,
+                    } => {
+                        let entry = tool_calls
+                            .entry(index)
+                            .or_insert_with(|| (String::new(), String::new(), String::new()));
+                        if let Some(id) = id {
+                            entry.0 = id;
+                        }
+                        if let Some(name) = name {
+                            entry.1 = name;
+                        }
+                        entry.2.push_str(&arguments);
+                    }
+                    crate::providers::StreamDelta::Usage { input, output } => {
+                        total_input_tokens += input;
+                        total_output_tokens += output;
+                    }
+                    crate::providers::StreamDelta::Done => break,
+                }
+            }
+
+            // Wait for stream to complete
+            let _ = stream_handle.await;
+
+            // Process tool calls if any
+            if !tool_calls.is_empty() {
+                // Build tool calls for context
+                let mut openai_tool_calls = vec![];
+                for (_index, (id, name, args)) in &tool_calls {
+                    openai_tool_calls.push(async_openai::types::ChatCompletionMessageToolCall {
+                        id: id.clone(),
+                        r#type: async_openai::types::ChatCompletionToolType::Function,
+                        function: async_openai::types::FunctionCall {
+                            name: name.clone(),
+                            arguments: args.clone(),
+                        },
+                    });
+                }
+
+                // Add assistant message with tool calls
+                llm_messages.push(ChatCompletionRequestMessage::Assistant(
+                    ChatCompletionRequestAssistantMessageArgs::default()
+                        .tool_calls(openai_tool_calls.clone())
+                        .build()
+                        .map_err(|e| format!("Failed to build assistant message: {}", e))?,
+                ));
+
+                // Execute each tool
+                for (_index, (tool_id, tool_name, tool_args_str)) in tool_calls {
+                    let args: serde_json::Value =
+                        serde_json::from_str(&tool_args_str).unwrap_or(serde_json::json!({}));
+
+                    // Create tool part
+                    let tool_part_id = format!("part-tool-{}", uuid::Uuid::new_v4());
+                    let start_time = std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .unwrap()
+                        .as_millis() as u64;
+
+                    // Execute tool
+                    let tool_ctx = crate::tools::ToolContext {
+                        session_id: session_id.to_string(),
+                        message_id: message_id.clone(),
+                        agent: agent_id.to_string(),
+                        working_dir: working_dir.to_path_buf(),
+                        project_root: crate::tools::find_project_root(working_dir),
+                        call_id: Some(tool_id.clone()),
+                        provider_id: Some(self.provider.config().name.clone()),
+                        model_id: Some(self.provider.config().default_model.clone()),
+                        abort: Some(self.cancellation.clone()),
+                    };
+
+                    let tool_result = self
+                        .tools
+                        .execute(&tool_name, args.clone(), &tool_ctx)
+                        .await
+                        .map_err(|e| format!("Tool execution failed: {}", e))?;
+
+                    let end_time = std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .unwrap()
+                        .as_millis() as u64;
+
+                    // Create completed tool part
+                    let tool_part = Part::Tool {
+                        id: tool_part_id,
+                        session_id: session_id.to_string(),
+                        message_id: message_id.clone(),
+                        call_id: tool_id.clone(),
+                        tool: tool_name.clone(),
+                        state: crate::types::ToolState::Completed {
+                            input: args,
+                            output: tool_result.output.clone(),
+                            title: tool_name.clone(),
+                            time: crate::types::ToolTime {
+                                start: start_time,
+                                end: Some(end_time),
+                            },
+                        },
+                    };
+
+                    // Emit tool part
+                    let _ = event_tx.send(ExecutionEvent::Part(tool_part.clone()));
+                    parts.push(tool_part);
+
+                    // Add tool result to context
+                    llm_messages.push(ChatCompletionRequestMessage::Tool(
+                        async_openai::types::ChatCompletionRequestToolMessageArgs::default()
+                            .content(tool_result.output)
+                            .tool_call_id(tool_id)
+                            .build()
+                            .map_err(|e| format!("Failed to build tool message: {}", e))?,
+                    ));
+                }
+
+                continue;
+            }
+
+            // No tool calls - we have final text
+            if !accumulated_text.is_empty() {
+                let text_part = Part::Text {
+                    id: text_part_id,
+                    session_id: session_id.to_string(),
+                    message_id: message_id.clone(),
+                    text: accumulated_text,
+                };
+                let _ = event_tx.send(ExecutionEvent::Part(text_part.clone()));
+                parts.push(text_part);
+            }
+
+            break;
+        }
+
+        // Calculate cost
+        let input_cost = (total_input_tokens as f64 / 1_000_000.0) * 0.15;
+        let output_cost = (total_output_tokens as f64 / 1_000_000.0) * 2.50;
+        let total_cost = input_cost + output_cost;
+
+        // Create assistant message
+        let assistant_message = MessageWithParts {
+            info: Message::Assistant {
+                id: message_id.clone(),
+                session_id: session_id.to_string(),
+                parent_id: "".to_string(),
+                model_id: self.provider.config().default_model.clone(),
+                provider_id: self.provider.config().name.clone(),
+                mode: agent_id.to_string(),
+                time: MessageTime {
+                    created: now,
+                    completed: Some(now),
+                },
+                path: crate::types::MessagePath {
+                    cwd: working_dir.to_string_lossy().to_string(),
+                    root: working_dir.to_string_lossy().to_string(),
+                },
+                cost: total_cost,
+                tokens: crate::types::TokenUsage {
+                    input: total_input_tokens,
+                    output: total_output_tokens,
+                    reasoning: 0,
+                    cache: crate::types::CacheTokens { read: 0, write: 0 },
+                },
+                error: None,
+                summary: None,
+                metadata: None,
+            },
+            parts,
+        };
+
+        // Store message
+        self.session_store
+            .add_message(session_id, assistant_message.clone())?;
+
+        // Emit completion
+        let _ = event_tx.send(ExecutionEvent::Complete(assistant_message.clone()));
+
+        Ok(assistant_message)
+    }
+
     /// Build LLM context from session history with agent-specific system prompt
     fn build_llm_context(
         &self,
         session_id: &str,
         agent: &AgentInfo,
         working_dir: &Path,
+        model_id: &str,
     ) -> Result<Vec<ChatCompletionRequestMessage>, String> {
         let mut messages = vec![];
 
@@ -453,10 +748,10 @@ impl AgentExecutor {
         let prompt_builder = SystemPromptBuilder::new(
             agent.clone(),
             working_dir.to_path_buf(),
-            "moonshotai".to_string(),
+            self.provider.config().name.clone(),
         );
 
-        let system_prompt = prompt_builder.build();
+        let system_prompt = prompt_builder.build(model_id);
 
         tracing::debug!(
             "System prompt for agent '{}' ({} chars):\n{}",
