@@ -72,6 +72,16 @@ impl Default for GlobalPaths {
     }
 }
 
+/// Global helper for quick access to common paths
+pub struct Global;
+
+impl Global {
+    /// Get the data directory path
+    pub fn data_dir() -> PathBuf {
+        GlobalPaths::new().data
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

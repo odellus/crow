@@ -117,6 +117,8 @@ pub async fn create_router_with_storage() -> Result<Router, String> {
         .route("/session/{id}", patch(update_session))
         .route("/session/{id}/fork", post(fork_session))
         .route("/session/{id}/abort", post(abort_session))
+        .route("/session/{id}/revert", post(revert_session))
+        .route("/session/{id}/unrevert", post(unrevert_session))
         .route("/session/{id}/children", get(get_session_children))
         .route("/session/{id}/todo", get(get_session_todo))
         // Message endpoints
@@ -504,6 +506,12 @@ async fn send_message_stream(
         // Get working directory
         let working_dir = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
 
+        // Set up snapshot manager for tracking file changes
+        let data_dir = crate::global::Global::data_dir();
+        let snapshot_manager =
+            crate::snapshot::SnapshotManager::new(&data_dir, &session_id, working_dir.clone());
+        executor.set_snapshot_manager(snapshot_manager);
+
         // Clone session_id for use after executor consumes it
         let session_id_for_release = session_id.clone();
 
@@ -558,6 +566,136 @@ async fn send_message_stream(
             .interval(Duration::from_secs(15))
             .text("keep-alive"),
     )
+}
+
+/// POST /session/{id}/revert - Revert session to a specific message
+#[derive(serde::Deserialize)]
+struct RevertRequest {
+    #[serde(rename = "messageID")]
+    message_id: String,
+    #[serde(rename = "partID")]
+    part_id: Option<String>,
+}
+
+async fn revert_session(
+    State(state): State<AppState>,
+    Path(session_id): Path<String>,
+    Json(req): Json<RevertRequest>,
+) -> Result<Json<Session>, (StatusCode, String)> {
+    // Get the session
+    let session = state
+        .session_store
+        .get(&session_id)
+        .map_err(|e| (StatusCode::NOT_FOUND, e))?;
+
+    // Get all messages
+    let messages = state
+        .session_store
+        .get_messages(&session_id)
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?;
+
+    // Find all patches from messages after the target message
+    let mut patches = vec![];
+    let mut found_target = false;
+
+    for msg in &messages {
+        let msg_id = msg.info.id();
+        if msg_id == req.message_id {
+            found_target = true;
+            continue;
+        }
+        if found_target {
+            // Collect patches from this message
+            for part in &msg.parts {
+                if let Part::Patch { hash, files, .. } = part {
+                    patches.push(crate::snapshot::Patch {
+                        hash: hash.clone(),
+                        files: files.iter().map(std::path::PathBuf::from).collect(),
+                    });
+                }
+            }
+        }
+    }
+
+    if !found_target {
+        return Err((StatusCode::NOT_FOUND, "Message not found".to_string()));
+    }
+
+    // Create snapshot manager and revert
+    let working_dir = std::path::PathBuf::from(&session.directory);
+    let data_dir = crate::global::Global::data_dir();
+    let snapshot_manager =
+        crate::snapshot::SnapshotManager::new(&data_dir, &session_id, working_dir.clone());
+
+    // Track current state before reverting (so we can unrevert)
+    let current_snapshot = snapshot_manager.track().await.ok().flatten();
+
+    // Revert files
+    if !patches.is_empty() {
+        snapshot_manager
+            .revert(&patches)
+            .await
+            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?;
+    }
+
+    // Get diff for display
+    let diff = if let Some(ref hash) = current_snapshot {
+        snapshot_manager.diff(hash).await.ok()
+    } else {
+        None
+    };
+
+    // Update session with revert state
+    let mut updated_session = session.clone();
+    updated_session.revert = Some(crate::types::SessionRevert {
+        message_id: req.message_id.clone(),
+        part_id: req.part_id.clone(),
+        snapshot: current_snapshot,
+        diff,
+    });
+
+    // TODO: Persist the updated session and delete messages after target
+
+    Ok(Json(updated_session))
+}
+
+/// POST /session/{id}/unrevert - Undo a revert operation
+async fn unrevert_session(
+    State(state): State<AppState>,
+    Path(session_id): Path<String>,
+) -> Result<Json<Session>, (StatusCode, String)> {
+    // Get the session
+    let session = state
+        .session_store
+        .get(&session_id)
+        .map_err(|e| (StatusCode::NOT_FOUND, e))?;
+
+    // Check if there's a revert to undo
+    let revert = session
+        .revert
+        .as_ref()
+        .ok_or((StatusCode::BAD_REQUEST, "No revert to undo".to_string()))?;
+
+    // Restore to the snapshot before revert
+    if let Some(ref snapshot) = revert.snapshot {
+        let working_dir = std::path::PathBuf::from(&session.directory);
+        let data_dir = crate::global::Global::data_dir();
+        let snapshot_manager =
+            crate::snapshot::SnapshotManager::new(&data_dir, &session_id, working_dir);
+
+        snapshot_manager
+            .restore(snapshot)
+            .await
+            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?;
+    }
+
+    // Clear revert state
+    let mut updated_session = session.clone();
+    updated_session.revert = None;
+
+    // TODO: Persist the updated session
+
+    Ok(Json(updated_session))
 }
 
 /// POST /session/dual - Create and run a dual-agent session

@@ -11,6 +11,7 @@ use crate::{
     agent::{AgentInfo, AgentRegistry, SystemPromptBuilder},
     providers::ProviderClient,
     session::{MessageWithParts, SessionStore},
+    snapshot::SnapshotManager,
     tools::ToolRegistry,
     types::{Message, MessageTime, Part},
 };
@@ -46,6 +47,7 @@ pub struct AgentExecutor {
     #[allow(dead_code)]
     lock_manager: Arc<crate::session::SessionLockManager>,
     cancellation: CancellationToken,
+    snapshot_manager: Option<SnapshotManager>,
 }
 
 impl AgentExecutor {
@@ -63,7 +65,13 @@ impl AgentExecutor {
             agent_registry,
             lock_manager,
             cancellation: CancellationToken::new(),
+            snapshot_manager: None,
         }
+    }
+
+    /// Set the snapshot manager for tracking file changes
+    pub fn set_snapshot_manager(&mut self, manager: SnapshotManager) {
+        self.snapshot_manager = Some(manager);
     }
 
     /// Get a clone of the cancellation token (for sharing with abort endpoint)
@@ -151,6 +159,19 @@ impl AgentExecutor {
 
         // Insert agent-specific reminders into last user message (like OpenCode does)
         Self::insert_reminders(&mut llm_messages, &agent.name);
+
+        // Track snapshot before executing tools
+        let snapshot_hash = if let Some(ref manager) = self.snapshot_manager {
+            match manager.track().await {
+                Ok(hash) => hash,
+                Err(e) => {
+                    tracing::warn!("Failed to track snapshot: {}", e);
+                    None
+                }
+            }
+        } else {
+            None
+        };
 
         // ReACT loop
         let mut parts = vec![];
@@ -282,6 +303,35 @@ impl AgentExecutor {
                         .duration_since(std::time::UNIX_EPOCH)
                         .unwrap()
                         .as_millis() as u64;
+
+                    // Create patch for file-modifying tools
+                    if let Some(ref hash) = snapshot_hash {
+                        let is_file_modifying =
+                            matches!(tool_name.as_str(), "edit" | "write" | "bash");
+                        if is_file_modifying {
+                            if let Some(ref manager) = self.snapshot_manager {
+                                match manager.patch(hash).await {
+                                    Ok(patch) if !patch.files.is_empty() => {
+                                        parts.push(Part::Patch {
+                                            id: format!("part-patch-{}", uuid::Uuid::new_v4()),
+                                            session_id: session_id.to_string(),
+                                            message_id: message_id.clone(),
+                                            hash: patch.hash,
+                                            files: patch
+                                                .files
+                                                .iter()
+                                                .map(|p| p.to_string_lossy().to_string())
+                                                .collect(),
+                                        });
+                                    }
+                                    Ok(_) => {} // No files changed
+                                    Err(e) => {
+                                        tracing::warn!("Failed to create patch: {}", e);
+                                    }
+                                }
+                            }
+                        }
+                    }
 
                     // Update tool part with completed state
                     if let Some(part) = parts.last_mut() {
@@ -515,6 +565,19 @@ impl AgentExecutor {
 
         Self::insert_reminders(&mut llm_messages, &agent.name);
 
+        // Track snapshot before executing tools
+        let snapshot_hash = if let Some(ref manager) = self.snapshot_manager {
+            match manager.track().await {
+                Ok(hash) => hash,
+                Err(e) => {
+                    tracing::warn!("Failed to track snapshot: {}", e);
+                    None
+                }
+            }
+        } else {
+            None
+        };
+
         let mut parts = vec![];
         let mut total_input_tokens = 0u64;
         let mut total_output_tokens = 0u64;
@@ -665,6 +728,38 @@ impl AgentExecutor {
                         .duration_since(std::time::UNIX_EPOCH)
                         .unwrap()
                         .as_millis() as u64;
+
+                    // Create patch for file-modifying tools
+                    if let Some(ref hash) = snapshot_hash {
+                        let is_file_modifying =
+                            matches!(tool_name.as_str(), "edit" | "write" | "bash");
+                        if is_file_modifying {
+                            if let Some(ref manager) = self.snapshot_manager {
+                                match manager.patch(hash).await {
+                                    Ok(patch) if !patch.files.is_empty() => {
+                                        let patch_part = Part::Patch {
+                                            id: format!("part-patch-{}", uuid::Uuid::new_v4()),
+                                            session_id: session_id.to_string(),
+                                            message_id: message_id.clone(),
+                                            hash: patch.hash,
+                                            files: patch
+                                                .files
+                                                .iter()
+                                                .map(|p| p.to_string_lossy().to_string())
+                                                .collect(),
+                                        };
+                                        let _ =
+                                            event_tx.send(ExecutionEvent::Part(patch_part.clone()));
+                                        parts.push(patch_part);
+                                    }
+                                    Ok(_) => {} // No files changed
+                                    Err(e) => {
+                                        tracing::warn!("Failed to create patch: {}", e);
+                                    }
+                                }
+                            }
+                        }
+                    }
 
                     // Create completed tool part
                     let tool_part = Part::Tool {

@@ -198,6 +198,10 @@ pub fn render_message_with_tools(raw: &RawMessage) -> String {
                 ));
                 output.push_str(&format!("**URL:** {}\n\n", url));
             }
+            Part::Patch { hash, files, .. } => {
+                output.push_str(&format!("**Snapshot Patch:** {}\n", hash));
+                output.push_str(&format!("**Files Changed:** {}\n\n", files.join(", ")));
+            }
         }
     }
 

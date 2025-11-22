@@ -203,6 +203,17 @@ pub enum Part {
         filename: Option<String>,
         url: String,
     },
+    /// Snapshot patch - records files changed since a snapshot hash
+    #[serde(rename = "patch")]
+    Patch {
+        id: String,
+        session_id: String,
+        message_id: String,
+        /// Git tree hash before the change
+        hash: String,
+        /// Files that were modified
+        files: Vec<String>,
+    },
 }
 
 /// Tool execution state

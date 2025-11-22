@@ -62,6 +62,7 @@ dependencies = [
  "serde_json",
  "serde_yaml",
  "similar",
+ "tempfile",
  "tokio",
  "tokio-stream",
  "tokio-util",

@@ -28,6 +28,7 @@ fn part_id(part: &Part) -> &str {
         Part::Thinking { id, .. } => id,
         Part::Tool { id, .. } => id,
         Part::File { id, .. } => id,
+        Part::Patch { id, .. } => id,
     }
 }
 
