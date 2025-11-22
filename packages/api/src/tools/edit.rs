@@ -927,9 +927,35 @@ Usage:
             diff,
         };
 
+        // Get LSP diagnostics if available
+        let mut diagnostic_output = String::new();
+        if let Some(lsp) = &ctx.lsp {
+            let file_path_buf = std::path::PathBuf::from(&file_path);
+            lsp.touch_file(&file_path_buf, &ctx.working_dir, true).await;
+            let diagnostics = lsp.diagnostics().await;
+
+            if let Some(issues) = diagnostics.get(&file_path_buf) {
+                let errors: Vec<_> = issues
+                    .iter()
+                    .filter(|d| d.severity == Some(1)) // Only errors
+                    .map(|d| d.pretty())
+                    .collect();
+
+                if !errors.is_empty() {
+                    diagnostic_output = format!(
+                        "\n\nThis file has errors, please fix\n<file_diagnostics>\n{}\n</file_diagnostics>",
+                        errors.join("\n")
+                    );
+                }
+            }
+        }
+
+        let mut result_output = serde_json::to_string(&output).unwrap_or_default();
+        result_output.push_str(&diagnostic_output);
+
         ToolResult {
             status: ToolStatus::Completed,
-            output: serde_json::to_string(&output).unwrap_or_default(),
+            output: result_output,
             error: None,
             metadata: json!({
                 "filepath": file_path,

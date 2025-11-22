@@ -177,11 +177,65 @@ impl ProviderClient {
             }
         }
 
-        self.client
+        let response = self
+            .client
             .chat()
             .create(request)
             .await
-            .map_err(|e| format!("API call failed: {}", e))
+            .map_err(|e| format!("API call failed: {}", e))?;
+
+        // Log response if CROW_VERBOSE_LOG is set
+        if std::env::var("CROW_VERBOSE_LOG").is_ok() {
+            let log_dir = dirs::data_dir()
+                .unwrap_or_else(|| std::path::PathBuf::from("."))
+                .join("crow")
+                .join("requests");
+
+            let timestamp = chrono::Local::now().format("%Y%m%dT%H%M%S").to_string();
+            let log_file = log_dir.join(format!("{}-response.json", timestamp));
+
+            let response_data = serde_json::json!({
+                "timestamp": chrono::Local::now().to_rfc3339(),
+                "model": model,
+                "id": response.id,
+                "choices": response.choices.iter().map(|c| {
+                    serde_json::json!({
+                        "index": c.index,
+                        "finish_reason": format!("{:?}", c.finish_reason),
+                        "message": {
+                            "role": format!("{:?}", c.message.role),
+                            "content": c.message.content,
+                            "tool_calls": c.message.tool_calls.as_ref().map(|tcs| {
+                                tcs.iter().map(|tc| {
+                                    serde_json::json!({
+                                        "id": tc.id,
+                                        "type": format!("{:?}", tc.r#type),
+                                        "function": {
+                                            "name": tc.function.name,
+                                            "arguments": tc.function.arguments
+                                        }
+                                    })
+                                }).collect::<Vec<_>>()
+                            })
+                        }
+                    })
+                }).collect::<Vec<_>>(),
+                "usage": response.usage.as_ref().map(|u| {
+                    serde_json::json!({
+                        "prompt_tokens": u.prompt_tokens,
+                        "completion_tokens": u.completion_tokens,
+                        "total_tokens": u.total_tokens
+                    })
+                })
+            });
+
+            if let Ok(json) = serde_json::to_string_pretty(&response_data) {
+                let _ = std::fs::write(&log_file, json);
+                eprintln!("[VERBOSE] Response logged to: {}", log_file.display());
+            }
+        }
+
+        Ok(response)
     }
 
     /// Get the provider config

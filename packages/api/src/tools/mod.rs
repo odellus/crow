@@ -7,11 +7,16 @@ use serde_json::Value;
 use tokio_util::sync::CancellationToken;
 
 pub mod bash;
+pub mod batch;
 pub mod edit;
 pub mod glob;
 pub mod grep;
 pub mod invalid;
 pub mod list;
+pub mod lsp_diagnostics;
+pub mod lsp_hover;
+pub mod multiedit;
+pub mod patch;
 pub mod read;
 pub mod task;
 pub mod todoread;
@@ -22,11 +27,16 @@ pub mod work_completed;
 pub mod write;
 
 pub use bash::BashTool;
+pub use batch::BatchTool;
 pub use edit::EditTool;
 pub use glob::GlobTool;
 pub use grep::GrepTool;
 pub use invalid::InvalidTool;
 pub use list::ListTool;
+pub use lsp_diagnostics::LspDiagnosticsTool;
+pub use lsp_hover::LspHoverTool;
+pub use multiedit::MultiEditTool;
+pub use patch::PatchTool;
 pub use read::ReadTool;
 pub use task::TaskTool;
 pub use todoread::TodoReadTool;
@@ -73,6 +83,9 @@ pub struct ToolContext {
 
     // Cancellation support
     pub abort: Option<CancellationToken>, // Cancellation token for aborting
+
+    // LSP support
+    pub lsp: Option<std::sync::Arc<crate::lsp::Lsp>>,
 }
 
 impl ToolContext {
@@ -107,6 +120,7 @@ impl ToolContext {
             provider_id: None,
             model_id: None,
             abort: None,
+            lsp: None,
         }
     }
 }
@@ -173,6 +187,9 @@ impl ToolRegistry {
             // Web tools
             Box::new(WebFetchTool),
             Box::new(WebSearchTool::new()),
+            // LSP tools
+            Box::new(LspHoverTool),
+            Box::new(LspDiagnosticsTool),
             // Note: TaskTool requires dependencies, use new_with_deps() instead
             // Error handling
             Box::new(InvalidTool),
@@ -212,6 +229,9 @@ impl ToolRegistry {
             // Web tools
             Box::new(WebFetchTool),
             Box::new(WebSearchTool::new()),
+            // LSP tools
+            Box::new(LspHoverTool),
+            Box::new(LspDiagnosticsTool),
             // Subagent spawning with dependencies
             Box::new(
                 TaskTool::new(
