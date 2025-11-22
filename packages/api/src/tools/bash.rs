@@ -4,7 +4,7 @@
 use super::ToolContext;
 use super::{Tool, ToolResult, ToolStatus};
 use async_trait::async_trait;
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 use serde_json::{json, Value};
 use tokio::process::Command;
 
@@ -13,23 +13,15 @@ pub struct BashTool;
 #[derive(Deserialize)]
 struct BashInput {
     command: String,
-    #[serde(default = "default_cwd")]
-    cwd: String,
+    #[serde(default)]
+    timeout: Option<u64>,
+    #[serde(default)]
+    description: Option<String>,
 }
 
-fn default_cwd() -> String {
-    std::env::current_dir()
-        .unwrap_or_default()
-        .to_string_lossy()
-        .to_string()
-}
-
-#[derive(Serialize, Deserialize)]
-struct BashOutput {
-    stdout: String,
-    stderr: String,
-    exit_code: i32,
-}
+const DEFAULT_TIMEOUT_MS: u64 = 120_000; // 2 minutes
+const MAX_TIMEOUT_MS: u64 = 600_000; // 10 minutes
+const MAX_OUTPUT_LENGTH: usize = 30_000;
 
 #[async_trait]
 impl Tool for BashTool {
@@ -105,14 +97,18 @@ IMPORTANT: When the user asks you to create a pull request, follow these steps c
             "properties": {
                 "command": {
                     "type": "string",
-                    "description": "The bash command to execute"
+                    "description": "The command to execute"
                 },
-                "cwd": {
+                "timeout": {
+                    "type": "number",
+                    "description": "Optional timeout in milliseconds (max 600000ms / 10 minutes, default 120000ms / 2 minutes)"
+                },
+                "description": {
                     "type": "string",
-                    "description": "Working directory for command execution (optional, defaults to current directory)"
+                    "description": "Clear, concise description of what this command does in 5-10 words"
                 }
             },
-            "required": ["command"]
+            "required": ["command", "description"]
         })
     }
 
@@ -140,11 +136,20 @@ IMPORTANT: When the user asks you to create a pull request, follow these steps c
             }
         };
 
+        // Calculate timeout
+        let timeout_ms = bash_input
+            .timeout
+            .map(|t| t.min(MAX_TIMEOUT_MS))
+            .unwrap_or(DEFAULT_TIMEOUT_MS);
+
+        // Use working directory from context
+        let cwd = &ctx.working_dir;
+
         // Execute command with cancellation support
         let child = Command::new("bash")
             .arg("-c")
             .arg(&bash_input.command)
-            .current_dir(&bash_input.cwd)
+            .current_dir(cwd)
             .stdout(std::process::Stdio::piped())
             .stderr(std::process::Stdio::piped())
             .spawn();
@@ -158,13 +163,15 @@ IMPORTANT: When the user asks you to create a pull request, follow these steps c
                     error: Some(format!("Failed to spawn command: {}", e)),
                     metadata: json!({
                         "command": bash_input.command,
-                        "cwd": bash_input.cwd,
+                        "description": bash_input.description,
                     }),
                 };
             }
         };
 
-        // Wait for command with cancellation support
+        // Wait for command with timeout and cancellation support
+        let timeout_duration = std::time::Duration::from_millis(timeout_ms);
+
         let output = if let Some(cancel_token) = &ctx.abort {
             let cancel_token = cancel_token.clone();
             let wait_future = child.wait_with_output();
@@ -172,16 +179,26 @@ IMPORTANT: When the user asks you to create a pull request, follow these steps c
             tokio::select! {
                 biased;
                 _ = cancel_token.cancelled() => {
-                    // Note: child is moved into wait_future, but we can't kill it after select
-                    // The process will be orphaned but will eventually complete
                     return ToolResult {
                         status: ToolStatus::Error,
                         output: String::new(),
-                        error: Some("Aborted".to_string()),
+                        error: Some("Command was aborted".to_string()),
                         metadata: json!({
                             "command": bash_input.command,
-                            "cwd": bash_input.cwd,
+                            "description": bash_input.description,
                             "aborted": true,
+                        }),
+                    };
+                }
+                _ = tokio::time::sleep(timeout_duration) => {
+                    return ToolResult {
+                        status: ToolStatus::Error,
+                        output: format!("Command timed out after {} ms", timeout_ms),
+                        error: Some(format!("Command timed out after {} ms", timeout_ms)),
+                        metadata: json!({
+                            "command": bash_input.command,
+                            "description": bash_input.description,
+                            "timed_out": true,
                         }),
                     };
                 }
@@ -195,7 +212,7 @@ IMPORTANT: When the user asks you to create a pull request, follow these steps c
                                 error: Some(format!("Failed to execute command: {}", e)),
                                 metadata: json!({
                                     "command": bash_input.command,
-                                    "cwd": bash_input.cwd,
+                                    "description": bash_input.description,
                                 }),
                             };
                         }
@@ -203,18 +220,36 @@ IMPORTANT: When the user asks you to create a pull request, follow these steps c
                 }
             }
         } else {
-            match child.wait_with_output().await {
-                Ok(output) => output,
-                Err(e) => {
+            // No cancel token, just use timeout
+            let wait_future = child.wait_with_output();
+            tokio::select! {
+                _ = tokio::time::sleep(timeout_duration) => {
                     return ToolResult {
                         status: ToolStatus::Error,
-                        output: String::new(),
-                        error: Some(format!("Failed to execute command: {}", e)),
+                        output: format!("Command timed out after {} ms", timeout_ms),
+                        error: Some(format!("Command timed out after {} ms", timeout_ms)),
                         metadata: json!({
                             "command": bash_input.command,
-                            "cwd": bash_input.cwd,
+                            "description": bash_input.description,
+                            "timed_out": true,
                         }),
                     };
+                }
+                result = wait_future => {
+                    match result {
+                        Ok(output) => output,
+                        Err(e) => {
+                            return ToolResult {
+                                status: ToolStatus::Error,
+                                output: String::new(),
+                                error: Some(format!("Failed to execute command: {}", e)),
+                                metadata: json!({
+                                    "command": bash_input.command,
+                                    "description": bash_input.description,
+                                }),
+                            };
+                        }
+                    }
                 }
             }
         };
@@ -223,11 +258,20 @@ IMPORTANT: When the user asks you to create a pull request, follow these steps c
         let stderr = String::from_utf8_lossy(&output.stderr).to_string();
         let exit_code = output.status.code().unwrap_or(-1);
 
-        let bash_output = BashOutput {
-            stdout: stdout.clone(),
-            stderr: stderr.clone(),
-            exit_code,
-        };
+        // Combine stdout and stderr like OpenCode does
+        let mut combined_output = stdout.clone();
+        if !stderr.is_empty() {
+            if !combined_output.is_empty() {
+                combined_output.push('\n');
+            }
+            combined_output.push_str(&stderr);
+        }
+
+        // Truncate output if too long
+        if combined_output.len() > MAX_OUTPUT_LENGTH {
+            combined_output = combined_output[..MAX_OUTPUT_LENGTH].to_string();
+            combined_output.push_str("\n\n(Output was truncated due to length limit)");
+        }
 
         let status = if exit_code == 0 {
             ToolStatus::Completed
@@ -237,16 +281,16 @@ IMPORTANT: When the user asks you to create a pull request, follow these steps c
 
         ToolResult {
             status,
-            output: serde_json::to_string(&bash_output).unwrap_or_default(),
+            output: combined_output.clone(),
             error: if exit_code != 0 {
                 Some(format!("Command exited with code {}", exit_code))
             } else {
                 None
             },
             metadata: json!({
-                "command": bash_input.command,
-                "cwd": bash_input.cwd,
-                "exit_code": exit_code,
+                "output": combined_output,
+                "exit": exit_code,
+                "description": bash_input.description,
             }),
         }
     }
@@ -260,7 +304,8 @@ mod tests {
     async fn test_bash_echo() {
         let tool = BashTool;
         let input = json!({
-            "command": "echo 'hello world'"
+            "command": "echo 'hello world'",
+            "description": "Print hello world"
         });
 
         let ctx = crate::tools::ToolContext::new(
@@ -271,17 +316,15 @@ mod tests {
         );
         let result = tool.execute(input, &ctx).await;
         assert_eq!(result.status, ToolStatus::Completed);
-
-        let output: BashOutput = serde_json::from_str(&result.output).unwrap();
-        assert_eq!(output.stdout.trim(), "hello world");
-        assert_eq!(output.exit_code, 0);
+        assert!(result.output.contains("hello world"));
     }
 
     #[tokio::test]
     async fn test_bash_error() {
         let tool = BashTool;
         let input = json!({
-            "command": "exit 1"
+            "command": "exit 1",
+            "description": "Exit with error"
         });
 
         let ctx = crate::tools::ToolContext::new(
@@ -293,5 +336,335 @@ mod tests {
         let result = tool.execute(input, &ctx).await;
         assert_eq!(result.status, ToolStatus::Error);
         assert!(result.error.is_some());
+    }
+
+    #[tokio::test]
+    async fn test_bash_stderr() {
+        let tool = BashTool;
+        let input = json!({
+            "command": "echo 'error message' >&2",
+            "description": "Print to stderr"
+        });
+
+        let ctx = crate::tools::ToolContext::new(
+            "test".to_string(),
+            "test".to_string(),
+            "test".to_string(),
+            std::path::PathBuf::from("/tmp"),
+        );
+        let result = tool.execute(input, &ctx).await;
+        assert_eq!(result.status, ToolStatus::Completed);
+        assert!(result.output.contains("error message"));
+    }
+
+    #[tokio::test]
+    async fn test_bash_combined_output() {
+        let tool = BashTool;
+        let input = json!({
+            "command": "echo 'stdout' && echo 'stderr' >&2",
+            "description": "Print to both streams"
+        });
+
+        let ctx = crate::tools::ToolContext::new(
+            "test".to_string(),
+            "test".to_string(),
+            "test".to_string(),
+            std::path::PathBuf::from("/tmp"),
+        );
+        let result = tool.execute(input, &ctx).await;
+        assert_eq!(result.status, ToolStatus::Completed);
+        assert!(result.output.contains("stdout"));
+        assert!(result.output.contains("stderr"));
+    }
+
+    #[tokio::test]
+    async fn test_bash_pwd() {
+        let tool = BashTool;
+        let input = json!({
+            "command": "pwd",
+            "description": "Print working directory"
+        });
+
+        let ctx = crate::tools::ToolContext::new(
+            "test".to_string(),
+            "test".to_string(),
+            "test".to_string(),
+            std::path::PathBuf::from("/tmp"),
+        );
+        let result = tool.execute(input, &ctx).await;
+        assert_eq!(result.status, ToolStatus::Completed);
+        assert!(result.output.contains("/tmp"));
+    }
+
+    #[tokio::test]
+    async fn test_bash_multiline_output() {
+        let tool = BashTool;
+        let input = json!({
+            "command": "echo 'line1' && echo 'line2' && echo 'line3'",
+            "description": "Print multiple lines"
+        });
+
+        let ctx = crate::tools::ToolContext::new(
+            "test".to_string(),
+            "test".to_string(),
+            "test".to_string(),
+            std::path::PathBuf::from("/tmp"),
+        );
+        let result = tool.execute(input, &ctx).await;
+        assert_eq!(result.status, ToolStatus::Completed);
+        assert!(result.output.contains("line1"));
+        assert!(result.output.contains("line2"));
+        assert!(result.output.contains("line3"));
+    }
+
+    #[tokio::test]
+    async fn test_bash_exit_code() {
+        let tool = BashTool;
+        let input = json!({
+            "command": "exit 42",
+            "description": "Exit with code 42"
+        });
+
+        let ctx = crate::tools::ToolContext::new(
+            "test".to_string(),
+            "test".to_string(),
+            "test".to_string(),
+            std::path::PathBuf::from("/tmp"),
+        );
+        let result = tool.execute(input, &ctx).await;
+        assert_eq!(result.status, ToolStatus::Error);
+        assert!(result.error.unwrap().contains("42"));
+    }
+
+    #[tokio::test]
+    async fn test_bash_env_vars() {
+        let tool = BashTool;
+        let input = json!({
+            "command": "echo $HOME",
+            "description": "Print HOME env var"
+        });
+
+        let ctx = crate::tools::ToolContext::new(
+            "test".to_string(),
+            "test".to_string(),
+            "test".to_string(),
+            std::path::PathBuf::from("/tmp"),
+        );
+        let result = tool.execute(input, &ctx).await;
+        assert_eq!(result.status, ToolStatus::Completed);
+        // HOME should be set
+        assert!(!result.output.trim().is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_bash_chained_commands() {
+        let tool = BashTool;
+        let input = json!({
+            "command": "true && echo 'success'",
+            "description": "Chain commands with &&"
+        });
+
+        let ctx = crate::tools::ToolContext::new(
+            "test".to_string(),
+            "test".to_string(),
+            "test".to_string(),
+            std::path::PathBuf::from("/tmp"),
+        );
+        let result = tool.execute(input, &ctx).await;
+        assert_eq!(result.status, ToolStatus::Completed);
+        assert!(result.output.contains("success"));
+    }
+
+    #[tokio::test]
+    async fn test_bash_pipe() {
+        let tool = BashTool;
+        let input = json!({
+            "command": "echo 'hello world' | tr 'a-z' 'A-Z'",
+            "description": "Pipe to uppercase"
+        });
+
+        let ctx = crate::tools::ToolContext::new(
+            "test".to_string(),
+            "test".to_string(),
+            "test".to_string(),
+            std::path::PathBuf::from("/tmp"),
+        );
+        let result = tool.execute(input, &ctx).await;
+        assert_eq!(result.status, ToolStatus::Completed);
+        assert!(result.output.contains("HELLO WORLD"));
+    }
+
+    #[tokio::test]
+    async fn test_bash_command_substitution() {
+        let tool = BashTool;
+        let input = json!({
+            "command": "echo \"Today is $(date +%A)\"",
+            "description": "Use command substitution"
+        });
+
+        let ctx = crate::tools::ToolContext::new(
+            "test".to_string(),
+            "test".to_string(),
+            "test".to_string(),
+            std::path::PathBuf::from("/tmp"),
+        );
+        let result = tool.execute(input, &ctx).await;
+        assert_eq!(result.status, ToolStatus::Completed);
+        assert!(result.output.contains("Today is"));
+    }
+
+    #[tokio::test]
+    async fn test_bash_arithmetic() {
+        let tool = BashTool;
+        let input = json!({
+            "command": "echo $((2 + 2))",
+            "description": "Arithmetic expansion"
+        });
+
+        let ctx = crate::tools::ToolContext::new(
+            "test".to_string(),
+            "test".to_string(),
+            "test".to_string(),
+            std::path::PathBuf::from("/tmp"),
+        );
+        let result = tool.execute(input, &ctx).await;
+        assert_eq!(result.status, ToolStatus::Completed);
+        assert!(result.output.contains("4"));
+    }
+
+    #[tokio::test]
+    async fn test_bash_quotes() {
+        let tool = BashTool;
+        let input = json!({
+            "command": "echo \"double quotes\" && echo 'single quotes'",
+            "description": "Test quoting"
+        });
+
+        let ctx = crate::tools::ToolContext::new(
+            "test".to_string(),
+            "test".to_string(),
+            "test".to_string(),
+            std::path::PathBuf::from("/tmp"),
+        );
+        let result = tool.execute(input, &ctx).await;
+        assert_eq!(result.status, ToolStatus::Completed);
+        assert!(result.output.contains("double quotes"));
+        assert!(result.output.contains("single quotes"));
+    }
+
+    #[tokio::test]
+    async fn test_bash_with_custom_timeout() {
+        let tool = BashTool;
+        let input = json!({
+            "command": "echo 'quick'",
+            "description": "Quick command",
+            "timeout": 5000
+        });
+
+        let ctx = crate::tools::ToolContext::new(
+            "test".to_string(),
+            "test".to_string(),
+            "test".to_string(),
+            std::path::PathBuf::from("/tmp"),
+        );
+        let result = tool.execute(input, &ctx).await;
+        assert_eq!(result.status, ToolStatus::Completed);
+        assert!(result.output.contains("quick"));
+    }
+
+    #[tokio::test]
+    async fn test_bash_metadata() {
+        let tool = BashTool;
+        let input = json!({
+            "command": "echo 'test'",
+            "description": "Test metadata"
+        });
+
+        let ctx = crate::tools::ToolContext::new(
+            "test".to_string(),
+            "test".to_string(),
+            "test".to_string(),
+            std::path::PathBuf::from("/tmp"),
+        );
+        let result = tool.execute(input, &ctx).await;
+        assert_eq!(result.status, ToolStatus::Completed);
+
+        // Check metadata contains expected fields
+        let metadata = result.metadata;
+        assert!(metadata.get("exit").is_some());
+        assert!(metadata.get("description").is_some());
+        assert!(metadata.get("output").is_some());
+    }
+
+    #[tokio::test]
+    async fn test_bash_special_characters() {
+        let tool = BashTool;
+        let input = json!({
+            "command": "echo 'hello\\nworld'",
+            "description": "Test special chars"
+        });
+
+        let ctx = crate::tools::ToolContext::new(
+            "test".to_string(),
+            "test".to_string(),
+            "test".to_string(),
+            std::path::PathBuf::from("/tmp"),
+        );
+        let result = tool.execute(input, &ctx).await;
+        assert_eq!(result.status, ToolStatus::Completed);
+    }
+
+    #[tokio::test]
+    async fn test_bash_empty_output() {
+        let tool = BashTool;
+        let input = json!({
+            "command": "true",
+            "description": "Command with no output"
+        });
+
+        let ctx = crate::tools::ToolContext::new(
+            "test".to_string(),
+            "test".to_string(),
+            "test".to_string(),
+            std::path::PathBuf::from("/tmp"),
+        );
+        let result = tool.execute(input, &ctx).await;
+        assert_eq!(result.status, ToolStatus::Completed);
+    }
+
+    #[tokio::test]
+    async fn test_bash_failed_command() {
+        let tool = BashTool;
+        let input = json!({
+            "command": "false",
+            "description": "Always fails"
+        });
+
+        let ctx = crate::tools::ToolContext::new(
+            "test".to_string(),
+            "test".to_string(),
+            "test".to_string(),
+            std::path::PathBuf::from("/tmp"),
+        );
+        let result = tool.execute(input, &ctx).await;
+        assert_eq!(result.status, ToolStatus::Error);
+    }
+
+    #[tokio::test]
+    async fn test_bash_nonexistent_command() {
+        let tool = BashTool;
+        let input = json!({
+            "command": "nonexistent_command_xyz",
+            "description": "Run nonexistent command"
+        });
+
+        let ctx = crate::tools::ToolContext::new(
+            "test".to_string(),
+            "test".to_string(),
+            "test".to_string(),
+            std::path::PathBuf::from("/tmp"),
+        );
+        let result = tool.execute(input, &ctx).await;
+        assert_eq!(result.status, ToolStatus::Error);
     }
 }
