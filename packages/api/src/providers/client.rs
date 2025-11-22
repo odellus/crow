@@ -177,12 +177,14 @@ impl ProviderClient {
             }
         }
 
+        eprintln!("[VERBOSE] About to call LLM API...");
         let response = self
             .client
             .chat()
             .create(request)
             .await
             .map_err(|e| format!("API call failed: {}", e))?;
+        eprintln!("[VERBOSE] LLM API returned!");
 
         // Log response if CROW_VERBOSE_LOG is set
         eprintln!("[VERBOSE] Got response from LLM, checking for logging...");
@@ -340,11 +342,19 @@ impl ProviderClient {
             .await
             .map_err(|e| format!("API stream failed: {}", e))?;
 
+        // Accumulate response for logging
+        let mut accumulated_text = String::new();
+        let mut accumulated_tool_calls: std::collections::HashMap<usize, (String, String, String)> =
+            std::collections::HashMap::new();
+        let mut usage_info: Option<(u64, u64)> = None;
+
         while let Some(result) = stream.next().await {
             match result {
                 Ok(response) => {
                     // Check for usage info (sent in final chunk)
                     if let Some(usage) = &response.usage {
+                        usage_info =
+                            Some((usage.prompt_tokens as u64, usage.completion_tokens as u64));
                         let _ = tx.send(StreamDelta::Usage {
                             input: usage.prompt_tokens as u64,
                             output: usage.completion_tokens as u64,
@@ -355,6 +365,7 @@ impl ProviderClient {
                         // Handle text content
                         if let Some(content) = &choice.delta.content {
                             if !content.is_empty() {
+                                accumulated_text.push_str(content);
                                 let _ = tx.send(StreamDelta::Text(content.clone()));
                             }
                         }
@@ -362,6 +373,25 @@ impl ProviderClient {
                         // Handle tool calls
                         if let Some(tool_calls) = &choice.delta.tool_calls {
                             for tc in tool_calls {
+                                let entry = accumulated_tool_calls
+                                    .entry(tc.index as usize)
+                                    .or_insert_with(|| {
+                                        (String::new(), String::new(), String::new())
+                                    });
+                                if let Some(id) = &tc.id {
+                                    entry.0 = id.clone();
+                                }
+                                if let Some(name) =
+                                    tc.function.as_ref().and_then(|f| f.name.clone())
+                                {
+                                    entry.1 = name;
+                                }
+                                if let Some(args) =
+                                    tc.function.as_ref().and_then(|f| f.arguments.clone())
+                                {
+                                    entry.2.push_str(&args);
+                                }
+
                                 let _ = tx.send(StreamDelta::ToolCall {
                                     index: tc.index as usize,
                                     id: tc.id.clone(),
@@ -380,6 +410,54 @@ impl ProviderClient {
                     eprintln!("Stream error: {}", e);
                     break;
                 }
+            }
+        }
+
+        // Log accumulated response if CROW_VERBOSE_LOG is set
+        if std::env::var("CROW_VERBOSE_LOG").is_ok() {
+            let log_dir = dirs::data_dir()
+                .unwrap_or_else(|| std::path::PathBuf::from("."))
+                .join("crow")
+                .join("requests");
+
+            let timestamp = chrono::Local::now().format("%Y%m%dT%H%M%S").to_string();
+            let log_file = log_dir.join(format!("{}-stream-response.json", timestamp));
+
+            let tool_calls_json: Vec<_> = accumulated_tool_calls
+                .iter()
+                .map(|(idx, (id, name, args))| {
+                    serde_json::json!({
+                        "index": idx,
+                        "id": id,
+                        "function": {
+                            "name": name,
+                            "arguments": args
+                        }
+                    })
+                })
+                .collect();
+
+            let response_data = serde_json::json!({
+                "timestamp": chrono::Local::now().to_rfc3339(),
+                "model": model,
+                "streaming": true,
+                "content": if accumulated_text.is_empty() { None } else { Some(&accumulated_text) },
+                "tool_calls": if tool_calls_json.is_empty() { None } else { Some(tool_calls_json) },
+                "usage": usage_info.map(|(input, output)| {
+                    serde_json::json!({
+                        "prompt_tokens": input,
+                        "completion_tokens": output,
+                        "total_tokens": input + output
+                    })
+                })
+            });
+
+            if let Ok(json) = serde_json::to_string_pretty(&response_data) {
+                let _ = std::fs::write(&log_file, json);
+                eprintln!(
+                    "[VERBOSE] Stream response logged to: {}",
+                    log_file.display()
+                );
             }
         }
 
