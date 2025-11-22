@@ -232,14 +232,27 @@ impl SessionStore {
         id: &str,
         metadata: serde_json::Value,
     ) -> Result<Session, String> {
+        self.update_with(id, |s| {
+            s.metadata = Some(metadata);
+        })
+    }
+
+    /// Update session with a closure that can modify any field
+    /// This is the preferred method for complex updates like revert state
+    pub fn update_with<F>(&self, id: &str, f: F) -> Result<Session, String>
+    where
+        F: FnOnce(&mut Session),
+    {
         let mut sessions = self.sessions.write();
 
         let session = sessions
             .get_mut(id)
             .ok_or_else(|| format!("Session not found: {}", id))?;
 
-        session.metadata = Some(metadata);
+        // Apply the update function
+        f(session);
 
+        // Update timestamp
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map_err(|e| format!("Time error: {}", e))?
@@ -255,7 +268,7 @@ impl SessionStore {
             let session_clone = updated_session.clone();
             tokio::spawn(async move {
                 if let Err(e) = storage.save_session(&session_clone).await {
-                    eprintln!("Failed to persist session metadata: {}", e);
+                    eprintln!("Failed to persist session update: {}", e);
                 }
             });
         }

@@ -646,15 +646,19 @@ async fn revert_session(
     };
 
     // Update session with revert state
-    let mut updated_session = session.clone();
-    updated_session.revert = Some(crate::types::SessionRevert {
-        message_id: req.message_id.clone(),
-        part_id: req.part_id.clone(),
-        snapshot: current_snapshot,
-        diff,
-    });
+    let updated_session = state
+        .session_store
+        .update_with(&session_id, |s| {
+            s.revert = Some(crate::types::SessionRevert {
+                message_id: req.message_id.clone(),
+                part_id: req.part_id.clone(),
+                snapshot: current_snapshot.clone(),
+                diff: diff.clone(),
+            });
+        })
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?;
 
-    // TODO: Persist the updated session and delete messages after target
+    // TODO: Delete messages after the target from storage
 
     Ok(Json(updated_session))
 }
@@ -690,10 +694,12 @@ async fn unrevert_session(
     }
 
     // Clear revert state
-    let mut updated_session = session.clone();
-    updated_session.revert = None;
-
-    // TODO: Persist the updated session
+    let updated_session = state
+        .session_store
+        .update_with(&session_id, |s| {
+            s.revert = None;
+        })
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?;
 
     Ok(Json(updated_session))
 }
