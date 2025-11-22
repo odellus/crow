@@ -35,12 +35,25 @@ curl -s http://localhost:7070/session -X POST \
   -d '{"path":"/your/project/directory"}'
 ```
 
-### Send Message
+### Send Message (Non-streaming)
 ```bash
 curl -s "http://localhost:7070/session/$SESSION_ID/message" -X POST \
   -H "Content-Type: application/json" \
   -d '{"parts":[{"type":"text","text":"your message"}]}'
 ```
+
+### Send Message (Streaming)
+```bash
+curl -s "http://localhost:7070/session/$SESSION_ID/message/stream" -X POST \
+  -H "Content-Type: application/json" \
+  -d '{"agent":"build","parts":[{"type":"text","text":"your message"}]}'
+```
+
+Returns SSE events:
+- `message.start` - stream beginning
+- `text.delta` - text chunks: `{"id":"...","delta":"chunk"}`
+- `part` - complete part
+- `message.complete` - final message with full response
 
 ### Other Endpoints
 - `GET /session` - list sessions
@@ -74,6 +87,13 @@ curl -s "http://localhost:4201/session/$CROW_SID/message" -X POST -d '{"parts":[
 
 - **OpenCode:** `~/.local/share/opencode/verbose/`
 - **Crow:** `~/.local/share/crow/requests/`
+
+Log files:
+- `*-request.json` - outgoing LLM requests
+- `*-response.json` - non-streaming responses
+- `*-stream-response.json` - streaming responses (accumulated)
+
+Enable with `CROW_VERBOSE_LOG=1`
 
 Compare with:
 ```bash

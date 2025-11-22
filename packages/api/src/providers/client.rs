@@ -6,6 +6,7 @@ use async_openai::{
 };
 use futures::StreamExt;
 use tokio::sync::mpsc;
+use tokio_util::sync::CancellationToken;
 
 /// Delta events from streaming LLM response
 #[derive(Debug, Clone)]
@@ -251,12 +252,14 @@ impl ProviderClient {
 
     /// Send a streaming chat completion request with tools
     /// Returns a channel that receives deltas as they arrive
+    /// Supports mid-stream cancellation via the cancellation token
     pub async fn chat_with_tools_stream(
         &self,
         messages: Vec<ChatCompletionRequestMessage>,
         tools: Vec<ChatCompletionTool>,
         model: Option<&str>,
         tx: mpsc::UnboundedSender<StreamDelta>,
+        cancellation: Option<CancellationToken>,
     ) -> Result<(), String> {
         let model = model.unwrap_or(&self.config.default_model);
 
@@ -348,7 +351,32 @@ impl ProviderClient {
             std::collections::HashMap::new();
         let mut usage_info: Option<(u64, u64)> = None;
 
-        while let Some(result) = stream.next().await {
+        loop {
+            // Check for cancellation before each chunk
+            if let Some(ref token) = cancellation {
+                if token.is_cancelled() {
+                    let _ = tx.send(StreamDelta::Done);
+                    return Err("Stream aborted".to_string());
+                }
+            }
+
+            // Use select to allow cancellation to interrupt waiting for next chunk
+            let result = if let Some(ref token) = cancellation {
+                tokio::select! {
+                    biased;
+                    _ = token.cancelled() => {
+                        let _ = tx.send(StreamDelta::Done);
+                        return Err("Stream aborted".to_string());
+                    }
+                    item = stream.next() => item,
+                }
+            } else {
+                stream.next().await
+            };
+
+            let Some(result) = result else {
+                break;
+            };
             match result {
                 Ok(response) => {
                     // Check for usage info (sent in final chunk)

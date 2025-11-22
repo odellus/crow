@@ -71,6 +71,11 @@ impl AgentExecutor {
         self.cancellation.clone()
     }
 
+    /// Set the cancellation token (to link with session lock)
+    pub fn set_cancellation_token(&mut self, token: CancellationToken) {
+        self.cancellation = token;
+    }
+
     /// Abort the current execution
     pub fn abort(&self) {
         self.cancellation.cancel();
@@ -529,10 +534,11 @@ impl AgentExecutor {
             let msgs = llm_messages.clone();
             let tools = tool_defs.clone();
 
-            // Spawn streaming task
+            // Spawn streaming task with cancellation support
+            let cancel_token = self.cancellation.clone();
             let stream_handle = tokio::spawn(async move {
                 provider
-                    .chat_with_tools_stream(msgs, tools, None, delta_tx)
+                    .chat_with_tools_stream(msgs, tools, None, delta_tx, Some(cancel_token))
                     .await
             });
 
@@ -542,7 +548,22 @@ impl AgentExecutor {
                 std::collections::HashMap::new();
             let text_part_id = format!("part-text-{}", uuid::Uuid::new_v4());
 
-            while let Some(delta) = delta_rx.recv().await {
+            loop {
+                // Use select to allow cancellation during delta reception
+                let delta = tokio::select! {
+                    biased;
+                    _ = self.cancellation.cancelled() => {
+                        // Abort the stream handle and return error
+                        stream_handle.abort();
+                        return Err("Session aborted".to_string());
+                    }
+                    delta = delta_rx.recv() => delta,
+                };
+
+                let Some(delta) = delta else {
+                    break;
+                };
+
                 match delta {
                     crate::providers::StreamDelta::Text(text) => {
                         // Emit text delta event
@@ -577,8 +598,13 @@ impl AgentExecutor {
                 }
             }
 
-            // Wait for stream to complete
-            let _ = stream_handle.await;
+            // Wait for stream to complete and check for abort errors
+            match stream_handle.await {
+                Ok(Err(e)) if e.contains("aborted") => {
+                    return Err("Session aborted".to_string());
+                }
+                _ => {}
+            }
 
             // Process tool calls if any
             if !tool_calls.is_empty() {

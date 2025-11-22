@@ -4,6 +4,8 @@
 use super::ToolContext;
 use super::{Tool, ToolResult, ToolStatus};
 use async_trait::async_trait;
+use nix::sys::signal::{self, Signal};
+use nix::unistd::Pid;
 use serde::Deserialize;
 use serde_json::{json, Value};
 use tokio::process::Command;
@@ -172,6 +174,9 @@ IMPORTANT: When the user asks you to create a pull request, follow these steps c
         // Wait for command with timeout and cancellation support
         let timeout_duration = std::time::Duration::from_millis(timeout_ms);
 
+        // Get process ID for killing the process tree
+        let pid = child.id();
+
         let output = if let Some(cancel_token) = &ctx.abort {
             let cancel_token = cancel_token.clone();
             let wait_future = child.wait_with_output();
@@ -179,9 +184,21 @@ IMPORTANT: When the user asks you to create a pull request, follow these steps c
             tokio::select! {
                 biased;
                 _ = cancel_token.cancelled() => {
+                    // Kill the process tree like opencode does
+                    if let Some(pid) = pid {
+                        let pgid = Pid::from_raw(-(pid as i32)); // Negative PID = process group
+
+                        // First try SIGTERM
+                        let _ = signal::kill(pgid, Signal::SIGTERM);
+
+                        // Wait a bit then force kill with SIGKILL if still running
+                        tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+                        let _ = signal::kill(pgid, Signal::SIGKILL);
+                    }
+
                     return ToolResult {
                         status: ToolStatus::Error,
-                        output: String::new(),
+                        output: "(Command was aborted)".to_string(),
                         error: Some("Command was aborted".to_string()),
                         metadata: json!({
                             "command": bash_input.command,
@@ -191,6 +208,14 @@ IMPORTANT: When the user asks you to create a pull request, follow these steps c
                     };
                 }
                 _ = tokio::time::sleep(timeout_duration) => {
+                    // Kill the process tree on timeout
+                    if let Some(pid) = pid {
+                        let pgid = Pid::from_raw(-(pid as i32));
+                        let _ = signal::kill(pgid, Signal::SIGTERM);
+                        tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+                        let _ = signal::kill(pgid, Signal::SIGKILL);
+                    }
+
                     return ToolResult {
                         status: ToolStatus::Error,
                         output: format!("Command timed out after {} ms", timeout_ms),
@@ -224,6 +249,14 @@ IMPORTANT: When the user asks you to create a pull request, follow these steps c
             let wait_future = child.wait_with_output();
             tokio::select! {
                 _ = tokio::time::sleep(timeout_duration) => {
+                    // Kill the process tree on timeout
+                    if let Some(pid) = pid {
+                        let pgid = Pid::from_raw(-(pid as i32));
+                        let _ = signal::kill(pgid, Signal::SIGTERM);
+                        tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+                        let _ = signal::kill(pgid, Signal::SIGKILL);
+                    }
+
                     return ToolResult {
                         status: ToolStatus::Error,
                         output: format!("Command timed out after {} ms", timeout_ms),
@@ -666,5 +699,76 @@ mod tests {
         );
         let result = tool.execute(input, &ctx).await;
         assert_eq!(result.status, ToolStatus::Error);
+    }
+
+    #[tokio::test]
+    async fn test_bash_abort_cancellation() {
+        use tokio_util::sync::CancellationToken;
+
+        let tool = BashTool;
+        let input = json!({
+            "command": "sleep 10",
+            "description": "Long running command"
+        });
+
+        let cancel_token = CancellationToken::new();
+        let mut ctx = crate::tools::ToolContext::new(
+            "test".to_string(),
+            "test".to_string(),
+            "test".to_string(),
+            std::path::PathBuf::from("/tmp"),
+        );
+        ctx.abort = Some(cancel_token.clone());
+
+        // Cancel after 100ms
+        let cancel_token_clone = cancel_token.clone();
+        tokio::spawn(async move {
+            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+            cancel_token_clone.cancel();
+        });
+
+        let start = std::time::Instant::now();
+        let result = tool.execute(input, &ctx).await;
+        let elapsed = start.elapsed();
+
+        // Should complete quickly due to cancellation (not 10 seconds)
+        assert!(
+            elapsed.as_millis() < 1000,
+            "Should abort quickly, took {}ms",
+            elapsed.as_millis()
+        );
+        assert_eq!(result.status, ToolStatus::Error);
+        assert!(result.error.unwrap().contains("aborted"));
+        assert!(result.output.contains("aborted"));
+    }
+
+    #[tokio::test]
+    async fn test_bash_timeout_kills_process() {
+        let tool = BashTool;
+        let input = json!({
+            "command": "sleep 10",
+            "description": "Long running command",
+            "timeout": 200
+        });
+
+        let ctx = crate::tools::ToolContext::new(
+            "test".to_string(),
+            "test".to_string(),
+            "test".to_string(),
+            std::path::PathBuf::from("/tmp"),
+        );
+
+        let start = std::time::Instant::now();
+        let result = tool.execute(input, &ctx).await;
+        let elapsed = start.elapsed();
+
+        // Should timeout around 200ms + 200ms kill grace period
+        assert!(
+            elapsed.as_millis() < 1000,
+            "Should timeout quickly, took {}ms",
+            elapsed.as_millis()
+        );
+        assert_eq!(result.status, ToolStatus::Error);
+        assert!(result.error.unwrap().contains("timed out"));
     }
 }

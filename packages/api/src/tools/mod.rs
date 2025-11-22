@@ -94,12 +94,35 @@ impl ToolContext {
         &self.project_root
     }
 
-    /// Check if tool should abort
+    /// Check if tool should abort (synchronous check)
     pub fn should_abort(&self) -> bool {
         self.abort
             .as_ref()
             .map(|t| t.is_cancelled())
             .unwrap_or(false)
+    }
+
+    /// Get a future that resolves when abort is requested
+    /// Use this in tokio::select! for event-driven cancellation
+    ///
+    /// Example:
+    /// ```ignore
+    /// tokio::select! {
+    ///     _ = ctx.cancelled() => { return error_result; }
+    ///     result = long_operation() => { result }
+    /// }
+    /// ```
+    pub async fn cancelled(&self) {
+        match &self.abort {
+            Some(token) => token.cancelled().await,
+            None => std::future::pending().await,
+        }
+    }
+
+    /// Get a clone of the cancellation token (if available)
+    /// Useful for passing to spawned tasks
+    pub fn cancellation_token(&self) -> Option<CancellationToken> {
+        self.abort.clone()
     }
 
     /// Create a basic context (for backwards compatibility)

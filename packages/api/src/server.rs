@@ -394,6 +394,17 @@ async fn send_message_stream(
 
     // Spawn task to execute agent and stream events
     tokio::spawn(async move {
+        // Acquire session lock for abort support
+        let lock = match state.lock_manager.acquire(&session_id) {
+            Ok(lock) => lock,
+            Err(e) => {
+                let _ = tx.send(Ok(Event::default()
+                    .event("error")
+                    .data(format!("{{\"error\":\"Failed to acquire lock: {}\"}}", e))));
+                return;
+            }
+        };
+
         // Send start event
         let _ = tx.send(Ok(Event::default()
             .event("message.start")
@@ -479,7 +490,7 @@ async fn send_message_stream(
             }
         };
 
-        let executor = AgentExecutor::new(
+        let mut executor = AgentExecutor::new(
             provider,
             state.tool_registry.clone(),
             state.session_store.clone(),
@@ -487,8 +498,14 @@ async fn send_message_stream(
             state.lock_manager.clone(),
         );
 
+        // Link executor's cancellation token to the session lock
+        executor.set_cancellation_token(lock.token());
+
         // Get working directory
         let working_dir = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
+
+        // Clone session_id for use after executor consumes it
+        let session_id_for_release = session_id.clone();
 
         // Create channel for streaming events
         let (event_tx, mut event_rx) = tokio::sync::mpsc::unbounded_channel();
@@ -529,6 +546,9 @@ async fn send_message_stream(
 
         // Wait for executor to finish
         let _ = executor_handle.await;
+
+        // Release the session lock
+        state.lock_manager.release(&session_id_for_release);
     });
 
     // Convert receiver to stream

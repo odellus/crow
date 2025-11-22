@@ -2,8 +2,8 @@
 //! Prevents race conditions and allows cancelling runaway agents
 
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use tokio_util::sync::CancellationToken;
 
 #[cfg(feature = "server")]
 use parking_lot::RwLock;
@@ -15,7 +15,7 @@ use std::sync::RwLock;
 pub struct SessionLock {
     pub session_id: String,
     pub locked_at: u64,
-    pub abort_signal: Arc<AtomicBool>,
+    pub cancellation_token: CancellationToken,
 }
 
 impl SessionLock {
@@ -28,21 +28,26 @@ impl SessionLock {
         Self {
             session_id,
             locked_at: now,
-            abort_signal: Arc::new(AtomicBool::new(false)),
+            cancellation_token: CancellationToken::new(),
         }
     }
 
     pub fn is_locked(&self) -> bool {
-        !self.abort_signal.load(Ordering::Relaxed)
+        !self.cancellation_token.is_cancelled()
     }
 
     pub fn abort(&self) {
         eprintln!("[LOCK] Aborting session {}", self.session_id);
-        self.abort_signal.store(true, Ordering::Relaxed);
+        self.cancellation_token.cancel();
     }
 
     pub fn should_abort(&self) -> bool {
-        self.abort_signal.load(Ordering::Relaxed)
+        self.cancellation_token.is_cancelled()
+    }
+
+    /// Get a clone of the cancellation token for use by executor
+    pub fn token(&self) -> CancellationToken {
+        self.cancellation_token.clone()
     }
 }
 
