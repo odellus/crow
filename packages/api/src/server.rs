@@ -141,6 +141,8 @@ pub async fn create_router_with_storage() -> Result<Router, String> {
         .route("/agent", get(list_agents))
         // Test endpoint for tools
         .route("/test/tool/{name}", post(test_tool))
+        // Global event stream
+        .route("/event", get(event_stream))
         .layer(CorsLayer::permissive())
         .with_state(state))
 }
@@ -1032,6 +1034,45 @@ async fn list_tools(
 ) -> Result<Json<Vec<serde_json::Value>>, (StatusCode, String)> {
     let tools = state.tool_registry.list_tools();
     Ok(Json(tools))
+}
+
+/// GET /event - Global SSE event stream
+async fn event_stream() -> Sse<impl Stream<Item = Result<Event, Infallible>>> {
+    let mut rx = crate::bus::subscribe();
+
+    let stream = async_stream::stream! {
+        // Send connected event
+        yield Ok(Event::default()
+            .event("message")
+            .data(serde_json::json!({
+                "type": "server.connected",
+                "properties": {}
+            }).to_string()));
+
+        // Stream all events
+        loop {
+            match rx.recv().await {
+                Ok(event) => {
+                    yield Ok(Event::default()
+                        .event("message")
+                        .data(serde_json::to_string(&event).unwrap_or_default()));
+                }
+                Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
+                    // Client fell behind, skip missed events
+                    tracing::warn!("Event stream lagged by {} events", n);
+                }
+                Err(tokio::sync::broadcast::error::RecvError::Closed) => {
+                    break;
+                }
+            }
+        }
+    };
+
+    Sse::new(stream).keep_alive(
+        axum::response::sse::KeepAlive::new()
+            .interval(Duration::from_secs(15))
+            .text("keep-alive"),
+    )
 }
 
 /// GET /agent - List all agents

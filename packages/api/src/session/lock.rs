@@ -76,6 +76,16 @@ impl SessionLockManager {
         locks.insert(session_id.to_string(), lock.clone());
 
         eprintln!("[LOCK] Acquired lock for session {}", session_id);
+
+        // Publish session.status event
+        crate::bus::publish(
+            crate::bus::events::SESSION_STATUS,
+            serde_json::json!({
+                "sessionID": session_id,
+                "status": { "type": "busy" }
+            }),
+        );
+
         Ok(lock)
     }
 
@@ -103,6 +113,12 @@ impl SessionLockManager {
         let mut locks = self.locks.write();
         locks.remove(session_id);
         eprintln!("[LOCK] Released lock for session {}", session_id);
+
+        // Publish session.idle event
+        crate::bus::publish(
+            crate::bus::events::SESSION_IDLE,
+            serde_json::json!({ "sessionID": session_id }),
+        );
     }
 
     #[cfg(not(feature = "server"))]

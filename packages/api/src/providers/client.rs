@@ -8,11 +8,53 @@ use futures::StreamExt;
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 
+/// Custom stream chunk that includes reasoning_content
+#[derive(Debug, serde::Deserialize)]
+struct StreamChunkDelta {
+    content: Option<String>,
+    reasoning_content: Option<String>,
+    tool_calls: Option<Vec<StreamToolCallChunk>>,
+    role: Option<String>,
+}
+
+#[derive(Debug, serde::Deserialize)]
+struct StreamToolCallChunk {
+    index: usize,
+    id: Option<String>,
+    function: Option<StreamFunctionChunk>,
+}
+
+#[derive(Debug, serde::Deserialize)]
+struct StreamFunctionChunk {
+    name: Option<String>,
+    arguments: Option<String>,
+}
+
+#[derive(Debug, serde::Deserialize)]
+struct StreamChoice {
+    delta: StreamChunkDelta,
+    finish_reason: Option<String>,
+}
+
+#[derive(Debug, serde::Deserialize)]
+struct StreamUsage {
+    prompt_tokens: u64,
+    completion_tokens: u64,
+}
+
+#[derive(Debug, serde::Deserialize)]
+struct StreamChunk {
+    choices: Vec<StreamChoice>,
+    usage: Option<StreamUsage>,
+}
+
 /// Delta events from streaming LLM response
 #[derive(Debug, Clone)]
 pub enum StreamDelta {
     /// Text content delta
     Text(String),
+    /// Reasoning/thinking content delta (for reasoning models like kimi-k2-thinking)
+    Reasoning(String),
     /// Tool call delta (id, name, arguments chunk)
     ToolCall {
         index: usize,
@@ -338,12 +380,98 @@ impl ProviderClient {
             }
         }
 
-        let mut stream = self
-            .client
-            .chat()
-            .create_stream(request)
+        // Use raw HTTP to capture reasoning_content which async-openai doesn't support
+        let api_key = Self::get_api_key(&self.config)?;
+        let http_client = reqwest::Client::new();
+
+        // Build request body
+        let tools_json: Vec<serde_json::Value> = tools
+            .iter()
+            .map(|t| {
+                serde_json::json!({
+                    "type": "function",
+                    "function": {
+                        "name": t.function.name,
+                        "description": t.function.description,
+                        "parameters": t.function.parameters
+                    }
+                })
+            })
+            .collect();
+
+        let messages_json: Vec<serde_json::Value> = messages.iter().map(|m| {
+            match m {
+                ChatCompletionRequestMessage::System(s) => serde_json::json!({
+                    "role": "system",
+                    "content": s.content
+                }),
+                ChatCompletionRequestMessage::User(u) => {
+                    let content = match &u.content {
+                        async_openai::types::ChatCompletionRequestUserMessageContent::Text(t) => t.clone(),
+                        async_openai::types::ChatCompletionRequestUserMessageContent::Array(parts) => {
+                            parts.iter().filter_map(|p| {
+                                if let async_openai::types::ChatCompletionRequestUserMessageContentPart::Text(t) = p {
+                                    Some(t.text.clone())
+                                } else {
+                                    None
+                                }
+                            }).collect::<Vec<_>>().join("")
+                        }
+                    };
+                    serde_json::json!({
+                        "role": "user",
+                        "content": content
+                    })
+                },
+                ChatCompletionRequestMessage::Assistant(a) => {
+                    let mut msg = serde_json::json!({
+                        "role": "assistant",
+                    });
+                    if let Some(content) = &a.content {
+                        msg["content"] = serde_json::json!(content);
+                    }
+                    if let Some(tool_calls) = &a.tool_calls {
+                        msg["tool_calls"] = serde_json::json!(tool_calls);
+                    }
+                    msg
+                },
+                ChatCompletionRequestMessage::Tool(t) => serde_json::json!({
+                    "role": "tool",
+                    "tool_call_id": t.tool_call_id,
+                    "content": t.content
+                }),
+                _ => serde_json::json!({"role": "unknown"})
+            }
+        }).collect();
+
+        let mut body = serde_json::json!({
+            "model": model,
+            "messages": messages_json,
+            "stream": true,
+            "stream_options": {"include_usage": true}
+        });
+
+        if !tools.is_empty() {
+            body["tools"] = serde_json::json!(tools_json);
+        }
+
+        let response = http_client
+            .post(format!("{}/chat/completions", self.config.base_url))
+            .header("Authorization", format!("Bearer {}", api_key))
+            .header("Content-Type", "application/json")
+            .json(&body)
+            .send()
             .await
-            .map_err(|e| format!("API stream failed: {}", e))?;
+            .map_err(|e| format!("API request failed: {}", e))?;
+
+        if !response.status().is_success() {
+            let status = response.status();
+            let text = response.text().await.unwrap_or_default();
+            return Err(format!("API error {}: {}", status, text));
+        }
+
+        let mut stream = response.bytes_stream();
+        let mut buffer = String::new();
 
         // Accumulate response for logging
         let mut accumulated_text = String::new();
@@ -377,66 +505,89 @@ impl ProviderClient {
             let Some(result) = result else {
                 break;
             };
-            match result {
-                Ok(response) => {
-                    // Check for usage info (sent in final chunk)
-                    if let Some(usage) = &response.usage {
-                        usage_info =
-                            Some((usage.prompt_tokens as u64, usage.completion_tokens as u64));
-                        let _ = tx.send(StreamDelta::Usage {
-                            input: usage.prompt_tokens as u64,
-                            output: usage.completion_tokens as u64,
-                        });
-                    }
 
-                    for choice in &response.choices {
-                        // Handle text content
-                        if let Some(content) = &choice.delta.content {
-                            if !content.is_empty() {
-                                accumulated_text.push_str(content);
-                                let _ = tx.send(StreamDelta::Text(content.clone()));
-                            }
-                        }
+            let bytes = result.map_err(|e| format!("Stream read error: {}", e))?;
+            buffer.push_str(&String::from_utf8_lossy(&bytes));
 
-                        // Handle tool calls
-                        if let Some(tool_calls) = &choice.delta.tool_calls {
-                            for tc in tool_calls {
-                                let entry = accumulated_tool_calls
-                                    .entry(tc.index as usize)
-                                    .or_insert_with(|| {
-                                        (String::new(), String::new(), String::new())
-                                    });
-                                if let Some(id) = &tc.id {
-                                    entry.0 = id.clone();
-                                }
-                                if let Some(name) =
-                                    tc.function.as_ref().and_then(|f| f.name.clone())
-                                {
-                                    entry.1 = name;
-                                }
-                                if let Some(args) =
-                                    tc.function.as_ref().and_then(|f| f.arguments.clone())
-                                {
-                                    entry.2.push_str(&args);
-                                }
+            // Process complete SSE lines
+            while let Some(pos) = buffer.find('\n') {
+                let line = buffer[..pos].trim().to_string();
+                buffer = buffer[pos + 1..].to_string();
 
-                                let _ = tx.send(StreamDelta::ToolCall {
-                                    index: tc.index as usize,
-                                    id: tc.id.clone(),
-                                    name: tc.function.as_ref().and_then(|f| f.name.clone()),
-                                    arguments: tc
-                                        .function
-                                        .as_ref()
-                                        .and_then(|f| f.arguments.clone())
-                                        .unwrap_or_default(),
-                                });
-                            }
-                        }
-                    }
+                if line.is_empty() || line.starts_with(':') {
+                    continue;
                 }
-                Err(e) => {
-                    eprintln!("Stream error: {}", e);
-                    break;
+
+                if let Some(data) = line.strip_prefix("data: ") {
+                    if data == "[DONE]" {
+                        break;
+                    }
+
+                    // Parse the JSON chunk
+                    if let Ok(chunk) = serde_json::from_str::<StreamChunk>(data) {
+                        // Debug: log raw response to see all fields
+                        if std::env::var("CROW_DEBUG_STREAM").is_ok() {
+                            eprintln!("[STREAM DEBUG] {:?}", chunk);
+                        }
+
+                        // Check for usage info (sent in final chunk)
+                        if let Some(usage) = &chunk.usage {
+                            usage_info = Some((usage.prompt_tokens, usage.completion_tokens));
+                            let _ = tx.send(StreamDelta::Usage {
+                                input: usage.prompt_tokens,
+                                output: usage.completion_tokens,
+                            });
+                        }
+
+                        for choice in &chunk.choices {
+                            // Handle reasoning content (thinking tokens)
+                            if let Some(reasoning) = &choice.delta.reasoning_content {
+                                if !reasoning.is_empty() {
+                                    let _ = tx.send(StreamDelta::Reasoning(reasoning.clone()));
+                                }
+                            }
+
+                            // Handle text content
+                            if let Some(content) = &choice.delta.content {
+                                if !content.is_empty() {
+                                    accumulated_text.push_str(content);
+                                    let _ = tx.send(StreamDelta::Text(content.clone()));
+                                }
+                            }
+
+                            // Handle tool calls
+                            if let Some(tool_calls) = &choice.delta.tool_calls {
+                                for tc in tool_calls {
+                                    let entry =
+                                        accumulated_tool_calls.entry(tc.index).or_insert_with(
+                                            || (String::new(), String::new(), String::new()),
+                                        );
+                                    if let Some(id) = &tc.id {
+                                        entry.0 = id.clone();
+                                    }
+                                    if let Some(func) = &tc.function {
+                                        if let Some(name) = &func.name {
+                                            entry.1 = name.clone();
+                                        }
+                                        if let Some(args) = &func.arguments {
+                                            entry.2.push_str(args);
+                                        }
+                                    }
+
+                                    let _ = tx.send(StreamDelta::ToolCall {
+                                        index: tc.index,
+                                        id: tc.id.clone(),
+                                        name: tc.function.as_ref().and_then(|f| f.name.clone()),
+                                        arguments: tc
+                                            .function
+                                            .as_ref()
+                                            .and_then(|f| f.arguments.clone())
+                                            .unwrap_or_default(),
+                                    });
+                                }
+                            }
+                        }
+                    }
                 }
             }
         }

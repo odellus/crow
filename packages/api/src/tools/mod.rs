@@ -210,9 +210,9 @@ impl ToolRegistry {
             // Web tools
             Box::new(WebFetchTool),
             Box::new(WebSearchTool::new()),
-            // LSP tools
-            Box::new(LspHoverTool),
-            Box::new(LspDiagnosticsTool),
+            // LSP tools disabled until LSP is implemented
+            // Box::new(LspHoverTool),
+            // Box::new(LspDiagnosticsTool),
             // Note: TaskTool requires dependencies, use new_with_deps() instead
             // Error handling
             Box::new(InvalidTool),
@@ -252,9 +252,9 @@ impl ToolRegistry {
             // Web tools
             Box::new(WebFetchTool),
             Box::new(WebSearchTool::new()),
-            // LSP tools
-            Box::new(LspHoverTool),
-            Box::new(LspDiagnosticsTool),
+            // LSP tools disabled until LSP is implemented
+            // Box::new(LspHoverTool),
+            // Box::new(LspDiagnosticsTool),
             // Subagent spawning with dependencies
             Box::new(
                 TaskTool::new(

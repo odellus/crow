@@ -157,6 +157,13 @@ impl SessionStore {
             });
         }
 
+        // Publish event
+        #[cfg(feature = "server")]
+        crate::bus::publish(
+            crate::bus::events::SESSION_CREATED,
+            serde_json::json!({ "info": session }),
+        );
+
         Ok(session)
     }
 
@@ -223,6 +230,13 @@ impl SessionStore {
             });
         }
 
+        // Publish event
+        #[cfg(feature = "server")]
+        crate::bus::publish(
+            crate::bus::events::SESSION_UPDATED,
+            serde_json::json!({ "info": updated_session }),
+        );
+
         Ok(updated_session)
     }
 
@@ -273,13 +287,31 @@ impl SessionStore {
             });
         }
 
+        // Publish event
+        #[cfg(feature = "server")]
+        crate::bus::publish(
+            crate::bus::events::SESSION_UPDATED,
+            serde_json::json!({ "info": updated_session }),
+        );
+
         Ok(updated_session)
     }
 
     /// Delete a session
     pub fn delete(&self, id: &str) -> Result<bool, String> {
         let mut sessions = self.sessions.write();
-        Ok(sessions.remove(id).is_some())
+        let removed = sessions.remove(id);
+
+        // Publish event if session was removed
+        #[cfg(feature = "server")]
+        if let Some(session) = &removed {
+            crate::bus::publish(
+                crate::bus::events::SESSION_DELETED,
+                serde_json::json!({ "info": session }),
+            );
+        }
+
+        Ok(removed.is_some())
     }
 
     /// Get child sessions
@@ -327,6 +359,13 @@ impl SessionStore {
                 }
             });
         }
+
+        // Publish event
+        #[cfg(feature = "server")]
+        crate::bus::publish(
+            crate::bus::events::MESSAGE_UPDATED,
+            serde_json::json!({ "info": message.info }),
+        );
 
         // STREAMING EXPORT: Export session to markdown after every message
         // This maintains real-time .crow/sessions/{id}.md files

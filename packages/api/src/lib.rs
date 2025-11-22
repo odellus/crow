@@ -46,6 +46,9 @@ pub mod lsp;
 pub mod snapshot;
 
 #[cfg(feature = "server")]
+pub mod bus;
+
+#[cfg(feature = "server")]
 use std::sync::OnceLock;
 
 #[cfg(feature = "server")]

@@ -628,12 +628,49 @@ impl AgentExecutor {
                 };
 
                 match delta {
+                    crate::providers::StreamDelta::Reasoning(text) => {
+                        // Emit reasoning delta as a special text delta
+                        // TODO: Add separate ReasoningDelta event type
+                        let _ = event_tx.send(ExecutionEvent::TextDelta {
+                            id: format!("{}-reasoning", text_part_id),
+                            delta: text.clone(),
+                        });
+
+                        // Publish to global bus as thinking part
+                        crate::bus::publish(
+                            crate::bus::events::MESSAGE_PART_UPDATED,
+                            serde_json::json!({
+                                "part": {
+                                    "type": "thinking",
+                                    "id": format!("{}-reasoning", text_part_id),
+                                    "session_id": session_id,
+                                    "message_id": message_id,
+                                },
+                                "delta": text,
+                            }),
+                        );
+                    }
                     crate::providers::StreamDelta::Text(text) => {
                         // Emit text delta event
                         let _ = event_tx.send(ExecutionEvent::TextDelta {
                             id: text_part_id.clone(),
                             delta: text.clone(),
                         });
+
+                        // Publish to global bus
+                        crate::bus::publish(
+                            crate::bus::events::MESSAGE_PART_UPDATED,
+                            serde_json::json!({
+                                "part": {
+                                    "type": "text",
+                                    "id": text_part_id,
+                                    "session_id": session_id,
+                                    "message_id": message_id,
+                                },
+                                "delta": text,
+                            }),
+                        );
+
                         accumulated_text.push_str(&text);
                     }
                     crate::providers::StreamDelta::ToolCall {
@@ -781,6 +818,13 @@ impl AgentExecutor {
 
                     // Emit tool part
                     let _ = event_tx.send(ExecutionEvent::Part(tool_part.clone()));
+
+                    // Publish to global bus
+                    crate::bus::publish(
+                        crate::bus::events::MESSAGE_PART_UPDATED,
+                        serde_json::json!({ "part": tool_part }),
+                    );
+
                     parts.push(tool_part);
 
                     // Add tool result to context
@@ -805,6 +849,13 @@ impl AgentExecutor {
                     text: accumulated_text,
                 };
                 let _ = event_tx.send(ExecutionEvent::Part(text_part.clone()));
+
+                // Publish to global bus
+                crate::bus::publish(
+                    crate::bus::events::MESSAGE_PART_UPDATED,
+                    serde_json::json!({ "part": text_part }),
+                );
+
                 parts.push(text_part);
             }
 

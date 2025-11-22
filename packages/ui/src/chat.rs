@@ -125,6 +125,11 @@ fn PartRenderer(part: Part) -> Element {
                 }
             }
         },
+        Part::Patch { files, .. } => rsx! {
+            div { class: "bg-gray-700 rounded p-2 text-xs text-gray-400",
+                "📝 Patch: {files.len()} file(s) modified"
+            }
+        },
     }
 }
 
