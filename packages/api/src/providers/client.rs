@@ -185,7 +185,11 @@ impl ProviderClient {
             .map_err(|e| format!("API call failed: {}", e))?;
 
         // Log response if CROW_VERBOSE_LOG is set
+        eprintln!("[VERBOSE] Got response from LLM, checking for logging...");
+        use std::io::Write;
+        let _ = std::io::stderr().flush();
         if std::env::var("CROW_VERBOSE_LOG").is_ok() {
+            eprintln!("[VERBOSE] Logging response...");
             let log_dir = dirs::data_dir()
                 .unwrap_or_else(|| std::path::PathBuf::from("."))
                 .join("crow")

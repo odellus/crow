@@ -46,7 +46,6 @@ pub struct AgentExecutor {
     #[allow(dead_code)]
     lock_manager: Arc<crate::session::SessionLockManager>,
     cancellation: CancellationToken,
-    lsp: Arc<crate::lsp::Lsp>,
 }
 
 impl AgentExecutor {
@@ -64,7 +63,6 @@ impl AgentExecutor {
             agent_registry,
             lock_manager,
             cancellation: CancellationToken::new(),
-            lsp: Arc::new(crate::lsp::Lsp::new()),
         }
     }
 
@@ -258,7 +256,7 @@ impl AgentExecutor {
                         provider_id: Some(self.provider.config().name.clone()),
                         model_id: Some(self.provider.config().default_model.clone()),
                         abort: Some(self.cancellation.clone()),
-                        lsp: Some(Arc::clone(&self.lsp)),
+                        lsp: None,
                     };
 
                     tracing::info!("Executing tool: {} with args: {:?}", tool_name, args);
@@ -628,7 +626,7 @@ impl AgentExecutor {
                         provider_id: Some(self.provider.config().name.clone()),
                         model_id: Some(self.provider.config().default_model.clone()),
                         abort: Some(self.cancellation.clone()),
-                        lsp: Some(Arc::clone(&self.lsp)),
+                        lsp: None,
                     };
 
                     let tool_result = self
