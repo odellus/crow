@@ -431,7 +431,7 @@ mod tests {
         let builder =
             SystemPromptBuilder::new(agent, PathBuf::from("/tmp/test"), "moonshot".to_string());
 
-        let prompt = builder.build("some-model");
+        let prompt = builder.build("some-model").join("\n");
 
         assert!(prompt.contains("Custom agent prompt here"));
         assert!(prompt.contains("Working directory: /tmp/test"));
@@ -442,7 +442,7 @@ mod tests {
     fn test_environment_format() {
         let agent = AgentInfo::new("test");
         let builder = SystemPromptBuilder::new(agent, PathBuf::from("."), "moonshot".to_string());
-        let prompt = builder.build("some-model");
+        let prompt = builder.build("some-model").join("\n");
 
         // Check for OpenCode-style XML tags
         assert!(prompt.contains("<env>"));
@@ -466,7 +466,7 @@ mod tests {
 
         // Test anthropic header and claude model
         let builder2 = SystemPromptBuilder::new(agent, PathBuf::from("."), "anthropic".to_string());
-        let prompt2 = builder2.build("claude-3-5-sonnet");
+        let prompt2 = builder2.build("claude-3-5-sonnet").join("\n");
         assert!(prompt2.contains("Claude")); // From anthropic_spoof.txt header
     }
 }

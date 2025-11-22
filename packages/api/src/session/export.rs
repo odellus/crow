@@ -305,6 +305,8 @@ fn is_leap_year(year: u64) -> bool {
 
 #[cfg(test)]
 mod tests {
+    use super::*;
+    use std::path::{Path, PathBuf};
 
     #[test]
     #[cfg(feature = "server")]
