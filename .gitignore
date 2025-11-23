@@ -7,3 +7,4 @@
 **/*.rs.bk
 .env
 packages/web/node_modules
+packages/api/node_modules
