@@ -607,9 +607,11 @@ impl AgentExecutor {
 
             // Collect the response while streaming deltas
             let mut accumulated_text = String::new();
+            let mut accumulated_reasoning = String::new();
             let mut tool_calls: std::collections::HashMap<usize, (String, String, String)> =
                 std::collections::HashMap::new();
             let text_part_id = format!("part-text-{}", uuid::Uuid::new_v4());
+            let reasoning_part_id = format!("part-thinking-{}", uuid::Uuid::new_v4());
 
             loop {
                 // Use select to allow cancellation during delta reception
@@ -630,9 +632,8 @@ impl AgentExecutor {
                 match delta {
                     crate::providers::StreamDelta::Reasoning(text) => {
                         // Emit reasoning delta as a special text delta
-                        // TODO: Add separate ReasoningDelta event type
                         let _ = event_tx.send(ExecutionEvent::TextDelta {
-                            id: format!("{}-reasoning", text_part_id),
+                            id: reasoning_part_id.clone(),
                             delta: text.clone(),
                         });
 
@@ -642,13 +643,15 @@ impl AgentExecutor {
                             serde_json::json!({
                                 "part": {
                                     "type": "thinking",
-                                    "id": format!("{}-reasoning", text_part_id),
+                                    "id": reasoning_part_id,
                                     "session_id": session_id,
                                     "message_id": message_id,
                                 },
                                 "delta": text,
                             }),
                         );
+
+                        accumulated_reasoning.push_str(&text);
                     }
                     crate::providers::StreamDelta::Text(text) => {
                         // Emit text delta event
@@ -838,6 +841,25 @@ impl AgentExecutor {
                 }
 
                 continue;
+            }
+
+            // Save reasoning/thinking part if present
+            if !accumulated_reasoning.is_empty() {
+                let thinking_part = Part::Thinking {
+                    id: reasoning_part_id,
+                    session_id: session_id.to_string(),
+                    message_id: message_id.clone(),
+                    text: accumulated_reasoning,
+                };
+                let _ = event_tx.send(ExecutionEvent::Part(thinking_part.clone()));
+
+                // Publish to global bus
+                crate::bus::publish(
+                    crate::bus::events::MESSAGE_PART_UPDATED,
+                    serde_json::json!({ "part": thinking_part }),
+                );
+
+                parts.push(thinking_part);
             }
 
             // No tool calls - we have final text

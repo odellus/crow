@@ -37,9 +37,15 @@ struct StreamChoice {
 }
 
 #[derive(Debug, serde::Deserialize)]
+struct CompletionTokensDetails {
+    reasoning_tokens: Option<u64>,
+}
+
+#[derive(Debug, serde::Deserialize)]
 struct StreamUsage {
     prompt_tokens: u64,
     completion_tokens: u64,
+    completion_tokens_details: Option<CompletionTokensDetails>,
 }
 
 #[derive(Debug, serde::Deserialize)]
@@ -477,7 +483,7 @@ impl ProviderClient {
         let mut accumulated_text = String::new();
         let mut accumulated_tool_calls: std::collections::HashMap<usize, (String, String, String)> =
             std::collections::HashMap::new();
-        let mut usage_info: Option<(u64, u64)> = None;
+        let mut usage_info: Option<(u64, u64, Option<u64>)> = None;
 
         loop {
             // Check for cancellation before each chunk
@@ -532,7 +538,12 @@ impl ProviderClient {
 
                         // Check for usage info (sent in final chunk)
                         if let Some(usage) = &chunk.usage {
-                            usage_info = Some((usage.prompt_tokens, usage.completion_tokens));
+                            let reasoning = usage
+                                .completion_tokens_details
+                                .as_ref()
+                                .and_then(|d| d.reasoning_tokens);
+                            usage_info =
+                                Some((usage.prompt_tokens, usage.completion_tokens, reasoning));
                             let _ = tx.send(StreamDelta::Usage {
                                 input: usage.prompt_tokens,
                                 output: usage.completion_tokens,
@@ -622,12 +633,16 @@ impl ProviderClient {
                 "streaming": true,
                 "content": if accumulated_text.is_empty() { None } else { Some(&accumulated_text) },
                 "tool_calls": if tool_calls_json.is_empty() { None } else { Some(tool_calls_json) },
-                "usage": usage_info.map(|(input, output)| {
-                    serde_json::json!({
+                "usage": usage_info.map(|(input, output, reasoning)| {
+                    let mut usage = serde_json::json!({
                         "prompt_tokens": input,
                         "completion_tokens": output,
                         "total_tokens": input + output
-                    })
+                    });
+                    if let Some(r) = reasoning {
+                        usage["reasoning_tokens"] = serde_json::json!(r);
+                    }
+                    usage
                 })
             });
 
