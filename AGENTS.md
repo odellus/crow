@@ -1,177 +1,135 @@
-# Crow Development Guide
+# Crow - AI Coding Agent Platform
+
+## Overview
+
+Crow is an AI-powered coding assistant platform with a Rust backend and React frontend. It's based on [OpenCode](https://github.com/opencode-ai/opencode) - use OpenCode as the primary reference implementation for understanding architecture decisions and tool implementations.
 
 ## Quick Start
 
-### Build & Run
-
+### Backend (crow-backend)
 ```bash
-cd /home/thomas/src/projects/opencode-project/crow
-cargo build --release --bin crow-serve --features server
-./target/release/crow-serve --port 7070
+cd crow-backend
+cargo build --bin crow-serve --features server
+cd ../test-dummy  # or your project directory
+../crow-backend/target/debug/crow-serve
+# Runs on http://localhost:7070
 ```
 
-### Prerequisites
-
-1. **Auth** at `~/.local/share/crow/auth.json`:
-   ```json
-   {"moonshotai":{"type":"api","key":"your-api-key"}}
-   ```
-
-2. **Config** at `.crow/config.jsonc` in project directory:
-   ```json
-   {
-     "model": "moonshotai/kimi-k2-thinking"
-   }
-   ```
-
-## API Usage
-
-**Important:** Endpoints use `/session` not `/sessions`
-
-### Create Session
+### Frontend (crow-frontend)
 ```bash
-curl -s http://localhost:7070/session -X POST \
-  -H "Content-Type: application/json" \
-  -d '{"path":"/your/project/directory"}'
+cd crow-frontend
+npm install
+npm run dev
+# Runs on http://localhost:5173
 ```
 
-### Send Message (Non-streaming)
+## Architecture
+
+### Backend (Rust)
+- **Framework**: Axum for HTTP/SSE
+- **LLM Providers**: OpenAI-compatible APIs (configurable via `.crow/config.jsonc`)
+- **Storage**: File-based in `.crow/` directory (sessions, messages, parts)
+
+Key directories:
+- `packages/api/src/tools/` - Tool implementations (read, write, edit, bash, todowrite, etc.)
+- `packages/api/src/agent/` - Agent executor and streaming logic
+- `packages/api/src/providers/` - LLM client implementations
+- `packages/api/src/prompts/` - System prompts (codex.txt)
+- `packages/api/src/bin/crow-serve.rs` - Server entry point
+
+### Frontend (React/TypeScript)
+- **Framework**: React + Vite
+- **Styling**: Inline styles (dark theme)
+- **State**: React hooks, SSE for real-time updates
+
+Key files:
+- `src/App.tsx` - Main app, routing, message state
+- `src/components/ChatView.tsx` - Message display, markdown rendering
+- `src/hooks/useEventStream.ts` - API calls and SSE handling
+- `src/types.ts` - TypeScript interfaces
+
+## Data Flow
+
+1. User sends message via frontend
+2. Frontend POSTs to `/session/{id}/message` with streaming
+3. Backend creates user message, invokes LLM
+4. LLM streams response with tool calls
+5. Backend executes tools, streams deltas via SSE
+6. Frontend displays streaming text and tool results
+7. Messages persisted to `.crow/storage/`
+
+## Tool System
+
+Tools are defined in `crow-backend/packages/api/src/tools/`:
+
+| Tool | File | Purpose |
+|------|------|---------|
+| read | read.rs | Read file contents |
+| write | write.rs | Write files |
+| edit | edit.rs | String replacement in files |
+| bash | bash.rs | Execute shell commands |
+| glob | glob.rs | Find files by pattern |
+| grep | grep.rs | Search file contents |
+| todowrite | todowrite.rs | Manage task lists |
+| todoread | todoread.rs | Read task lists |
+| websearch | websearch.rs | Internet search |
+| webfetch | webfetch.rs | Fetch URL content |
+| task | task.rs | Spawn sub-agents |
+
+Tools receive `ToolContext` with session_id, working directory, etc.
+
+## Configuration
+
+Project config: `.crow/config.jsonc`
+```jsonc
+{
+  "provider": {
+    "name": "openai-compatible",
+    "model": "your-model",
+    "api_key": "your-key",
+    "base_url": "http://localhost:8080/v1"
+  }
+}
+```
+
+## Storage Structure
+
+```
+.crow/
+├── config.jsonc          # Project configuration
+├── sessions/             # Session markdown logs
+│   └── {session_id}.md
+└── storage/
+    ├── session/          # Session metadata JSON
+    ├── message/          # Message metadata JSON
+    └── part/             # Message parts (text, tools) JSON
+```
+
+## Development Notes
+
+### Building
 ```bash
-curl -s "http://localhost:7070/session/$SESSION_ID/message" -X POST \
-  -H "Content-Type: application/json" \
-  -d '{"parts":[{"type":"text","text":"your message"}]}'
+# Backend with server features
+cd crow-backend && cargo build --bin crow-serve --features server
+
+# Frontend
+cd crow-frontend && npm run dev
 ```
 
-### Send Message (Streaming)
-```bash
-curl -s "http://localhost:7070/session/$SESSION_ID/message/stream" -X POST \
-  -H "Content-Type: application/json" \
-  -d '{"agent":"build","parts":[{"type":"text","text":"your message"}]}'
-```
+### Key Patterns from OpenCode
 
-Returns SSE events:
-- `message.start` - stream beginning
-- `text.delta` - text chunks: `{"id":"...","delta":"chunk"}`
-- `part` - complete part
-- `message.complete` - final message with full response
+1. **Message Parts**: Messages contain parts (text, tool calls, thinking)
+2. **Tool State**: pending → running → completed
+3. **Session Scoping**: Tools use `ctx.session_id` not LLM-provided IDs
+4. **Streaming**: SSE for real-time updates, accumulate deltas
 
-### Other Endpoints
-- `GET /session` - list sessions
-- `GET /session/:id` - get session
-- `DELETE /session/:id` - delete session
-- `GET /session/:id/message` - list messages
-- `GET /session/:id/children` - list child sessions
+### Current Issues / TODOs
 
-## Comparing with OpenCode
+- Thinking tokens display as blockquote (simplified from collapsible)
+- Todo persistence uses XDG paths (`~/.local/share/crow/storage/todo/`)
+- Sub-agent (task tool) needs testing
 
-Run both from the same directory to compare prompts:
+## Reference
 
-```bash
-cd /home/thomas/src/projects/opencode-project/test-dummy
-
-# Start OpenCode
-OPENCODE_VERBOSE_LOG=1 opencode serve -p 4200 &
-
-# Start Crow
-CROW_VERBOSE_LOG=1 ../crow/target/release/crow-serve --port 4201 &
-
-# Create sessions and send messages
-OC_SID=$(curl -s http://localhost:4200/session -X POST -d '{}' -H "Content-Type: application/json" | jq -r '.id')
-CROW_SID=$(curl -s http://localhost:4201/session -X POST -d '{"path":"/home/thomas/src/projects/opencode-project/test-dummy"}' -H "Content-Type: application/json" | jq -r '.id')
-
-curl -s "http://localhost:4200/session/$OC_SID/message" -X POST -d '{"parts":[{"type":"text","text":"hi"}]}' -H "Content-Type: application/json"
-curl -s "http://localhost:4201/session/$CROW_SID/message" -X POST -d '{"parts":[{"type":"text","text":"hi"}]}' -H "Content-Type: application/json"
-```
-
-### Verbose Log Locations
-
-- **OpenCode:** `~/.local/share/opencode/verbose/`
-- **Crow:** `~/.local/share/crow/requests/`
-
-Log files:
-- `*-request.json` - outgoing LLM requests
-- `*-response.json` - non-streaming responses
-- `*-stream-response.json` - streaming responses (accumulated)
-
-Enable with `CROW_VERBOSE_LOG=1`
-
-Compare with:
-```bash
-OC_LOG=$(ls -t ~/.local/share/opencode/verbose/ | head -1)
-CROW_LOG=$(ls -t ~/.local/share/crow/requests/ | head -1)
-
-# System prompt lengths
-cat ~/.local/share/opencode/verbose/$OC_LOG | jq '[.messages[] | select(.role == "system") | .content | length]'
-cat ~/.local/share/crow/requests/$CROW_LOG | jq '[.messages[] | select(.role == "system") | .content | length]'
-
-# Diff prompts
-cat ~/.local/share/opencode/verbose/$OC_LOG | jq -r '.messages[1].content' > /tmp/oc.txt
-cat ~/.local/share/crow/requests/$CROW_LOG | jq -r '.messages[1].content' > /tmp/crow.txt
-diff /tmp/oc.txt /tmp/crow.txt
-```
-
-## Project Structure
-
-```
-crow/
-├── packages/
-│   └── api/
-│       └── src/
-│           ├── agent/
-│           │   ├── executor.rs    # Agent execution loop
-│           │   ├── prompt.rs      # System prompt building
-│           │   ├── registry.rs    # Agent definitions
-│           │   └── types.rs       # Agent types
-│           ├── providers/
-│           │   └── client.rs      # LLM API calls
-│           ├── session/
-│           │   └── store.rs       # Session persistence
-│           ├── tools/
-│           │   ├── mod.rs         # Tool registry
-│           │   └── *.rs           # Individual tools
-│           ├── config/
-│           │   └── loader.rs      # Config loading
-│           └── server.rs          # HTTP endpoints
-└── Cargo.toml
-```
-
-### Key Files for Prompt Parity
-
-| Crow | OpenCode | Purpose |
-|------|----------|---------|
-| `agent/prompt.rs` | `session/system.ts` | System prompt building |
-| `agent/executor.rs` | `session/prompt.ts` | Message construction |
-| `providers/client.rs` | Provider SDK | LLM API calls |
-| `tools/mod.rs` | `tool/registry.ts` | Tool definitions |
-
-## Storage
-
-```
-~/.local/share/crow/
-├── auth.json           # API keys
-├── requests/           # Verbose request logs
-├── storage/
-│   ├── session/        # Session metadata
-│   ├── message/        # Messages per session
-│   └── todo/           # Todos per session
-└── log/                # Server logs
-```
-
-## Current Status
-
-**Working:**
-- 2 system messages matching OpenCode structure
-- File tree generation from working directory
-- 13 tools (bash, edit, write, read, grep, glob, list, todowrite, todoread, task, webfetch, websearch, invalid)
-- Config loading from `.crow/config.jsonc`
-- Session management with XDG persistence
-
-**Prompt parity:** System message 1 matches exactly. Message 2 is ~400 chars longer due to file tree differences (breadth-first traversal variations).
-
-## Troubleshooting
-
-**Lock poisoning:** Restart server with `pkill -9 crow-serve`
-
-**Empty verbose logs:** Ensure `CROW_VERBOSE_LOG=1` is set
-
-**Wrong model:** Check `.crow/config.jsonc` has correct model string
+- **OpenCode**: https://github.com/opencode-ai/opencode - The reference implementation
+- Check `crow-backend/docs/` for planning documents and analysis

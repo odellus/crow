@@ -1,237 +1,107 @@
-# Crow - Rust Agent Framework
+# Crow
 
-**OpenCode in Rust**: A fast, embeddable agent framework with web UI.
+AI-powered coding assistant with a web interface.
+
+## Features
+
+- Chat-based coding assistance
+- File operations (read, write, edit)
+- Shell command execution
+- Web search and URL fetching
+- Task planning with todo lists
+- Real-time streaming responses
+- Session persistence and history
 
 ## Quick Start
 
-### Launch Crow Web UI
-
-From anywhere:
-
-```bash
-cd /path/to/crow
-./crow          # Starts on port 8080
-./crow 3000     # Starts on custom port
-```
-
-Or from the web directory:
-
-```bash
-cd packages/web
-dx serve --port 8080 --platform server
-```
-
-Then open `http://localhost:8080` in your browser.
-
-## What's Working ✅
-
-- **Web UI**: Dark-themed interface with Tailwind CSS
-- **Session Management**: Create, list, and view sessions
-- **Chat Interface**: Send messages and receive agent responses  
-- **API Backend**: REST endpoints on same server
-- **12 Tools**: Bash, Read, Write, Edit, Glob, Grep, List, Task, Patch, WebFetch, TodoWrite, WorkCompleted
-- **LLM Integration**: Moonshot AI (kimi-k2-thinking with 262k context)
-- **Storage**: XDG-compliant (`~/.local/share/crow/`)
-- **Subagents**: Task tool spawns child sessions
-- **Auth**: Reads from `~/.local/share/crow/auth.json`
-
-## What's Next ⏭️
-
-Current state: **UI renders, navigation not wired**
-
-1. **Wire up navigation** - Session clicks and "New Session" button
-2. **Message display** - Show conversation history
-3. **Tool rendering** - Dynamic tool output display
-4. **File references** - @ mentions for attaching files
-5. **Streaming** - Real-time message updates via WebSocket
-6. **Single binary** - Embed web UI into `crow` executable
-
-See `CROW_WEB_UI_PROGRESS.md` for detailed status.
-
-## Architecture
-
-```
-crow/
-├── packages/
-│   ├── api/          # Backend: REST API, tools, agents, LLM
-│   ├── ui/           # Shared components (Chat, Navbar, etc.)
-│   └── web/          # Dioxus fullstack web app
-├── crow              # Launcher script
-└── README.md
-```
-
-## Development
-
 ### Prerequisites
+- Rust (for backend)
+- Node.js (for frontend)
+- An OpenAI-compatible LLM API
 
-```bash
-# Install Rust
-curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+### 1. Configure LLM Provider
 
-# Install Dioxus CLI
-cargo install dioxus-cli --version 0.7.1
+Create `.crow/config.jsonc` in your project directory:
 
-# Install Tailwind (handled automatically by Dioxus)
-```
-
-### Run Development Server
-
-```bash
-cd packages/web
-dx serve --port 8080 --platform server
-```
-
-Hot reload enabled - edit code and see changes instantly.
-
-### Build for Production
-
-```bash
-cd packages/web
-dx build --release --platform server
-```
-
-Output: `../../target/dx/web/release/web/`
-
-### Project Structure
-
-- **api**: Core agent framework
-  - `src/tools/`: 12 tool implementations
-  - `src/agent/`: Agent executor and registry
-  - `src/providers/`: LLM provider (Moonshot)
-  - `src/session/`: Session and message storage
-  - `src/server.rs`: REST API endpoints
-
-- **web**: Dioxus fullstack UI
-  - `src/views/sessions.rs`: Session list with sidebar
-  - `src/views/session_detail.rs`: Chat view with tabs
-  - `tailwind.css`: Tailwind input file (auto-compiled)
-  - `Dioxus.toml`: Dioxus configuration
-
-- **ui**: Shared components
-  - `chat.rs`: Chat interface with message rendering
-  - `navbar.rs`, `hero.rs`, etc.
-
-## Configuration
-
-### Auth (Moonshot API Key)
-
-Create `~/.local/share/crow/auth.json`:
-
-```json
+```jsonc
 {
-  "moonshotai": {
-    "type": "api",
-    "key": "sk-YOUR_API_KEY_HERE"
+  "provider": {
+    "name": "openai-compatible",
+    "model": "gpt-4",
+    "api_key": "your-api-key",
+    "base_url": "https://api.openai.com/v1"
   }
 }
 ```
 
-Or use environment variable:
+### 2. Start Backend
 
 ```bash
-export MOONSHOT_API_KEY="sk-YOUR_API_KEY_HERE"
+cd crow-backend
+cargo build --bin crow-serve --features server
+cd /path/to/your/project
+/path/to/crow-backend/target/debug/crow-serve
 ```
 
-### Dioxus Config
+Backend runs on `http://localhost:7070`
 
-`packages/web/Dioxus.toml`:
-
-```toml
-[application]
-name = "web"
-default_platform = "web"
-asset_dir = "assets"
-
-[web.app]
-title = "Crow"
-
-[web.resource]
-style = ["/tailwind.css"]  # Auto-compiled by Dioxus
-
-[web.resource.dev]
-style = []
-script = []
-```
-
-## API Endpoints
-
-All endpoints on `http://localhost:8080`:
-
-- `GET /session` - List all sessions
-- `POST /session/create` - Create new session
-- `GET /session/:id` - Get session details
-- `POST /session/:id/message` - Send message
-- `GET /session/:id/message` - List messages
-- `POST /api/send_message` - Quick message (auto-creates session)
-
-## Tech Stack
-
-- **Framework**: Dioxus 0.7 (Rust fullstack)
-- **Backend**: Axum web framework
-- **Styling**: Tailwind CSS (auto-compiled)
-- **State**: Dioxus Signals
-- **Storage**: File-based with atomic writes
-- **LLM**: Moonshot AI (Kimi models)
-
-## Comparison to OpenCode
-
-| Feature | OpenCode (TypeScript) | Crow (Rust) |
-|---------|----------------------|-------------|
-| Agent execution | ✅ | ✅ |
-| 12 core tools | ✅ | ✅ |
-| Web UI | TUI (terminal) | Web (browser) |
-| Storage | XDG directories | XDG directories |
-| Subagents | ✅ Task tool | ✅ Task tool |
-| Streaming | ✅ WebSocket | ⏭️ Planned |
-| File refs | ✅ @ mentions | ⏭️ Planned |
-| Themes | ✅ 23 themes | ⏭️ Planned |
-
-## Troubleshooting
-
-### "No CSS styling"
-
-- Ensure Tailwind compiled: Check `packages/web/assets/main.css` exists
-- Hard refresh: `Ctrl+Shift+R` (or `Cmd+Shift+R`)
-- Clear browser cache
-
-### "Build errors"
+### 3. Start Frontend
 
 ```bash
-cd /path/to/crow
-cargo clean
-cd packages/web
-dx build --release --platform server
+cd crow-frontend
+npm install
+npm run dev
 ```
 
-### "Port already in use"
+Frontend runs on `http://localhost:5173`
 
-```bash
-# Find process using port 8080
-lsof -i :8080
-# Kill it
-kill -9 <PID>
-# Or use different port
-./crow 3000
+### 4. Open Browser
+
+Navigate to `http://localhost:5173` to start chatting with Crow.
+
+## Usage
+
+1. Create a new session from the home page
+2. Type your coding request in the chat
+3. Crow will analyze your request and use appropriate tools
+4. View file changes, command outputs, and explanations in real-time
+
+## Project Structure
+
+```
+crow/
+├── crow-backend/     # Rust backend (API, tools, LLM integration)
+├── crow-frontend/    # React frontend (chat UI)
+└── docs/            # Planning and design documents
 ```
 
-## Contributing
+## Configuration Options
 
-Currently in active development. The web UI needs:
+### Provider Settings
 
-1. Navigation wiring (session clicks)
-2. Message history display
-3. Tool output rendering
-4. File attachment UI
-5. WebSocket streaming
+| Field | Description |
+|-------|-------------|
+| `name` | Provider type (`openai-compatible`) |
+| `model` | Model name (e.g., `gpt-4`, `claude-3-sonnet`) |
+| `api_key` | API key for the provider |
+| `base_url` | API endpoint URL |
 
-See `CROW_WEB_UI_PROGRESS.md` for detailed roadmap.
+### Supported Providers
+
+Any OpenAI-compatible API including:
+- OpenAI
+- Anthropic (via proxy)
+- Local models (llama.cpp, ollama)
+- Azure OpenAI
+
+## Development
+
+See [AGENTS.md](./AGENTS.md) for detailed architecture and development information.
+
+## Based On
+
+Crow is based on [OpenCode](https://github.com/opencode-ai/opencode), an open-source AI coding assistant.
 
 ## License
 
-MIT (matching OpenCode)
-
-## Links
-
-- OpenCode: https://github.com/opencode-ai/opencode
-- Dioxus: https://dioxuslabs.com
-- Documentation: `/path/to/crow/OPENCODE_TUI_*.md`
+MIT
