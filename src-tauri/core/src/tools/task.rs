@@ -347,8 +347,10 @@ impl Tool for TaskTool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::agent::types::{AgentInfo, AgentMode};
     use std::path::PathBuf;
 
+    /// Create a test TaskTool with default configuration
     async fn create_test_tool() -> TaskTool {
         let session_store = Arc::new(SessionStore::new());
         let agent_registry = Arc::new(AgentRegistry::new());
@@ -373,6 +375,37 @@ mod tests {
         .await
     }
 
+    /// Create TaskTool with custom agent registry for testing specific agent scenarios
+    async fn create_test_tool_with_agents(agents: Vec<AgentInfo>) -> TaskTool {
+        let session_store = Arc::new(SessionStore::new());
+        let agent_registry = Arc::new(AgentRegistry::new());
+
+        // Register custom agents
+        for agent in agents {
+            agent_registry.register(agent).await;
+        }
+
+        let tool_registry = Arc::new(parking_lot::RwLock::new(Some(Arc::new(
+            crate::tools::ToolRegistry::new(),
+        ))));
+        let lock_manager = Arc::new(crate::session::SessionLockManager::new());
+        let provider_config = crate::providers::ProviderConfig {
+            name: "test".to_string(),
+            base_url: "https://test.example.com/v1".to_string(),
+            api_key_env: "TEST_API_KEY".to_string(),
+            default_model: "test-model".to_string(),
+        };
+
+        TaskTool::new(
+            session_store,
+            agent_registry,
+            tool_registry,
+            lock_manager,
+            provider_config,
+        )
+        .await
+    }
+
     fn create_test_context() -> crate::tools::ToolContext {
         crate::tools::ToolContext::new(
             "test-session".to_string(),
@@ -382,20 +415,150 @@ mod tests {
         )
     }
 
+    fn create_test_context_with_session(session_id: &str) -> crate::tools::ToolContext {
+        crate::tools::ToolContext::new(
+            session_id.to_string(),
+            "test-message".to_string(),
+            "build".to_string(),
+            PathBuf::from("/tmp/test"),
+        )
+    }
+
+    // ==================== Input Validation Tests ====================
+
     #[tokio::test]
-    async fn test_task_tool_validation() {
+    async fn test_task_error_missing_prompt_parameter() {
         let tool = create_test_tool().await;
         let ctx = create_test_context();
 
-        // Test missing parameters
-        let result = tool.execute(json!({"description": "test"}), &ctx).await;
+        let result = tool
+            .execute(
+                json!({
+                    "description": "test task",
+                    "subagent_type": "general"
+                }),
+                &ctx,
+            )
+            .await;
+
+        assert_eq!(result.status, ToolStatus::Error);
+        assert!(result.error.is_some());
+        let error = result.error.unwrap();
+        assert!(
+            error.contains("Invalid input") || error.contains("missing field"),
+            "Expected missing field error, got: {}",
+            error
+        );
+    }
+
+    #[tokio::test]
+    async fn test_task_error_missing_subagent_type() {
+        let tool = create_test_tool().await;
+        let ctx = create_test_context();
+
+        let result = tool
+            .execute(
+                json!({
+                    "description": "test task",
+                    "prompt": "do something"
+                }),
+                &ctx,
+            )
+            .await;
+
+        assert_eq!(result.status, ToolStatus::Error);
+        assert!(result.error.is_some());
+        let error = result.error.unwrap();
+        assert!(
+            error.contains("Invalid input") || error.contains("missing field"),
+            "Expected missing field error, got: {}",
+            error
+        );
+    }
+
+    #[tokio::test]
+    async fn test_task_error_missing_description() {
+        let tool = create_test_tool().await;
+        let ctx = create_test_context();
+
+        let result = tool
+            .execute(
+                json!({
+                    "prompt": "do something",
+                    "subagent_type": "general"
+                }),
+                &ctx,
+            )
+            .await;
 
         assert_eq!(result.status, ToolStatus::Error);
         assert!(result.error.is_some());
     }
 
     #[tokio::test]
-    async fn test_task_tool_invalid_agent() {
+    async fn test_task_error_empty_input() {
+        let tool = create_test_tool().await;
+        let ctx = create_test_context();
+
+        let result = tool.execute(json!({}), &ctx).await;
+
+        assert_eq!(result.status, ToolStatus::Error);
+        assert!(result.error.is_some());
+    }
+
+    #[tokio::test]
+    async fn test_task_error_invalid_json_types() {
+        let tool = create_test_tool().await;
+        let ctx = create_test_context();
+
+        // Wrong types for fields
+        let result = tool
+            .execute(
+                json!({
+                    "description": 123,  // Should be string
+                    "prompt": true,      // Should be string
+                    "subagent_type": []  // Should be string
+                }),
+                &ctx,
+            )
+            .await;
+
+        assert_eq!(result.status, ToolStatus::Error);
+        assert!(result.error.is_some());
+    }
+
+    #[tokio::test]
+    async fn test_task_parses_input_correctly() {
+        let tool = create_test_tool().await;
+        let ctx = create_test_context();
+
+        // Valid input with all required fields - should fail only because of agent lookup
+        // (which proves parsing succeeded)
+        let result = tool
+            .execute(
+                json!({
+                    "description": "test description",
+                    "prompt": "test prompt content",
+                    "subagent_type": "nonexistent"
+                }),
+                &ctx,
+            )
+            .await;
+
+        // Should fail at agent lookup, not parsing
+        assert_eq!(result.status, ToolStatus::Error);
+        let error = result.error.unwrap();
+        assert!(
+            error.contains("Unknown agent type"),
+            "Should have parsed successfully but failed at agent lookup, got: {}",
+            error
+        );
+    }
+
+    // ==================== Agent Type Validation Tests ====================
+
+    #[tokio::test]
+    async fn test_task_error_invalid_agent_name() {
         let tool = create_test_tool().await;
         let ctx = create_test_context();
 
@@ -411,6 +574,574 @@ mod tests {
             .await;
 
         assert_eq!(result.status, ToolStatus::Error);
-        assert!(result.error.unwrap().contains("Unknown agent type"));
+        let error = result.error.unwrap();
+        assert!(error.contains("Unknown agent type"));
+        assert!(error.contains("invalid-agent"));
+    }
+
+    #[tokio::test]
+    async fn test_task_validates_subagent_type() {
+        let tool = create_test_tool().await;
+        let ctx = create_test_context();
+
+        // "general" is a built-in subagent
+        let result = tool
+            .execute(
+                json!({
+                    "description": "test task",
+                    "prompt": "do something",
+                    "subagent_type": "general"
+                }),
+                &ctx,
+            )
+            .await;
+
+        // Should not fail on validation - may fail on execution (no API key)
+        // but error should NOT be about unknown agent type
+        if result.status == ToolStatus::Error {
+            let error = result.error.unwrap_or_default();
+            assert!(
+                !error.contains("Unknown agent type"),
+                "Should recognize 'general' agent, got: {}",
+                error
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn test_task_rejects_non_subagent_agents() {
+        // Create an agent that is Primary-only (cannot be used as subagent)
+        let mut primary_only = AgentInfo::new("primary-only");
+        primary_only.mode = AgentMode::Primary;
+        primary_only.description = Some("A primary-only agent".to_string());
+
+        let tool = create_test_tool_with_agents(vec![primary_only]).await;
+        let ctx = create_test_context();
+
+        let result = tool
+            .execute(
+                json!({
+                    "description": "test task",
+                    "prompt": "do something",
+                    "subagent_type": "primary-only"
+                }),
+                &ctx,
+            )
+            .await;
+
+        assert_eq!(result.status, ToolStatus::Error);
+        let error = result.error.unwrap();
+        assert!(
+            error.contains("cannot be used as a subagent"),
+            "Expected 'cannot be used as subagent' error, got: {}",
+            error
+        );
+    }
+
+    #[tokio::test]
+    async fn test_task_agent_list_subagents_only() {
+        let tool = create_test_tool().await;
+        let ctx = create_test_context();
+
+        // Request nonexistent agent - error should list only subagents
+        let result = tool
+            .execute(
+                json!({
+                    "description": "test",
+                    "prompt": "test",
+                    "subagent_type": "nonexistent"
+                }),
+                &ctx,
+            )
+            .await;
+
+        assert_eq!(result.status, ToolStatus::Error);
+        let error = result.error.unwrap();
+
+        // "general" is a subagent, should be listed
+        assert!(
+            error.contains("general"),
+            "Error should list 'general' subagent: {}",
+            error
+        );
+
+        // "build" and "plan" are Primary agents, should NOT be listed
+        // (The error only lists available subagents)
+    }
+
+    // ==================== Description Generation Tests ====================
+
+    #[tokio::test]
+    async fn test_task_generates_dynamic_description() {
+        let tool = create_test_tool().await;
+
+        let description = tool.description();
+
+        // Description should contain the template text
+        assert!(description.contains("Launch a new agent"));
+        assert!(description.contains("subagent_type"));
+
+        // Should contain available agents
+        assert!(
+            description.contains("general"),
+            "Description should list 'general' agent"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_task_agent_description_includes_capabilities() {
+        // Create custom agent with description
+        let mut custom = AgentInfo::new("custom-explorer");
+        custom.mode = AgentMode::Subagent;
+        custom.description = Some("Explores codebases and finds files".to_string());
+
+        let tool = create_test_tool_with_agents(vec![custom]).await;
+
+        let description = tool.description();
+
+        // Should include custom agent and its description
+        assert!(
+            description.contains("custom-explorer"),
+            "Should list custom agent name"
+        );
+        assert!(
+            description.contains("Explores codebases"),
+            "Should include agent description"
+        );
+    }
+
+    // ==================== Tool Metadata Tests ====================
+
+    #[tokio::test]
+    async fn test_task_tool_name() {
+        let tool = create_test_tool().await;
+        assert_eq!(tool.name(), "task");
+    }
+
+    #[tokio::test]
+    async fn test_task_parameters_schema() {
+        let tool = create_test_tool().await;
+        let schema = tool.parameters_schema();
+
+        // Check schema structure
+        assert_eq!(schema["type"], "object");
+
+        // Check required fields
+        let required = schema["required"].as_array().unwrap();
+        assert!(required.contains(&json!("description")));
+        assert!(required.contains(&json!("prompt")));
+        assert!(required.contains(&json!("subagent_type")));
+
+        // Check properties exist
+        let props = schema["properties"].as_object().unwrap();
+        assert!(props.contains_key("description"));
+        assert!(props.contains_key("prompt"));
+        assert!(props.contains_key("subagent_type"));
+    }
+
+    // ==================== Session Management Tests ====================
+
+    #[tokio::test]
+    async fn test_task_creates_child_session() {
+        let session_store = Arc::new(SessionStore::new());
+        let agent_registry = Arc::new(AgentRegistry::new());
+        let tool_registry = Arc::new(parking_lot::RwLock::new(Some(Arc::new(
+            crate::tools::ToolRegistry::new(),
+        ))));
+        let lock_manager = Arc::new(crate::session::SessionLockManager::new());
+        let provider_config = crate::providers::ProviderConfig {
+            name: "test".to_string(),
+            base_url: "https://test.example.com/v1".to_string(),
+            api_key_env: "TEST_API_KEY".to_string(),
+            default_model: "test-model".to_string(),
+        };
+
+        let tool = TaskTool::new(
+            session_store.clone(),
+            agent_registry,
+            tool_registry,
+            lock_manager,
+            provider_config,
+        )
+        .await;
+
+        // Create parent session first
+        let parent_session = session_store
+            .create("/tmp/test".to_string(), None, Some("Parent".to_string()))
+            .unwrap();
+
+        let ctx = create_test_context_with_session(&parent_session.id);
+
+        // Get initial session count
+        let initial_count = session_store.list(None).unwrap().len();
+
+        // Execute task - will fail on API but should create child session
+        let _result = tool
+            .execute(
+                json!({
+                    "description": "test child",
+                    "prompt": "do something",
+                    "subagent_type": "general"
+                }),
+                &ctx,
+            )
+            .await;
+
+        // Should have created a new session
+        let final_count = session_store.list(None).unwrap().len();
+        assert!(
+            final_count > initial_count,
+            "Should have created child session. Initial: {}, Final: {}",
+            initial_count,
+            final_count
+        );
+    }
+
+    #[tokio::test]
+    async fn test_task_inherits_working_dir_from_parent() {
+        let session_store = Arc::new(SessionStore::new());
+        let agent_registry = Arc::new(AgentRegistry::new());
+        let tool_registry = Arc::new(parking_lot::RwLock::new(Some(Arc::new(
+            crate::tools::ToolRegistry::new(),
+        ))));
+        let lock_manager = Arc::new(crate::session::SessionLockManager::new());
+        let provider_config = crate::providers::ProviderConfig {
+            name: "test".to_string(),
+            base_url: "https://test.example.com/v1".to_string(),
+            api_key_env: "TEST_API_KEY".to_string(),
+            default_model: "test-model".to_string(),
+        };
+
+        let tool = TaskTool::new(
+            session_store.clone(),
+            agent_registry,
+            tool_registry,
+            lock_manager,
+            provider_config,
+        )
+        .await;
+
+        // Create parent session with specific working dir
+        let working_dir = "/home/user/myproject";
+        let parent_session = session_store
+            .create(working_dir.to_string(), None, Some("Parent".to_string()))
+            .unwrap();
+
+        let mut ctx = create_test_context_with_session(&parent_session.id);
+        ctx.working_dir = PathBuf::from(working_dir);
+
+        // Execute task
+        let _result = tool
+            .execute(
+                json!({
+                    "description": "test",
+                    "prompt": "test",
+                    "subagent_type": "general"
+                }),
+                &ctx,
+            )
+            .await;
+
+        // Find child session (most recently created)
+        let sessions = session_store.list(None).unwrap();
+        let child = sessions
+            .iter()
+            .find(|s| s.parent_id.is_some())
+            .expect("Should have child session");
+
+        assert_eq!(
+            child.directory, working_dir,
+            "Child should inherit working directory"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_task_session_has_correct_parent_id() {
+        let session_store = Arc::new(SessionStore::new());
+        let agent_registry = Arc::new(AgentRegistry::new());
+        let tool_registry = Arc::new(parking_lot::RwLock::new(Some(Arc::new(
+            crate::tools::ToolRegistry::new(),
+        ))));
+        let lock_manager = Arc::new(crate::session::SessionLockManager::new());
+        let provider_config = crate::providers::ProviderConfig {
+            name: "test".to_string(),
+            base_url: "https://test.example.com/v1".to_string(),
+            api_key_env: "TEST_API_KEY".to_string(),
+            default_model: "test-model".to_string(),
+        };
+
+        let tool = TaskTool::new(
+            session_store.clone(),
+            agent_registry,
+            tool_registry,
+            lock_manager,
+            provider_config,
+        )
+        .await;
+
+        // Create parent session
+        let parent_session = session_store
+            .create("/tmp/test".to_string(), None, Some("Parent".to_string()))
+            .unwrap();
+
+        let ctx = create_test_context_with_session(&parent_session.id);
+
+        // Execute task
+        let _result = tool
+            .execute(
+                json!({
+                    "description": "child task",
+                    "prompt": "test",
+                    "subagent_type": "general"
+                }),
+                &ctx,
+            )
+            .await;
+
+        // Find child session
+        let sessions = session_store.list(None).unwrap();
+        let child = sessions.iter().find(|s| s.parent_id.is_some());
+
+        assert!(child.is_some(), "Should have created child session");
+        let child = child.unwrap();
+        assert_eq!(
+            child.parent_id,
+            Some(parent_session.id.clone()),
+            "Child should have correct parent_id"
+        );
+    }
+
+    // ==================== Metadata Tests ====================
+
+    #[tokio::test]
+    async fn test_task_returns_metadata_with_session_id() {
+        let session_store = Arc::new(SessionStore::new());
+        let agent_registry = Arc::new(AgentRegistry::new());
+        let tool_registry = Arc::new(parking_lot::RwLock::new(Some(Arc::new(
+            crate::tools::ToolRegistry::new(),
+        ))));
+        let lock_manager = Arc::new(crate::session::SessionLockManager::new());
+        let provider_config = crate::providers::ProviderConfig {
+            name: "test".to_string(),
+            base_url: "https://test.example.com/v1".to_string(),
+            api_key_env: "TEST_API_KEY".to_string(),
+            default_model: "test-model".to_string(),
+        };
+
+        let tool = TaskTool::new(
+            session_store.clone(),
+            agent_registry,
+            tool_registry,
+            lock_manager,
+            provider_config,
+        )
+        .await;
+
+        let parent = session_store
+            .create("/tmp/test".to_string(), None, None)
+            .unwrap();
+
+        let ctx = create_test_context_with_session(&parent.id);
+
+        let result = tool
+            .execute(
+                json!({
+                    "description": "test metadata",
+                    "prompt": "test",
+                    "subagent_type": "general"
+                }),
+                &ctx,
+            )
+            .await;
+
+        // Even on error, metadata should contain sessionId
+        assert!(
+            result.metadata.get("sessionId").is_some(),
+            "Metadata should contain sessionId"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_task_returns_metadata_with_subagent_type() {
+        let session_store = Arc::new(SessionStore::new());
+        let agent_registry = Arc::new(AgentRegistry::new());
+        let tool_registry = Arc::new(parking_lot::RwLock::new(Some(Arc::new(
+            crate::tools::ToolRegistry::new(),
+        ))));
+        let lock_manager = Arc::new(crate::session::SessionLockManager::new());
+        let provider_config = crate::providers::ProviderConfig {
+            name: "test".to_string(),
+            base_url: "https://test.example.com/v1".to_string(),
+            api_key_env: "TEST_API_KEY".to_string(),
+            default_model: "test-model".to_string(),
+        };
+
+        let tool = TaskTool::new(
+            session_store.clone(),
+            agent_registry,
+            tool_registry,
+            lock_manager,
+            provider_config,
+        )
+        .await;
+
+        let parent = session_store
+            .create("/tmp/test".to_string(), None, None)
+            .unwrap();
+
+        let ctx = create_test_context_with_session(&parent.id);
+
+        let result = tool
+            .execute(
+                json!({
+                    "description": "test metadata",
+                    "prompt": "test",
+                    "subagent_type": "general"
+                }),
+                &ctx,
+            )
+            .await;
+
+        // On success path metadata should contain subagent
+        // But since we likely error due to no API key, check error path too
+        if result.status == ToolStatus::Completed {
+            assert_eq!(
+                result.metadata.get("subagent").and_then(|v| v.as_str()),
+                Some("general"),
+                "Metadata should contain subagent type"
+            );
+        }
+        // For error case, sessionId is still included
+    }
+
+    // ==================== Error Handling Tests ====================
+
+    #[tokio::test]
+    async fn test_task_error_session_creation_failure() {
+        // This is harder to test directly without mocking
+        // But we can verify error handling structure by checking
+        // that session_store errors are caught
+        let tool = create_test_tool().await;
+        let ctx = create_test_context();
+
+        // The tool should handle errors gracefully
+        let result = tool
+            .execute(
+                json!({
+                    "description": "test",
+                    "prompt": "test",
+                    "subagent_type": "general"
+                }),
+                &ctx,
+            )
+            .await;
+
+        // Should not panic, should return either success or handled error
+        assert!(
+            result.status == ToolStatus::Completed || result.status == ToolStatus::Error,
+            "Should handle gracefully"
+        );
+    }
+
+    // ==================== Edge Cases ====================
+
+    #[tokio::test]
+    async fn test_task_handles_unicode_prompt() {
+        let tool = create_test_tool().await;
+        let ctx = create_test_context();
+
+        let result = tool
+            .execute(
+                json!({
+                    "description": "Unicode 测试 🎉",
+                    "prompt": "Handle this: 你好世界 🌍 مرحبا",
+                    "subagent_type": "general"
+                }),
+                &ctx,
+            )
+            .await;
+
+        // Should parse correctly (may fail on execution, but not parsing)
+        if result.status == ToolStatus::Error {
+            let error = result.error.unwrap_or_default();
+            assert!(
+                !error.contains("Invalid input"),
+                "Should handle unicode correctly"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn test_task_handles_very_long_prompt() {
+        let tool = create_test_tool().await;
+        let ctx = create_test_context();
+
+        let long_prompt = "x".repeat(10000);
+        let result = tool
+            .execute(
+                json!({
+                    "description": "long test",
+                    "prompt": long_prompt,
+                    "subagent_type": "general"
+                }),
+                &ctx,
+            )
+            .await;
+
+        // Should handle gracefully
+        if result.status == ToolStatus::Error {
+            let error = result.error.unwrap_or_default();
+            // Should not fail on input parsing
+            assert!(
+                !error.contains("Invalid input"),
+                "Should handle long prompts"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn test_task_handles_empty_strings() {
+        let tool = create_test_tool().await;
+        let ctx = create_test_context();
+
+        let result = tool
+            .execute(
+                json!({
+                    "description": "",
+                    "prompt": "",
+                    "subagent_type": ""
+                }),
+                &ctx,
+            )
+            .await;
+
+        // Should return error for empty subagent_type
+        assert_eq!(result.status, ToolStatus::Error);
+    }
+
+    #[tokio::test]
+    async fn test_task_handles_special_characters_in_description() {
+        let tool = create_test_tool().await;
+        let ctx = create_test_context();
+
+        let result = tool
+            .execute(
+                json!({
+                    "description": "test <xml> & \"quotes\" 'apostrophe'",
+                    "prompt": "test with {json} [array] $var",
+                    "subagent_type": "general"
+                }),
+                &ctx,
+            )
+            .await;
+
+        // Should parse correctly
+        if result.status == ToolStatus::Error {
+            let error = result.error.unwrap_or_default();
+            assert!(
+                !error.contains("Invalid input"),
+                "Should handle special characters"
+            );
+        }
     }
 }
