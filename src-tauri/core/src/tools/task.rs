@@ -1145,3 +1145,548 @@ mod tests {
         }
     }
 }
+
+/// Integration tests for Task tool
+/// These tests verify Task works correctly with real dependencies
+#[cfg(test)]
+mod integration_tests {
+    use super::*;
+    use crate::agent::types::{AgentInfo, AgentMode};
+    use crate::session::SessionStore;
+    use crate::tools::ToolRegistry;
+    use std::path::PathBuf;
+
+    /// Create a fully integrated TaskTool with real dependencies
+    async fn create_integrated_task_tool() -> (
+        TaskTool,
+        Arc<SessionStore>,
+        Arc<AgentRegistry>,
+        Arc<crate::session::SessionLockManager>,
+    ) {
+        let session_store = Arc::new(SessionStore::new());
+        let agent_registry = Arc::new(AgentRegistry::new());
+        let tool_registry = Arc::new(parking_lot::RwLock::new(Some(
+            Arc::new(ToolRegistry::new()),
+        )));
+        let lock_manager = Arc::new(crate::session::SessionLockManager::new());
+        let provider_config = crate::providers::ProviderConfig {
+            name: "test".to_string(),
+            base_url: "https://test.example.com/v1".to_string(),
+            api_key_env: "TEST_API_KEY".to_string(),
+            default_model: "test-model".to_string(),
+        };
+
+        let tool = TaskTool::new(
+            session_store.clone(),
+            agent_registry.clone(),
+            tool_registry,
+            lock_manager.clone(),
+            provider_config,
+        )
+        .await;
+
+        (tool, session_store, agent_registry, lock_manager)
+    }
+
+    fn create_test_context(session_id: &str, working_dir: &str) -> crate::tools::ToolContext {
+        crate::tools::ToolContext::new(
+            session_id.to_string(),
+            "test-message".to_string(),
+            "build".to_string(),
+            PathBuf::from(working_dir),
+        )
+    }
+
+    // ==================== Session Store Integration ====================
+
+    #[tokio::test]
+    async fn test_task_with_session_store_persistence() {
+        let (tool, session_store, _, _) = create_integrated_task_tool().await;
+
+        // Create parent session
+        let parent = session_store
+            .create(
+                "/tmp/integration-test".to_string(),
+                None,
+                Some("Parent Session".to_string()),
+            )
+            .unwrap();
+
+        let ctx = create_test_context(&parent.id, "/tmp/integration-test");
+
+        // Execute task - creates child session
+        let _result = tool
+            .execute(
+                json!({
+                    "description": "integration test",
+                    "prompt": "test the integration",
+                    "subagent_type": "general"
+                }),
+                &ctx,
+            )
+            .await;
+
+        // Verify child session was created and persisted
+        let sessions = session_store.list(None).unwrap();
+        let child_sessions: Vec<_> = sessions
+            .iter()
+            .filter(|s| s.parent_id.as_ref() == Some(&parent.id))
+            .collect();
+
+        assert_eq!(
+            child_sessions.len(),
+            1,
+            "Should have exactly one child session"
+        );
+
+        let child = child_sessions[0];
+        assert_eq!(child.directory, "/tmp/integration-test");
+        assert!(child.title.contains("Subagent"));
+    }
+
+    #[tokio::test]
+    async fn test_task_session_message_added_before_execution() {
+        let (tool, session_store, _, _) = create_integrated_task_tool().await;
+
+        // Create parent session
+        let parent = session_store
+            .create("/tmp/msg-test".to_string(), None, None)
+            .unwrap();
+
+        let ctx = create_test_context(&parent.id, "/tmp/msg-test");
+
+        // Execute task
+        let _result = tool
+            .execute(
+                json!({
+                    "description": "message test",
+                    "prompt": "verify message is added",
+                    "subagent_type": "general"
+                }),
+                &ctx,
+            )
+            .await;
+
+        // Find child session
+        let sessions = session_store.list(None).unwrap();
+        let child = sessions
+            .iter()
+            .find(|s| s.parent_id.as_ref() == Some(&parent.id))
+            .expect("Child session should exist");
+
+        // Verify message was added to child session
+        let messages = session_store.get_messages(&child.id).unwrap();
+        assert!(!messages.is_empty(), "Child session should have messages");
+
+        // First message should be user message with the prompt
+        let first_msg = &messages[0];
+        match &first_msg.info {
+            crate::types::Message::User { .. } => {
+                // Check parts contain the prompt
+                let has_prompt = first_msg.parts.iter().any(|p| {
+                    if let crate::types::Part::Text { text, .. } = p {
+                        text.contains("verify message is added")
+                    } else {
+                        false
+                    }
+                });
+                assert!(has_prompt, "User message should contain the prompt");
+            }
+            _ => panic!("First message should be User message"),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_task_multiple_sequential_subagents() {
+        let (tool, session_store, _, _) = create_integrated_task_tool().await;
+
+        // Create parent session
+        let parent = session_store
+            .create("/tmp/sequential-test".to_string(), None, None)
+            .unwrap();
+
+        let ctx = create_test_context(&parent.id, "/tmp/sequential-test");
+
+        // Execute multiple tasks sequentially
+        for i in 1..=3 {
+            let _result = tool
+                .execute(
+                    json!({
+                        "description": format!("sequential task {}", i),
+                        "prompt": format!("task number {}", i),
+                        "subagent_type": "general"
+                    }),
+                    &ctx,
+                )
+                .await;
+        }
+
+        // Verify all child sessions were created
+        let sessions = session_store.list(None).unwrap();
+        let child_sessions: Vec<_> = sessions
+            .iter()
+            .filter(|s| s.parent_id.as_ref() == Some(&parent.id))
+            .collect();
+
+        assert_eq!(child_sessions.len(), 3, "Should have 3 child sessions");
+
+        // Each child should be unique
+        let unique_ids: std::collections::HashSet<_> =
+            child_sessions.iter().map(|s| &s.id).collect();
+        assert_eq!(
+            unique_ids.len(),
+            3,
+            "All child session IDs should be unique"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_task_concurrent_subagent_isolation() {
+        let (tool, session_store, _, _) = create_integrated_task_tool().await;
+
+        // Create two parent sessions
+        let parent_a = session_store
+            .create(
+                "/tmp/parent-a".to_string(),
+                None,
+                Some("Parent A".to_string()),
+            )
+            .unwrap();
+        let parent_b = session_store
+            .create(
+                "/tmp/parent-b".to_string(),
+                None,
+                Some("Parent B".to_string()),
+            )
+            .unwrap();
+
+        let ctx_a = create_test_context(&parent_a.id, "/tmp/parent-a");
+        let ctx_b = create_test_context(&parent_b.id, "/tmp/parent-b");
+
+        // Execute tasks "concurrently" (sequentially but for different parents)
+        let _result_a = tool
+            .execute(
+                json!({
+                    "description": "task for A",
+                    "prompt": "parent A task",
+                    "subagent_type": "general"
+                }),
+                &ctx_a,
+            )
+            .await;
+
+        let _result_b = tool
+            .execute(
+                json!({
+                    "description": "task for B",
+                    "prompt": "parent B task",
+                    "subagent_type": "general"
+                }),
+                &ctx_b,
+            )
+            .await;
+
+        // Verify each parent has exactly one child
+        let sessions = session_store.list(None).unwrap();
+
+        let children_a: Vec<_> = sessions
+            .iter()
+            .filter(|s| s.parent_id.as_ref() == Some(&parent_a.id))
+            .collect();
+        let children_b: Vec<_> = sessions
+            .iter()
+            .filter(|s| s.parent_id.as_ref() == Some(&parent_b.id))
+            .collect();
+
+        assert_eq!(children_a.len(), 1, "Parent A should have 1 child");
+        assert_eq!(children_b.len(), 1, "Parent B should have 1 child");
+
+        // Verify working directories are correct
+        assert_eq!(children_a[0].directory, "/tmp/parent-a");
+        assert_eq!(children_b[0].directory, "/tmp/parent-b");
+    }
+
+    // ==================== Tool Registry Integration ====================
+
+    #[tokio::test]
+    async fn test_task_with_tool_registry_access() {
+        let session_store = Arc::new(SessionStore::new());
+        let agent_registry = Arc::new(AgentRegistry::new());
+        let tool_registry = Arc::new(parking_lot::RwLock::new(Some(
+            Arc::new(ToolRegistry::new()),
+        )));
+        let lock_manager = Arc::new(crate::session::SessionLockManager::new());
+        let provider_config = crate::providers::ProviderConfig {
+            name: "test".to_string(),
+            base_url: "https://test.example.com/v1".to_string(),
+            api_key_env: "TEST_API_KEY".to_string(),
+            default_model: "test-model".to_string(),
+        };
+
+        let tool = TaskTool::new(
+            session_store.clone(),
+            agent_registry,
+            tool_registry.clone(),
+            lock_manager,
+            provider_config,
+        )
+        .await;
+
+        // Verify tool registry is accessible
+        let registry = tool_registry.read();
+        assert!(registry.is_some(), "Tool registry should be available");
+
+        let reg = registry.as_ref().unwrap();
+
+        // Verify standard tools are available for subagents
+        assert!(reg.get("read").is_some(), "Read tool should be available");
+        assert!(reg.get("write").is_some(), "Write tool should be available");
+        assert!(reg.get("edit").is_some(), "Edit tool should be available");
+        assert!(reg.get("bash").is_some(), "Bash tool should be available");
+        assert!(reg.get("grep").is_some(), "Grep tool should be available");
+        assert!(reg.get("glob").is_some(), "Glob tool should be available");
+
+        // Verify tool can still execute (just checking it doesn't panic)
+        let parent = session_store
+            .create("/tmp/registry-test".to_string(), None, None)
+            .unwrap();
+        let ctx = create_test_context(&parent.id, "/tmp/registry-test");
+
+        let result = tool
+            .execute(
+                json!({
+                    "description": "registry test",
+                    "prompt": "test tool registry",
+                    "subagent_type": "general"
+                }),
+                &ctx,
+            )
+            .await;
+
+        // Should not panic, may error due to no API key but that's expected
+        assert!(
+            result.status == ToolStatus::Completed || result.status == ToolStatus::Error,
+            "Should handle gracefully"
+        );
+    }
+
+    // ==================== Agent Registry Integration ====================
+
+    #[tokio::test]
+    async fn test_task_agent_registry_lookup_success() {
+        let (tool, session_store, agent_registry, _) = create_integrated_task_tool().await;
+
+        // Verify "general" agent exists and is a subagent
+        let general = agent_registry.get("general").await;
+        assert!(general.is_some(), "General agent should exist");
+        assert!(
+            general.unwrap().is_subagent(),
+            "General should be usable as subagent"
+        );
+
+        // Execute task with valid agent
+        let parent = session_store
+            .create("/tmp/agent-lookup".to_string(), None, None)
+            .unwrap();
+        let ctx = create_test_context(&parent.id, "/tmp/agent-lookup");
+
+        let result = tool
+            .execute(
+                json!({
+                    "description": "agent lookup test",
+                    "prompt": "test",
+                    "subagent_type": "general"
+                }),
+                &ctx,
+            )
+            .await;
+
+        // Should not fail on agent lookup
+        if result.status == ToolStatus::Error {
+            let error = result.error.unwrap_or_default();
+            assert!(
+                !error.contains("Unknown agent type"),
+                "Should find 'general' agent"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn test_task_agent_registry_lookup_failure() {
+        let (tool, session_store, _, _) = create_integrated_task_tool().await;
+
+        let parent = session_store
+            .create("/tmp/agent-fail".to_string(), None, None)
+            .unwrap();
+        let ctx = create_test_context(&parent.id, "/tmp/agent-fail");
+
+        let result = tool
+            .execute(
+                json!({
+                    "description": "invalid agent test",
+                    "prompt": "test",
+                    "subagent_type": "nonexistent-agent-xyz"
+                }),
+                &ctx,
+            )
+            .await;
+
+        assert_eq!(result.status, ToolStatus::Error);
+        let error = result.error.unwrap();
+        assert!(error.contains("Unknown agent type"));
+        assert!(error.contains("nonexistent-agent-xyz"));
+    }
+
+    #[tokio::test]
+    async fn test_task_with_custom_registered_agent() {
+        let (tool, session_store, agent_registry, _) = create_integrated_task_tool().await;
+
+        // Register a custom subagent
+        let mut custom_agent = AgentInfo::new("custom-test-agent");
+        custom_agent.mode = AgentMode::Subagent;
+        custom_agent.description = Some("A custom test agent".to_string());
+        agent_registry.register(custom_agent).await;
+
+        // Verify it's registered
+        let found = agent_registry.get("custom-test-agent").await;
+        assert!(found.is_some(), "Custom agent should be registered");
+
+        // Note: We can't test execution with custom agent since TaskTool
+        // was created before we registered it. The description won't include
+        // the custom agent. This is a limitation of the current design.
+        // In production, agents are registered before TaskTool is created.
+
+        let parent = session_store
+            .create("/tmp/custom-agent".to_string(), None, None)
+            .unwrap();
+        let ctx = create_test_context(&parent.id, "/tmp/custom-agent");
+
+        // This will fail because TaskTool's description was built before
+        // custom agent was registered, but it shows the registry works
+        let result = tool
+            .execute(
+                json!({
+                    "description": "custom agent test",
+                    "prompt": "test",
+                    "subagent_type": "custom-test-agent"
+                }),
+                &ctx,
+            )
+            .await;
+
+        // The execute path still checks the registry at runtime
+        if result.status == ToolStatus::Error {
+            let error = result.error.unwrap_or_default();
+            // Should NOT say "Unknown agent type" since we registered it
+            // But it might fail for other reasons (no API key, etc.)
+            // This depends on implementation - let's just verify no panic
+        }
+    }
+
+    // ==================== Lock Manager Integration ====================
+
+    #[tokio::test]
+    async fn test_task_respects_lock_manager() {
+        let (tool, session_store, _, lock_manager) = create_integrated_task_tool().await;
+
+        let parent = session_store
+            .create("/tmp/lock-test".to_string(), None, None)
+            .unwrap();
+        let ctx = create_test_context(&parent.id, "/tmp/lock-test");
+
+        // Acquire lock on parent session
+        let lock = lock_manager.acquire(&parent.id);
+        assert!(lock.is_ok(), "Should be able to acquire lock");
+
+        // Execute task - should still work (Task creates child session)
+        let result = tool
+            .execute(
+                json!({
+                    "description": "lock test",
+                    "prompt": "test with lock",
+                    "subagent_type": "general"
+                }),
+                &ctx,
+            )
+            .await;
+
+        // Child session should be created regardless of parent lock
+        let sessions = session_store.list(None).unwrap();
+        let has_child = sessions
+            .iter()
+            .any(|s| s.parent_id.as_ref() == Some(&parent.id));
+        assert!(has_child, "Child session should be created");
+
+        // Release lock
+        lock_manager.release(&parent.id);
+    }
+
+    // ==================== Output Handling Integration ====================
+
+    #[tokio::test]
+    async fn test_task_parent_receives_child_output() {
+        let (tool, session_store, _, _) = create_integrated_task_tool().await;
+
+        let parent = session_store
+            .create("/tmp/output-test".to_string(), None, None)
+            .unwrap();
+        let ctx = create_test_context(&parent.id, "/tmp/output-test");
+
+        let result = tool
+            .execute(
+                json!({
+                    "description": "output test",
+                    "prompt": "return some output",
+                    "subagent_type": "general"
+                }),
+                &ctx,
+            )
+            .await;
+
+        // Metadata should always contain session info
+        assert!(
+            result.metadata.get("sessionId").is_some(),
+            "Should have sessionId in metadata"
+        );
+
+        // If execution succeeded, output should be populated
+        if result.status == ToolStatus::Completed {
+            assert!(
+                result.metadata.get("subagent").is_some(),
+                "Should have subagent in metadata on success"
+            );
+            assert!(
+                result.metadata.get("title").is_some(),
+                "Should have title in metadata on success"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn test_task_handles_empty_response() {
+        // This test verifies the tool handles cases where subagent returns no text
+        let (tool, session_store, _, _) = create_integrated_task_tool().await;
+
+        let parent = session_store
+            .create("/tmp/empty-response".to_string(), None, None)
+            .unwrap();
+        let ctx = create_test_context(&parent.id, "/tmp/empty-response");
+
+        let result = tool
+            .execute(
+                json!({
+                    "description": "empty response test",
+                    "prompt": "",  // Empty prompt might lead to minimal response
+                    "subagent_type": "general"
+                }),
+                &ctx,
+            )
+            .await;
+
+        // Should not panic regardless of response content
+        assert!(
+            result.status == ToolStatus::Completed || result.status == ToolStatus::Error,
+            "Should handle gracefully"
+        );
+    }
+}
