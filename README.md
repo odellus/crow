@@ -139,5 +139,5 @@ Apache-2.0
 ---
 
 <p align="center">
-  <sub>Built with 🤖</sub>
+  <sub>Inspired by <a href="https://opencode.ai"[OpenCode](https://opencode.ai)</a></sub>
 </p>
