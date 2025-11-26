@@ -171,16 +171,33 @@ impl Tool for TaskTool {
             }
         };
 
-        // Validate subagent type
-        let valid_agents = vec!["general", "build"];
-        if !valid_agents.contains(&task_input.subagent_type.as_str()) {
+        // Validate subagent type - must exist and be usable as subagent
+        let agent = match self.agent_registry.get(&task_input.subagent_type).await {
+            Some(a) => a,
+            None => {
+                let available = self.agent_registry.get_subagents().await;
+                let names: Vec<_> = available.iter().map(|a| a.name.as_str()).collect();
+                return ToolResult {
+                    status: ToolStatus::Error,
+                    output: String::new(),
+                    error: Some(format!(
+                        "Unknown agent type: '{}'. Available subagents: {}",
+                        task_input.subagent_type,
+                        names.join(", ")
+                    )),
+                    metadata: json!({}),
+                };
+            }
+        };
+
+        // Ensure agent can be used as subagent
+        if !agent.is_subagent() {
             return ToolResult {
                 status: ToolStatus::Error,
                 output: String::new(),
                 error: Some(format!(
-                    "Unknown agent type: '{}'. Valid types: {}",
-                    task_input.subagent_type,
-                    valid_agents.join(", ")
+                    "Agent '{}' cannot be used as a subagent (mode: {:?})",
+                    task_input.subagent_type, agent.mode
                 )),
                 metadata: json!({}),
             };

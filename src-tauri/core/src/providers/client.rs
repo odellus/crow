@@ -14,6 +14,7 @@ struct StreamChunkDelta {
     content: Option<String>,
     reasoning_content: Option<String>,
     tool_calls: Option<Vec<StreamToolCallChunk>>,
+    #[allow(dead_code)]
     role: Option<String>,
 }
 
@@ -33,6 +34,7 @@ struct StreamFunctionChunk {
 #[derive(Debug, serde::Deserialize)]
 struct StreamChoice {
     delta: StreamChunkDelta,
+    #[allow(dead_code)]
     finish_reason: Option<String>,
 }
 
@@ -321,7 +323,8 @@ impl ProviderClient {
             request_builder.tools(tools.clone());
         }
 
-        let request = request_builder
+        // Build request (unused - we use raw HTTP for streaming to capture reasoning_content)
+        let _request = request_builder
             .build()
             .map_err(|e| format!("Failed to build request: {}", e))?;
 

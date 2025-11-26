@@ -2,16 +2,23 @@
 //!
 //! This is internal infrastructure, NOT an LLM tool. The agent never calls "snapshot" -
 //! the system tracks changes automatically behind the scenes.
+//!
+//! Snapshots are stored in XDG data directory for persistence across sessions:
+//! ~/.local/share/crow/snapshots/{project_id}/
 
+use crate::global::GlobalPaths;
+use crate::storage::CrowStorage;
 use std::path::{Path, PathBuf};
 use tokio::process::Command;
 
 /// Manages git-based snapshots for a project
 pub struct SnapshotManager {
-    /// Path to the shadow git directory (e.g., .crow/snapshot/{project_id})
+    /// Path to the shadow git directory (~/.local/share/crow/snapshots/{project_id})
     git_dir: PathBuf,
     /// Path to the working tree (project root)
     work_tree: PathBuf,
+    /// Project ID (derived from git root commit hash)
+    project_id: String,
 }
 
 /// A patch recording what files changed since a snapshot
@@ -34,10 +41,37 @@ pub struct FileDiff {
 }
 
 impl SnapshotManager {
-    /// Create a new snapshot manager for a project
+    /// Create a new snapshot manager for a project directory
+    /// Uses XDG data directory for persistence: ~/.local/share/crow/snapshots/{project_id}
+    pub fn for_directory(work_tree: PathBuf) -> Self {
+        let paths = GlobalPaths::new();
+        let project_id = CrowStorage::project_id(&work_tree);
+        let git_dir = paths.data.join("snapshots").join(&project_id);
+        Self {
+            git_dir,
+            work_tree,
+            project_id,
+        }
+    }
+
+    /// Create a new snapshot manager with explicit paths (for testing)
     pub fn new(data_dir: &Path, project_id: &str, work_tree: PathBuf) -> Self {
-        let git_dir = data_dir.join("snapshot").join(project_id);
-        Self { git_dir, work_tree }
+        let git_dir = data_dir.join("snapshots").join(project_id);
+        Self {
+            git_dir,
+            work_tree,
+            project_id: project_id.to_string(),
+        }
+    }
+
+    /// Get the project ID
+    pub fn project_id(&self) -> &str {
+        &self.project_id
+    }
+
+    /// Get the snapshot directory path
+    pub fn snapshot_dir(&self) -> &Path {
+        &self.git_dir
     }
 
     /// Initialize the shadow git repository if needed

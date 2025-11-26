@@ -1,11 +1,19 @@
 //! Agent registry for managing and loading agents
 //! Based on opencode/packages/opencode/src/agent/agent.ts
+//!
+//! Loads agents from:
+//! 1. Built-in agents (general, build, plan, supervisor, architect, discriminator)
+//! 2. Project config: `.crow/agent/*.md` files
+//! 3. Global config: `~/.config/crow/agent/*.md` files
 
 use super::builtins::get_builtin_agents;
-use super::types::{AgentInfo, AgentMode};
+use super::types::{AgentInfo, AgentMode, AgentPermissions, Permission};
+use crate::global::GlobalPaths;
 use std::collections::HashMap;
+use std::path::Path;
 use std::sync::Arc;
 use tokio::sync::RwLock;
+use tracing::{debug, warn};
 
 /// Agent registry - manages all available agents
 pub struct AgentRegistry {
@@ -13,11 +21,231 @@ pub struct AgentRegistry {
 }
 
 impl AgentRegistry {
-    /// Create a new agent registry with built-in agents
+    /// Create a new agent registry with built-in agents only
     pub fn new() -> Self {
         let agents = get_builtin_agents();
         Self {
             agents: Arc::new(RwLock::new(agents)),
+        }
+    }
+
+    /// Create registry and load agents from config directories
+    pub async fn new_with_config(working_dir: &Path) -> Self {
+        let mut agents = get_builtin_agents();
+
+        // Load from global config: ~/.config/crow/agent/*.md
+        let global_paths = GlobalPaths::new();
+        let global_agent_dir = global_paths.config.join("agent");
+        if let Ok(loaded) = Self::load_agents_from_dir(&global_agent_dir).await {
+            for agent in loaded {
+                debug!("Loaded global agent: {}", agent.name);
+                agents.insert(agent.name.clone(), agent);
+            }
+        }
+
+        // Load from project config: .crow/agent/*.md (higher priority)
+        let project_agent_dir = working_dir.join(".crow").join("agent");
+        if let Ok(loaded) = Self::load_agents_from_dir(&project_agent_dir).await {
+            for agent in loaded {
+                debug!("Loaded project agent: {}", agent.name);
+                agents.insert(agent.name.clone(), agent);
+            }
+        }
+
+        Self {
+            agents: Arc::new(RwLock::new(agents)),
+        }
+    }
+
+    /// Load agents from markdown files in a directory
+    async fn load_agents_from_dir(dir: &Path) -> Result<Vec<AgentInfo>, String> {
+        let mut agents = Vec::new();
+
+        if !dir.exists() {
+            return Ok(agents);
+        }
+
+        let entries =
+            std::fs::read_dir(dir).map_err(|e| format!("Failed to read agent directory: {}", e))?;
+
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.extension().map(|e| e == "md").unwrap_or(false) {
+                match Self::load_agent_from_file(&path).await {
+                    Ok(agent) => agents.push(agent),
+                    Err(e) => warn!("Failed to load agent from {:?}: {}", path, e),
+                }
+            }
+        }
+
+        Ok(agents)
+    }
+
+    /// Load a single agent from a markdown file
+    /// Format:
+    /// ```markdown
+    /// ---
+    /// description: When to use this agent
+    /// mode: subagent | primary | all
+    /// temperature: 0.7
+    /// top_p: 1.0
+    /// tools:
+    ///   bash: true
+    ///   edit: false
+    /// permission:
+    ///   edit: allow | deny | ask
+    ///   bash:
+    ///     "*": allow
+    ///     "rm *": deny
+    /// ---
+    ///
+    /// Custom system prompt content here
+    /// ```
+    async fn load_agent_from_file(path: &Path) -> Result<AgentInfo, String> {
+        let content = tokio::fs::read_to_string(path)
+            .await
+            .map_err(|e| format!("Failed to read file: {}", e))?;
+
+        // Extract agent name from filename (without .md extension)
+        let name = path
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .ok_or("Invalid filename")?
+            .to_string();
+
+        // Parse frontmatter and content
+        let (frontmatter, prompt) = Self::parse_markdown(&content)?;
+
+        // Build agent from frontmatter
+        let mut agent = AgentInfo::new(&name);
+        agent.built_in = false;
+
+        if let Some(desc) = frontmatter.get("description").and_then(|v| v.as_str()) {
+            agent.description = Some(desc.to_string());
+        }
+
+        if let Some(mode) = frontmatter.get("mode").and_then(|v| v.as_str()) {
+            agent.mode = match mode {
+                "subagent" => AgentMode::Subagent,
+                "primary" => AgentMode::Primary,
+                _ => AgentMode::All,
+            };
+        }
+
+        if let Some(temp) = frontmatter.get("temperature").and_then(|v| v.as_f64()) {
+            agent.temperature = Some(temp as f32);
+        }
+
+        if let Some(top_p) = frontmatter.get("top_p").and_then(|v| v.as_f64()) {
+            agent.top_p = Some(top_p as f32);
+        }
+
+        if let Some(color) = frontmatter.get("color").and_then(|v| v.as_str()) {
+            agent.color = Some(color.to_string());
+        }
+
+        // Parse tools map
+        if let Some(tools) = frontmatter.get("tools").and_then(|v| v.as_object()) {
+            for (tool_name, enabled) in tools {
+                if let Some(enabled) = enabled.as_bool() {
+                    agent.tools.insert(tool_name.clone(), enabled);
+                }
+            }
+        }
+
+        // Parse permissions
+        if let Some(perms) = frontmatter.get("permission").and_then(|v| v.as_object()) {
+            agent.permission = Self::parse_permissions(perms);
+        }
+
+        // Set custom prompt if content exists (after frontmatter)
+        if !prompt.trim().is_empty() {
+            agent.prompt = Some(prompt);
+        }
+
+        Ok(agent)
+    }
+
+    /// Parse markdown with YAML frontmatter
+    fn parse_markdown(
+        content: &str,
+    ) -> Result<(serde_json::Map<String, serde_json::Value>, String), String> {
+        let content = content.trim();
+
+        if !content.starts_with("---") {
+            // No frontmatter, entire content is prompt
+            return Ok((serde_json::Map::new(), content.to_string()));
+        }
+
+        // Find end of frontmatter
+        let rest = &content[3..];
+        let end = rest.find("---").ok_or("Unclosed frontmatter")?;
+        let yaml_content = &rest[..end].trim();
+        let prompt = rest[end + 3..].trim().to_string();
+
+        // Parse YAML as JSON (serde_yaml -> serde_json)
+        let yaml_value: serde_yaml::Value = serde_yaml::from_str(yaml_content)
+            .map_err(|e| format!("Invalid YAML frontmatter: {}", e))?;
+
+        let json_value: serde_json::Value = serde_json::to_value(yaml_value)
+            .map_err(|e| format!("Failed to convert YAML to JSON: {}", e))?;
+
+        let map = json_value
+            .as_object()
+            .ok_or("Frontmatter must be a YAML object")?
+            .clone();
+
+        Ok((map, prompt))
+    }
+
+    /// Parse permissions from frontmatter
+    fn parse_permissions(perms: &serde_json::Map<String, serde_json::Value>) -> AgentPermissions {
+        let mut result = AgentPermissions::default();
+
+        if let Some(edit) = perms.get("edit").and_then(|v| v.as_str()) {
+            result.edit = Self::parse_permission(edit);
+        }
+
+        if let Some(bash) = perms.get("bash") {
+            if let Some(bash_str) = bash.as_str() {
+                // Simple permission for all bash
+                result.bash.clear();
+                result
+                    .bash
+                    .insert("*".to_string(), Self::parse_permission(bash_str));
+            } else if let Some(bash_map) = bash.as_object() {
+                // Pattern-based permissions
+                result.bash.clear();
+                for (pattern, perm) in bash_map {
+                    if let Some(perm_str) = perm.as_str() {
+                        result
+                            .bash
+                            .insert(pattern.clone(), Self::parse_permission(perm_str));
+                    }
+                }
+            }
+        }
+
+        if let Some(webfetch) = perms.get("webfetch").and_then(|v| v.as_str()) {
+            result.webfetch = Some(Self::parse_permission(webfetch));
+        }
+
+        if let Some(doom_loop) = perms.get("doom_loop").and_then(|v| v.as_str()) {
+            result.doom_loop = Some(Self::parse_permission(doom_loop));
+        }
+
+        if let Some(external) = perms.get("external_directory").and_then(|v| v.as_str()) {
+            result.external_directory = Some(Self::parse_permission(external));
+        }
+
+        result
+    }
+
+    fn parse_permission(s: &str) -> Permission {
+        match s.to_lowercase().as_str() {
+            "allow" => Permission::Allow,
+            "deny" => Permission::Deny,
+            _ => Permission::Ask,
         }
     }
 
@@ -120,7 +348,7 @@ mod tests {
     async fn test_registry_creation() {
         let registry = AgentRegistry::new();
         let count = registry.count().await;
-        assert_eq!(count, 6); // 6 built-in agents (general, build, plan, supervisor, architect, discriminator)
+        assert_eq!(count, 3); // 3 built-in agents (general, build, plan) matching OpenCode
     }
 
     #[tokio::test]
@@ -143,12 +371,12 @@ mod tests {
         let registry = AgentRegistry::new();
         let primary = registry.get_primary_agents().await;
 
-        // build (all), plan (primary), supervisor (primary), architect (primary)
-        assert!(primary.len() >= 4);
+        // build (primary), plan (primary)
+        assert_eq!(primary.len(), 2);
 
         let names: Vec<String> = primary.iter().map(|a| a.name.clone()).collect();
         assert!(names.contains(&"build".to_string()));
-        assert!(names.contains(&"supervisor".to_string()));
+        assert!(names.contains(&"plan".to_string()));
     }
 
     #[tokio::test]
@@ -156,12 +384,11 @@ mod tests {
         let registry = AgentRegistry::new();
         let subagents = registry.get_subagents().await;
 
-        // general (subagent), build (all)
-        assert!(subagents.len() >= 2);
+        // general (subagent)
+        assert_eq!(subagents.len(), 1);
 
         let names: Vec<String> = subagents.iter().map(|a| a.name.clone()).collect();
         assert!(names.contains(&"general".to_string()));
-        assert!(names.contains(&"build".to_string()));
     }
 
     #[tokio::test]
@@ -172,7 +399,7 @@ mod tests {
         registry.register(custom).await;
 
         let count = registry.count().await;
-        assert_eq!(count, 7); // 6 built-in + 1 custom
+        assert_eq!(count, 4); // 3 built-in + 1 custom
 
         let agent = registry.get("custom-agent").await;
         assert!(agent.is_some());
@@ -204,12 +431,9 @@ mod tests {
         let registry = AgentRegistry::new();
         let ids = registry.list_ids().await;
 
-        assert_eq!(ids.len(), 6);
+        assert_eq!(ids.len(), 3);
         assert!(ids.contains(&"general".to_string()));
         assert!(ids.contains(&"build".to_string()));
         assert!(ids.contains(&"plan".to_string()));
-        assert!(ids.contains(&"supervisor".to_string()));
-        assert!(ids.contains(&"architect".to_string()));
-        assert!(ids.contains(&"discriminator".to_string()));
     }
 }

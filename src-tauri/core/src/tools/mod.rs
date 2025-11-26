@@ -13,8 +13,6 @@ pub mod glob;
 pub mod grep;
 pub mod invalid;
 pub mod list;
-pub mod lsp_diagnostics;
-pub mod lsp_hover;
 pub mod multiedit;
 pub mod patch;
 pub mod read;
@@ -33,8 +31,6 @@ pub use glob::GlobTool;
 pub use grep::GrepTool;
 pub use invalid::InvalidTool;
 pub use list::ListTool;
-pub use lsp_diagnostics::LspDiagnosticsTool;
-pub use lsp_hover::LspHoverTool;
 pub use multiedit::MultiEditTool;
 pub use patch::PatchTool;
 pub use read::ReadTool;
@@ -83,9 +79,6 @@ pub struct ToolContext {
 
     // Cancellation support
     pub abort: Option<CancellationToken>, // Cancellation token for aborting
-
-    // LSP support
-    pub lsp: Option<std::sync::Arc<crate::lsp::Lsp>>,
 }
 
 impl ToolContext {
@@ -143,7 +136,6 @@ impl ToolContext {
             provider_id: None,
             model_id: None,
             abort: None,
-            lsp: None,
         }
     }
 }

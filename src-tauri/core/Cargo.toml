@@ -55,6 +55,9 @@ getrandom = "0.2"
 # CLI colors
 colored = "2"
 
+[dev-dependencies]
+tempfile = "3"
+
 [[bin]]
 name = "crow-cli"
 path = "src/bin/crow-cli.rs"

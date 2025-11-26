@@ -22,7 +22,6 @@ pub mod bus;
 pub mod config;
 pub mod global;
 pub mod logging;
-pub mod lsp;
 pub mod snapshot;
 pub mod storage;
 pub mod tools;

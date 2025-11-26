@@ -20,11 +20,13 @@ impl TodoReadTool {
 }
 
 #[derive(Deserialize)]
+#[allow(dead_code)]
 struct TodoReadInput {
     #[serde(default = "default_session_id")]
     session_id: String,
 }
 
+#[allow(dead_code)]
 fn default_session_id() -> String {
     "default".to_string()
 }

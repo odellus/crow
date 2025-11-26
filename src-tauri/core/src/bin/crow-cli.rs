@@ -21,7 +21,6 @@ use crow_core::{
     types::{Message, MessageTime, Part, ToolState},
     AgentRegistry, ProviderClient, ProviderConfig, ToolRegistry,
 };
-use std::collections::HashMap;
 use std::env;
 use std::io::{self, Write};
 use std::path::PathBuf;
@@ -339,7 +338,7 @@ async fn chat_streaming(session_id: Option<&str>, message: &str, mode: OutputMod
         eprintln!();
     }
 
-    let provider = match ProviderClient::new(provider_config) {
+    let provider = match ProviderClient::new(provider_config.clone()) {
         Ok(p) => p,
         Err(e) => {
             eprintln!("{}", format!("Failed to create provider: {}", e).red());
@@ -347,11 +346,21 @@ async fn chat_streaming(session_id: Option<&str>, message: &str, mode: OutputMod
         }
     };
 
-    // Create executor
-    let tool_registry = Arc::new(ToolRegistry::new());
-    let agent_registry = Arc::new(AgentRegistry::new());
+    // Create executor with full tool registry (including TaskTool for subagents)
     let session_store = Arc::new(store.clone());
     let lock_manager = Arc::new(SessionLockManager::new());
+
+    // Load agents from config (built-in + .crow/agent/*.md)
+    let agent_registry = Arc::new(AgentRegistry::new_with_config(&working_dir).await);
+
+    // Create tool registry with TaskTool support
+    let tool_registry = ToolRegistry::new_with_deps(
+        session_store.clone(),
+        agent_registry.clone(),
+        lock_manager.clone(),
+        provider_config,
+    )
+    .await;
 
     let executor = AgentExecutor::new(
         provider,
@@ -611,28 +620,8 @@ impl StreamRenderer {
                 });
 
                 if self.mode == OutputMode::Verbose {
-                    eprintln!();
-                    eprintln!(
-                        "{} {} {}",
-                        "🟨 TOOL RESULT:".yellow().bold(),
-                        tool.yellow(),
-                        format!("({}ms)", duration_ms.unwrap_or(0)).dimmed()
-                    );
-                    if !title.is_empty() {
-                        eprintln!("   {}", title.dimmed());
-                    }
-                    // Show output (truncated if very long)
-                    let lines: Vec<&str> = output.lines().collect();
-                    if lines.len() <= 20 {
-                        for line in &lines {
-                            eprintln!("   {}", line.yellow());
-                        }
-                    } else {
-                        for line in lines.iter().take(15) {
-                            eprintln!("   {}", line.yellow());
-                        }
-                        eprintln!("   {} ({} more lines)", "...".yellow(), lines.len() - 15);
-                    }
+                    // Tool-specific rendering
+                    render_tool_result(tool, input, output, title, duration_ms);
                 }
 
                 self.current_tool = None;
@@ -931,4 +920,496 @@ fn dump_prompt(agent_name: &str) {
         "{}",
         "═══════════════════════════════════════════════════════════════".dimmed()
     );
+}
+
+// ============================================================================
+// Tool-Specific Renderers
+// ============================================================================
+
+/// Render tool result with tool-specific formatting
+fn render_tool_result(
+    tool: &str,
+    input: &serde_json::Value,
+    output: &str,
+    title: &str,
+    duration_ms: Option<u64>,
+) {
+    eprintln!();
+
+    match tool {
+        "bash" => render_bash(input, output, duration_ms),
+        "edit" | "str_replace" => render_edit(input, output, duration_ms),
+        "read" | "file_read" => render_read(input, output, duration_ms),
+        "grep" => render_grep(input, output, duration_ms),
+        "list" | "glob" => render_list(input, output, duration_ms),
+        "todoread" => render_todoread(output, duration_ms),
+        "todowrite" => render_todowrite(input, duration_ms),
+        "webfetch" | "web_fetch" => render_webfetch(input, output, duration_ms),
+        "websearch" | "web_search" => render_websearch(input, output, duration_ms),
+        "task" => render_task(input, output, duration_ms),
+        _ => render_generic(tool, input, output, title, duration_ms),
+    }
+}
+
+/// 🔧 bash - Shell command execution
+fn render_bash(input: &serde_json::Value, output: &str, duration_ms: Option<u64>) {
+    let cmd = input
+        .get("command")
+        .and_then(|v| v.as_str())
+        .unwrap_or("???");
+    let desc = input.get("description").and_then(|v| v.as_str());
+
+    eprintln!(
+        "{} {}",
+        "🔧 bash".cyan().bold(),
+        format!("({}ms)", duration_ms.unwrap_or(0)).dimmed()
+    );
+
+    // Show command
+    eprintln!("   {} {}", "$".green(), cmd.white());
+
+    // Show description if available
+    if let Some(d) = desc {
+        eprintln!("   {}", d.dimmed());
+    }
+
+    // Show output (limited)
+    if !output.is_empty() {
+        let lines: Vec<&str> = output.lines().collect();
+        let show_lines = lines.len().min(15);
+        for line in lines.iter().take(show_lines) {
+            eprintln!("   {}", line.yellow());
+        }
+        if lines.len() > show_lines {
+            eprintln!(
+                "   {} ({} more lines)",
+                "...".dimmed(),
+                lines.len() - show_lines
+            );
+        }
+    }
+
+    // Check for success/failure indicator
+    if output.contains("error") || output.contains("Error") || output.contains("ERROR") {
+        eprintln!("   {}", "⚠ may contain errors".red().dimmed());
+    } else {
+        eprintln!("   {}", "✓".green());
+    }
+}
+
+/// 📝 edit/str_replace - File modification
+fn render_edit(input: &serde_json::Value, output: &str, duration_ms: Option<u64>) {
+    let file_path = input
+        .get("file_path")
+        .or_else(|| input.get("filePath"))
+        .and_then(|v| v.as_str())
+        .unwrap_or("???");
+
+    // Try to extract just the filename
+    let filename = std::path::Path::new(file_path)
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or(file_path);
+
+    eprintln!(
+        "{} {} {}",
+        "📝 edit".cyan().bold(),
+        format!("({})", filename).white(),
+        format!("({}ms)", duration_ms.unwrap_or(0)).dimmed()
+    );
+
+    // Try to parse output as JSON for structured info
+    if let Ok(edit_output) = serde_json::from_str::<serde_json::Value>(output) {
+        let additions = edit_output
+            .get("additions")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(0);
+        let deletions = edit_output
+            .get("deletions")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(0);
+
+        eprintln!(
+            "   {} {}, {} {}",
+            format!("+{}", additions).green(),
+            "additions".dimmed(),
+            format!("-{}", deletions).red(),
+            "deletions".dimmed()
+        );
+
+        // Show diff if available
+        if let Some(diff) = edit_output.get("diff").and_then(|v| v.as_str()) {
+            eprintln!("   {}", "───".dimmed());
+            for line in diff.lines().take(20) {
+                if line.starts_with('+') && !line.starts_with("+++") {
+                    eprintln!("   {}", line.green());
+                } else if line.starts_with('-') && !line.starts_with("---") {
+                    eprintln!("   {}", line.red());
+                } else if line.starts_with("@@") {
+                    eprintln!("   {}", line.cyan());
+                } else {
+                    eprintln!("   {}", line.dimmed());
+                }
+            }
+        }
+    } else {
+        // Plain text output
+        eprintln!("   {}", file_path.dimmed());
+        for line in output.lines().take(10) {
+            eprintln!("   {}", line.yellow());
+        }
+    }
+
+    eprintln!("   {}", "✓".green());
+}
+
+/// 📖 read/file_read - File reading
+fn render_read(input: &serde_json::Value, output: &str, duration_ms: Option<u64>) {
+    let file_path = input
+        .get("file_path")
+        .or_else(|| input.get("filePath"))
+        .and_then(|v| v.as_str())
+        .unwrap_or("???");
+
+    let filename = std::path::Path::new(file_path)
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or(file_path);
+
+    // Parse JSON output to get content
+    let content = if let Ok(json) = serde_json::from_str::<serde_json::Value>(output) {
+        json.get("content")
+            .and_then(|v| v.as_str())
+            .unwrap_or(output)
+            .to_string()
+    } else {
+        output.to_string()
+    };
+
+    let line_count = content.lines().count();
+
+    eprintln!(
+        "{} {} {}",
+        "📖 read".cyan().bold(),
+        format!("({})", filename).white(),
+        format!("({}ms)", duration_ms.unwrap_or(0)).dimmed()
+    );
+
+    // Show preview
+    let preview_lines = 8;
+    for line in content.lines().take(preview_lines) {
+        let truncated = if line.len() > 80 {
+            format!("{}...", &line[..77])
+        } else {
+            line.to_string()
+        };
+        eprintln!("   {}", truncated.dimmed());
+    }
+
+    if line_count > preview_lines {
+        eprintln!("   {} ({} total lines)", "...".dimmed(), line_count);
+    }
+}
+
+/// 🔍 grep - Search results
+fn render_grep(input: &serde_json::Value, output: &str, duration_ms: Option<u64>) {
+    let pattern = input
+        .get("pattern")
+        .and_then(|v| v.as_str())
+        .unwrap_or("???");
+    let path = input.get("path").and_then(|v| v.as_str());
+
+    let match_count = output.lines().filter(|l| !l.is_empty()).count();
+
+    eprintln!(
+        "{} {} {}",
+        "🔍 grep".cyan().bold(),
+        format!("\"{}\"", pattern).yellow(),
+        format!("({}ms)", duration_ms.unwrap_or(0)).dimmed()
+    );
+
+    if let Some(p) = path {
+        eprintln!("   {} {}", "in:".dimmed(), p.dimmed());
+    }
+
+    eprintln!(
+        "   {} {}",
+        format!("{}", match_count).green().bold(),
+        "matches".dimmed()
+    );
+
+    // Show matches with context
+    for line in output.lines().take(10) {
+        if line.contains(':') {
+            // Format: file:line:content
+            let parts: Vec<&str> = line.splitn(3, ':').collect();
+            if parts.len() >= 2 {
+                let file = std::path::Path::new(parts[0])
+                    .file_name()
+                    .and_then(|n| n.to_str())
+                    .unwrap_or(parts[0]);
+                let rest = parts[1..].join(":");
+                eprintln!("   {}:{}", file.cyan(), rest.yellow());
+            } else {
+                eprintln!("   {}", line.yellow());
+            }
+        } else {
+            eprintln!("   {}", line.yellow());
+        }
+    }
+
+    if match_count > 10 {
+        eprintln!("   {} ({} more)", "...".dimmed(), match_count - 10);
+    }
+}
+
+/// 📁 list/glob - Directory listing
+fn render_list(input: &serde_json::Value, output: &str, duration_ms: Option<u64>) {
+    let path = input.get("path").and_then(|v| v.as_str()).unwrap_or(".");
+    let pattern = input.get("pattern").and_then(|v| v.as_str());
+
+    let item_count = output.lines().filter(|l| !l.is_empty()).count();
+
+    eprintln!(
+        "{} {} {}",
+        "📁 list".cyan().bold(),
+        path.white(),
+        format!("({}ms)", duration_ms.unwrap_or(0)).dimmed()
+    );
+
+    if let Some(p) = pattern {
+        eprintln!("   {} {}", "pattern:".dimmed(), p.yellow());
+    }
+
+    eprintln!("   {} items", item_count.to_string().green());
+
+    // Show items
+    for line in output.lines().take(20) {
+        let trimmed = line.trim();
+        if trimmed.ends_with('/') {
+            eprintln!("   {}", trimmed.blue()); // Directories in blue
+        } else {
+            eprintln!("   {}", trimmed.dimmed());
+        }
+    }
+
+    if item_count > 20 {
+        eprintln!("   {} ({} more)", "...".dimmed(), item_count - 20);
+    }
+}
+
+/// 📋 todoread - Task list display
+fn render_todoread(output: &str, duration_ms: Option<u64>) {
+    eprintln!(
+        "{} {}",
+        "📋 todoread".cyan().bold(),
+        format!("({}ms)", duration_ms.unwrap_or(0)).dimmed()
+    );
+
+    // Try to parse as JSON
+    if let Ok(todos) = serde_json::from_str::<serde_json::Value>(output) {
+        if let Some(items) = todos.get("todos").and_then(|v| v.as_array()) {
+            for item in items {
+                let content = item
+                    .get("content")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("???");
+                let status = item
+                    .get("status")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("pending");
+
+                let icon = match status {
+                    "completed" => "✓".green(),
+                    "in_progress" => "⧗".yellow(),
+                    _ => "☐".white(),
+                };
+
+                eprintln!("   {} {}", icon, content);
+            }
+        }
+    } else {
+        // Plain text
+        for line in output.lines().take(10) {
+            eprintln!("   {}", line.dimmed());
+        }
+    }
+}
+
+/// 📋 todowrite - Task list update
+fn render_todowrite(input: &serde_json::Value, duration_ms: Option<u64>) {
+    eprintln!(
+        "{} {}",
+        "📋 todowrite".cyan().bold(),
+        format!("({}ms)", duration_ms.unwrap_or(0)).dimmed()
+    );
+
+    if let Some(todos) = input.get("todos").and_then(|v| v.as_array()) {
+        for item in todos {
+            let content = item
+                .get("content")
+                .and_then(|v| v.as_str())
+                .unwrap_or("???");
+            let status = item
+                .get("status")
+                .and_then(|v| v.as_str())
+                .unwrap_or("pending");
+
+            let icon = match status {
+                "completed" => "✓".green(),
+                "in_progress" => "⧗".yellow(),
+                _ => "☐".white(),
+            };
+
+            eprintln!("   {} {}", icon, content);
+        }
+    }
+
+    eprintln!("   {}", "✓ updated".green());
+}
+
+/// 🌐 webfetch - URL fetching
+fn render_webfetch(input: &serde_json::Value, output: &str, duration_ms: Option<u64>) {
+    let url = input.get("url").and_then(|v| v.as_str()).unwrap_or("???");
+
+    eprintln!(
+        "{} {}",
+        "🌐 webfetch".cyan().bold(),
+        format!("({}ms)", duration_ms.unwrap_or(0)).dimmed()
+    );
+
+    eprintln!("   {}", url.blue().underline());
+
+    let char_count = output.len();
+    let line_count = output.lines().count();
+
+    eprintln!(
+        "   {} chars, {} lines",
+        char_count.to_string().green(),
+        line_count
+    );
+
+    // Show preview
+    for line in output.lines().take(5) {
+        let truncated = if line.len() > 60 {
+            format!("{}...", &line[..57])
+        } else {
+            line.to_string()
+        };
+        eprintln!("   {}", truncated.dimmed());
+    }
+
+    if line_count > 5 {
+        eprintln!("   {}", "...".dimmed());
+    }
+}
+
+/// 🔎 websearch - Web search
+fn render_websearch(input: &serde_json::Value, output: &str, duration_ms: Option<u64>) {
+    let query = input.get("query").and_then(|v| v.as_str()).unwrap_or("???");
+
+    eprintln!(
+        "{} {}",
+        "🔎 websearch".cyan().bold(),
+        format!("({}ms)", duration_ms.unwrap_or(0)).dimmed()
+    );
+
+    eprintln!("   {} \"{}\"", "query:".dimmed(), query.yellow());
+
+    // Try to show result count
+    let result_lines = output.lines().filter(|l| !l.is_empty()).count();
+    eprintln!("   {} results", result_lines.to_string().green());
+
+    // Show preview
+    for line in output.lines().take(5) {
+        eprintln!("   {}", line.dimmed());
+    }
+}
+
+/// 🤖 task - Subagent execution
+fn render_task(input: &serde_json::Value, output: &str, duration_ms: Option<u64>) {
+    let description = input
+        .get("description")
+        .and_then(|v| v.as_str())
+        .unwrap_or("task");
+    let subagent_type = input
+        .get("subagent_type")
+        .and_then(|v| v.as_str())
+        .unwrap_or("unknown");
+    let prompt = input.get("prompt").and_then(|v| v.as_str()).unwrap_or("");
+
+    eprintln!(
+        "{} {} {}",
+        "🤖 task".magenta().bold(),
+        format!("[{}]", subagent_type).cyan(),
+        format!("({}ms)", duration_ms.unwrap_or(0)).dimmed()
+    );
+
+    eprintln!("   {} {}", "description:".dimmed(), description.white());
+
+    // Show prompt (truncated)
+    let prompt_preview = if prompt.len() > 100 {
+        format!("{}...", &prompt[..97])
+    } else {
+        prompt.to_string()
+    };
+    eprintln!("   {} {}", "prompt:".dimmed(), prompt_preview.dimmed());
+
+    // Show result
+    eprintln!("   {}", "─── subagent result ───".dimmed());
+    let lines: Vec<&str> = output.lines().collect();
+    let show_lines = lines.len().min(20);
+    for line in lines.iter().take(show_lines) {
+        eprintln!("   {}", line.yellow());
+    }
+    if lines.len() > show_lines {
+        eprintln!(
+            "   {} ({} more lines)",
+            "...".dimmed(),
+            lines.len() - show_lines
+        );
+    }
+
+    eprintln!("   {}", "✓".green());
+}
+
+/// Generic fallback renderer
+fn render_generic(
+    tool: &str,
+    input: &serde_json::Value,
+    output: &str,
+    title: &str,
+    duration_ms: Option<u64>,
+) {
+    eprintln!(
+        "{} {} {}",
+        format!("🔧 {}", tool).cyan().bold(),
+        if !title.is_empty() { title } else { "" },
+        format!("({}ms)", duration_ms.unwrap_or(0)).dimmed()
+    );
+
+    // Show input args for debugging
+    eprintln!(
+        "   {} {}",
+        "input:".dimmed(),
+        serde_json::to_string(input).unwrap_or_default().dimmed()
+    );
+
+    // Show output (truncated)
+    let lines: Vec<&str> = output.lines().collect();
+    let show_lines = lines.len().min(15);
+
+    for line in lines.iter().take(show_lines) {
+        eprintln!("   {}", line.yellow());
+    }
+
+    if lines.len() > show_lines {
+        eprintln!(
+            "   {} ({} more lines)",
+            "...".dimmed(),
+            lines.len() - show_lines
+        );
+    }
+
+    eprintln!("   {}", "✓".green());
 }
