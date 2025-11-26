@@ -131,5 +131,5 @@ Apache-2.0
 ---
 
 <p align="center">
-  <sub>Built with 🩸</sub>
+  <sub>Built with 🤖</sub>
 </p>
