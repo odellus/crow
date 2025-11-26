@@ -1,9 +1,9 @@
-<!--<picture>
-  <source media="(prefers-color-scheme: dark)" srcset="https://readme-typing-svg.herokuapp.com?font=JetBrains+Mono&weight=700&size=40&pause=1000&color=8A2BE2&background=00000000&center=true&vCenter=true&random=false&width=600&height=70&lines=CROW">
-  <img alt="CROW" src="https://readme-typing-svg.herokuapp.com?font=JetBrains+Mono&weight=700&size=40&pause=1000&color=8A2BE2&background=FFFFFF00&center=true&vCenter=true&random=false&width=600&height=70&lines=CROW">
-</picture>-->
+<p align="center">
+  <img src="./cyber-crow.jpg" alt="Cyber Crow" width="250">
+</p>
+# crow
 
-```
+<!--```
  ▄████▄   ██▀███   ▒█████   █     █░
 ▒██▀ ▀█  ▓██ ▒ ██▒▒██▒  ██▒▓█░ █ ░█░
 ▒▓█    ▄ ▓██ ░▄█ ▒▒██░  ██▒▒█░ █ ░█ 
@@ -14,10 +14,10 @@
 ░          ░░   ░ ░ ░ ░ ▒    ░   ░  
 ░ ░         ░         ░ ░      ░    
 ░                                   
-```
+```-->
 
 <p align="center">
-  <strong>🩸 AI-Powered Coding Agent with Full Observability</strong>
+  <strong>AI-Powered Coding Agent with Full Observability</strong>
 </p>
 
 <p align="center">
@@ -25,6 +25,12 @@
   <img src="https://img.shields.io/badge/Tauri-24C8D8?style=for-the-badge&logo=tauri&logoColor=white" alt="Tauri">
   <img src="https://img.shields.io/badge/React-61DAFB?style=for-the-badge&logo=react&logoColor=black" alt="React">
   <img src="https://img.shields.io/badge/TypeScript-3178C6?style=for-the-badge&logo=typescript&logoColor=white" alt="TypeScript">
+</p>
+
+---
+
+<p align="center">
+  <img src="./crow.gif" alt="Crow CLI Demo">
 </p>
 
 ---
