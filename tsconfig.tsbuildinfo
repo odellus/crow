@@ -1,0 +1,1 @@
+{"root":["./src/App.tsx","./src/main.tsx","./src/vite-env.d.ts","./src/components/ChatView.tsx","./src/components/EditorPane.tsx","./src/components/FileTree.tsx","./src/components/SessionList.tsx","./src/hooks/useEventStream.ts","./src/pages/SessionListPage.tsx","./src/pages/SessionWorkspacePage.tsx","./src/types/index.ts"],"version":"5.8.3"}

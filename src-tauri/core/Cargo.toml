@@ -1,0 +1,60 @@
+[package]
+name = "crow_core"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+
+[dependencies]
+# Serialization
+serde.workspace = true
+serde_json.workspace = true
+
+# Async runtime
+tokio.workspace = true
+futures.workspace = true
+async-trait.workspace = true
+
+# LLM provider
+async-openai.workspace = true
+
+# HTTP client (for web search, web fetch)
+reqwest.workspace = true
+
+# Utilities
+uuid.workspace = true
+chrono.workspace = true
+dirs.workspace = true
+regex.workspace = true
+similar.workspace = true
+which.workspace = true
+dotenvy.workspace = true
+
+# Streaming
+tokio-stream.workspace = true
+tokio-util.workspace = true
+async-stream.workspace = true
+
+# Concurrency
+parking_lot.workspace = true
+once_cell.workspace = true
+lazy_static.workspace = true
+
+# Config
+serde_yaml.workspace = true
+
+# Logging
+tracing.workspace = true
+tracing-subscriber.workspace = true
+
+# Process management
+nix.workspace = true
+
+# Random (for tool IDs)
+getrandom = "0.2"
+
+# CLI colors
+colored = "2"
+
+[[bin]]
+name = "crow-cli"
+path = "src/bin/crow-cli.rs"
