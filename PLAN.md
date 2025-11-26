@@ -1,19 +1,38 @@
 # Crow-Tauri Development Plan
 
-## Current Status: CLI Complete, Frontend Pending
+## Current Status: Testing Phase
 
-The core Rust backend and CLI are fully functional. Next step is wiring up the Tauri commands and React frontend.
+The core Rust backend and CLI are functional. **Current focus: comprehensive testing.**
+
+---
+
+## 🚨 NEXT STEP: Testing Framework
+
+**See: [TESTING_FRAMEWORK_PLAN.md](./TESTING_FRAMEWORK_PLAN.md) for detailed test specs.**
+
+### Critical Priority (Do First)
+1. **Task Tool** - 0 tests → 30+ tests (MOST IMPORTANT)
+2. **TodoWrite/TodoRead** - 1 test → 25+ tests (CRITICAL)
+
+### High Priority
+3. Glob, List, Batch, Patch, Session Store, Grep (all 0 tests → 15+ each)
+
+### Testing Rules
+- ⚠️ **ALWAYS create new session** for each test - reusing causes weird behavior
+- ⚠️ **Verify XDG paths** - check files in `~/.local/share/crow/`
+- ⚠️ **Compare with OpenCode** but IGNORE LSP and permissions features
+- Every tool needs: Unit tests, Integration tests, E2E tests
 
 ---
 
 ## Completed
 
-### Phase 1-3: Core Infrastructure
+### Core Infrastructure
 - [x] Workspace structure (core + app crates)
 - [x] Core library without dioxus/axum dependencies
 - [x] XDG directory setup (~/.local/share/crow/, etc.)
 - [x] CLI binary with full observability
-- [x] Streaming output with colors
+- [x] Streaming output with colors and cost tracking
 - [x] Interactive REPL mode
 - [x] Session persistence
 - [x] Shadow git snapshots
@@ -21,63 +40,48 @@ The core Rust backend and CLI are fully functional. Next step is wiring up the T
 - [x] Tool implementations (bash, edit, read, write, grep, glob, etc.)
 - [x] Agent system (build, plan, general agents)
 - [x] Task tool for sub-agent spawning
-
----
-
-## In Progress
-
-### Phase 4: Tauri Commands
-
-Wire up crow_core to Tauri commands so the React frontend can call them.
-
-```
-app/src/commands/
-├── mod.rs
-├── session.rs    # list, create, get, delete
-├── message.rs    # send (streaming), list
-└── file.rs       # list, read
-```
-
-Key commands needed:
-- `list_sessions()` -> Vec<Session>
-- `create_session(title)` -> Session
-- `send_message(session_id, text)` -> streaming via Channel
-- `list_messages(session_id)` -> Vec<Message>
+- [x] Tool call logging to JSONL
+- [x] Cost and context usage display
 
 ---
 
 ## Pending
 
+### Testing (Current Focus)
+- [ ] Task tool tests (CRITICAL)
+- [ ] TodoWrite/TodoRead tests (CRITICAL)
+- [ ] All other tools (see TESTING_FRAMEWORK_PLAN.md)
+
+### Phase 4: Tauri Commands
+Wire up crow_core to Tauri commands.
+
 ### Phase 5: Frontend Migration
-
-- Replace fetch() with Tauri invoke()
-- Handle streaming via Tauri Channels
-- Update useEventStream hook
-- Wire up ChatView, SessionList components
-
-### Phase 6: Polish
-
-- Error handling
-- Loading states
-- Build & package
+Replace fetch() with Tauri invoke().
 
 ---
 
 ## Quick Reference
 
-### Build & Run
+### Build & Run CLI
 ```bash
 cd crow-tauri/src-tauri
 cargo build --release --bin crow-cli
-./target/release/crow-cli repl
+./target/release/crow-cli chat "your message"
 ```
 
-### Storage Paths
+### Run Tests
+```bash
+cd crow-tauri/src-tauri
+cargo test --package crow_core
 ```
-~/.local/share/crow/storage/    # Sessions
-~/.local/share/crow/snapshots/  # Git snapshots
-~/.local/share/crow/logs/       # Logs
-~/.config/crow/                 # Config
+
+### Storage Paths (XDG)
+```
+~/.local/share/crow/storage/session/   # Sessions
+~/.local/share/crow/storage/todo/      # Todos
+~/.local/share/crow/snapshots/         # Git snapshots
+~/.local/state/crow/logs/              # Logs
+~/.config/crow/                        # Config
 ```
 
 ### Environment

@@ -2,38 +2,312 @@
 
 ## Overview
 
-This document outlines a comprehensive testing strategy for crow-tauri, comparing each tool/component against OpenCode's implementation to identify gaps and define test cases at unit, integration, and E2E levels.
+**EVERY TOOL GETS TESTS. NO EXCEPTIONS.**
+
+This document outlines a comprehensive testing strategy for crow-tauri. Every single tool/component MUST have:
+- Unit tests
+- Integration tests  
+- E2E tests via CLI
 
 **Testing Philosophy:**
 1. Look at crow code to understand current implementation
-2. Compare against OpenCode to identify missing features
+2. Compare against OpenCode to identify missing features (IGNORE LSP and permissions)
 3. Unit test the shit out of each tool
 4. Integration test with other components
-5. E2E test via CLI with fresh sessions
+5. E2E test via CLI with **FRESH SESSIONS ALWAYS**
 6. Verify XDG persistence is correct
 
----
-
-## Table of Contents
-
-1. [Read Tool](#1-read-tool)
-2. [Write Tool](#2-write-tool)
-3. [Edit Tool](#3-edit-tool)
-4. [Bash Tool](#4-bash-tool)
-5. [Grep Tool](#5-grep-tool)
-6. [Glob Tool](#6-glob-tool)
-7. [List Tool](#7-list-tool)
-8. [TodoWrite Tool](#8-todowrite-tool)
-9. [WebFetch & WebSearch Tools](#9-webfetch--websearch-tools)
-10. [Task, Batch, Patch Tools](#10-task-batch-patch-tools)
-11. [Snapshot Mechanism](#11-snapshot-mechanism)
-12. [Session Storage](#12-session-storage)
-13. [XDG Path Summary](#13-xdg-path-summary)
-14. [Test Execution Strategy](#14-test-execution-strategy)
+**CRITICAL RULES:**
+- ⚠️ **ALWAYS create new session for each test** - reusing sessions causes weird model behavior
+- ⚠️ **Verify XDG paths** - check files appear in correct locations
+- ⚠️ **Compare with OpenCode** but IGNORE LSP and permissions features
 
 ---
 
-## 1. Read Tool
+## 🚨 CRITICAL PRIORITY: Task Tool
+
+**THE MOST IMPORTANT TOOL TO TEST. THIS IS THE CORE OF THE AGENT SYSTEM.**
+
+**Files:**
+- Crow: `crow-tauri/src-tauri/core/src/tools/task.rs`
+- OpenCode: `opencode/packages/opencode/src/tool/task.ts`
+
+### Why Task is Critical
+The Task tool is THE mechanism for:
+- Launching subagents for complex multi-step tasks
+- Creating child sessions with parent-child relationships
+- Enabling the dual-agent architecture (executor/discriminator)
+- Breaking down complex work into manageable pieces
+
+**If Task doesn't work perfectly, the entire agent system fails.**
+
+### Crow Features
+- Launches subagents for complex tasks
+- Creates child sessions with parent-child relationships
+- Validates subagent type (is_subagent check)
+- Dynamic description generation with agent capabilities
+- Extracts text output from response parts
+- Returns metadata with session ID and subagent type
+- Uses SessionStore, AgentRegistry, ToolRegistry, SessionLockManager
+
+### OpenCode Features (gaps to implement - IGNORE LSP/PERMISSIONS)
+- ❌ Session continuation/reuse (session_id parameter to resume)
+- ❌ Event bus integration for real-time progress tracking
+- ❌ Model selection per subagent
+- ❌ Tool access control per subagent
+- ❌ Cancellation support (AbortController/AbortSignal)
+- ❌ Metadata subscription during execution
+- ❌ Tool parts collection from subagent
+- ❌ task_metadata XML block in output
+
+### Unit Test Cases (MUST HAVE ALL)
+```rust
+// Core functionality
+test_task_creates_child_session
+test_task_inherits_working_dir_from_parent
+test_task_validates_subagent_type
+test_task_rejects_non_subagent_agents
+test_task_generates_dynamic_description
+test_task_parses_input_correctly
+test_task_returns_metadata_with_session_id
+test_task_returns_metadata_with_subagent_type
+
+// Error handling
+test_task_error_invalid_agent_name
+test_task_error_missing_prompt_parameter
+test_task_error_missing_subagent_type
+test_task_error_agent_registry_failure
+test_task_error_session_creation_failure
+test_task_error_executor_failure
+
+// Agent registry integration
+test_task_agent_registry_lookup_success
+test_task_agent_registry_lookup_failure
+test_task_agent_list_subagents_only
+test_task_agent_description_includes_capabilities
+
+// Session management
+test_task_session_has_correct_parent_id
+test_task_session_has_correct_project_id
+test_task_session_message_added_before_execution
+test_task_child_session_persisted_to_xdg
+
+// Output handling
+test_task_extracts_text_from_response_parts
+test_task_handles_empty_response
+test_task_handles_multi_part_response
+test_task_handles_tool_parts_in_response
+```
+
+### Integration Test Cases (MUST HAVE ALL)
+```rust
+test_task_full_executor_pipeline
+test_task_with_session_store_persistence
+test_task_with_tool_registry_access
+test_task_child_can_use_read_tool
+test_task_child_can_use_write_tool
+test_task_child_can_use_edit_tool
+test_task_child_can_use_bash_tool
+test_task_child_can_use_grep_tool
+test_task_child_inherits_snapshot_context
+test_task_parent_receives_child_output
+test_task_multiple_sequential_subagents
+test_task_nested_task_calls (task within task)
+test_task_concurrent_subagent_isolation
+test_task_xdg_session_file_created
+test_task_xdg_message_file_created
+```
+
+### E2E Test Cases (MUST HAVE ALL)
+```bash
+# Basic subagent launch
+crow-cli chat "use a subagent to list files in current directory"
+# Verify: child session created, output returned
+
+# Complex multi-step task
+crow-cli chat "use a subagent to analyze the codebase structure"
+# Verify: subagent executes multiple tools, returns summary
+
+# Task with specific agent type
+crow-cli chat "launch explore subagent to find all test files"
+# Verify: correct agent used, results accurate
+
+# Task failure handling
+crow-cli chat "launch nonexistent-agent to do something"
+# Verify: helpful error message, no crash
+
+# Session isolation
+crow-cli chat "create subagent session A" 
+crow-cli chat "create subagent session B"
+# Verify: sessions are isolated, no cross-contamination
+
+# XDG verification
+crow-cli chat "use subagent for task"
+ls ~/.local/share/crow/storage/session/*/
+# Verify: child session JSON file exists
+
+# Output completeness
+crow-cli chat --json "use subagent to read README.md"
+# Verify: JSON output contains full subagent response
+```
+
+---
+
+## 🚨 HIGH PRIORITY: TodoWrite & TodoRead Tools
+
+**CRITICAL FOR TASK TRACKING AND AGENT COORDINATION**
+
+**Files:**
+- Crow: `crow-tauri/src-tauri/core/src/tools/todowrite.rs`, `todoread.rs`
+- OpenCode: `opencode/packages/opencode/src/tool/todo.ts`
+
+### Why Todo is Critical
+- Tracks task progress across agent turns
+- Enables agents to break down complex work
+- Provides visibility into what the agent is doing
+- Essential for multi-turn conversations
+
+### Crow Features
+- In-memory storage per session (HashMap)
+- Persistent XDG storage: `~/.local/share/crow/storage/todo/{sessionID}.json`
+- Three status states: Pending, InProgress, Completed
+- TodoItem: content, status, activeForm
+- Session-scoped todos
+- Paired TodoReadTool
+
+### OpenCode Features (gaps - IGNORE LSP/PERMISSIONS)
+- ❌ Four status states (+cancelled)
+- ❌ Priority field (high/medium/low)
+- ❌ Unique ID for each todo item
+- ❌ Event bus integration
+- ❌ Storage abstraction with file locking
+
+### XDG Path
+```
+~/.local/share/crow/storage/todo/{sessionID}.json
+```
+
+### Unit Test Cases (MUST HAVE ALL)
+```rust
+// TodoWrite core
+test_todowrite_creates_new_todo
+test_todowrite_updates_existing_todo
+test_todowrite_replaces_entire_list
+test_todowrite_empty_list_clears_todos
+test_todowrite_validates_status_enum
+test_todowrite_validates_content_required
+test_todowrite_validates_activeform_required
+test_todowrite_handles_special_characters
+test_todowrite_handles_unicode_content
+test_todowrite_handles_very_long_content
+test_todowrite_handles_multiple_todos
+test_todowrite_preserves_order
+
+// TodoWrite status transitions
+test_todowrite_pending_to_in_progress
+test_todowrite_in_progress_to_completed
+test_todowrite_pending_to_completed
+test_todowrite_completed_cannot_change (or can it?)
+
+// TodoWrite persistence
+test_todowrite_persists_to_xdg_path
+test_todowrite_creates_parent_directories
+test_todowrite_overwrites_existing_file
+test_todowrite_file_format_is_valid_json
+test_todowrite_survives_process_restart
+
+// TodoRead core
+test_todoread_returns_current_todos
+test_todoread_returns_empty_when_none
+test_todoread_reads_from_xdg_path
+test_todoread_handles_missing_file
+test_todoread_handles_corrupted_file
+
+// Session isolation
+test_todo_session_a_isolated_from_session_b
+test_todo_different_sessions_different_files
+test_todo_session_id_in_filename
+
+// Error handling
+test_todowrite_invalid_json_input
+test_todowrite_missing_required_fields
+test_todoread_permission_error_graceful
+```
+
+### Integration Test Cases (MUST HAVE ALL)
+```rust
+test_todowrite_then_todoread_roundtrip
+test_todowrite_in_executor_pipeline
+test_todoread_in_executor_pipeline
+test_todo_with_session_store
+test_todo_persists_across_multiple_turns
+test_todo_xdg_file_contains_correct_data
+test_todo_concurrent_writes_same_session
+test_todo_concurrent_reads_same_session
+test_todo_with_task_tool_subagent
+test_todo_visible_in_session_export
+```
+
+### E2E Test Cases (MUST HAVE ALL)
+```bash
+# Basic todo creation
+crow-cli chat "create a todo list with 3 items"
+# Verify: todos created, visible in output
+
+# Todo status updates
+crow-cli chat "mark the first todo as in progress"
+crow-cli chat "mark it as completed"
+# Verify: status changes reflected
+
+# Todo persistence
+crow-cli chat "create todos"
+crow-cli session todo <session-id>
+# Verify: todos visible via CLI command
+
+# XDG file verification
+crow-cli chat "create todo list"
+cat ~/.local/share/crow/storage/todo/<session-id>.json
+# Verify: file exists, valid JSON, correct content
+
+# Session isolation
+crow-cli chat --session A "create todo: task A"
+crow-cli chat --session B "create todo: task B"
+crow-cli session todo A
+crow-cli session todo B
+# Verify: each session has only its own todos
+
+# Complex workflow
+crow-cli chat "plan a refactoring task with 5 steps"
+crow-cli chat "start working on step 1"
+crow-cli chat "complete step 1, start step 2"
+# Verify: todo states update correctly
+```
+
+---
+
+## Table of Contents (Full Test Coverage Required)
+
+| # | Tool/Component | Current Tests | Required | Priority |
+|---|---------------|---------------|----------|----------|
+| 1 | **Task** | 0 | 30+ | 🚨 CRITICAL |
+| 2 | **TodoWrite/Read** | 1 | 25+ | 🚨 CRITICAL |
+| 3 | Read | 4 | 15+ | HIGH |
+| 4 | Write | 2 | 15+ | HIGH |
+| 5 | Edit | 70+ | ✅ Good | MEDIUM |
+| 6 | Bash | 20+ | ✅ Good | MEDIUM |
+| 7 | Grep | 1 | 15+ | HIGH |
+| 8 | Glob | 0 | 15+ | HIGH |
+| 9 | List | 0 | 15+ | HIGH |
+| 10 | Batch | 0 | 15+ | HIGH |
+| 11 | Patch | 0 | 15+ | HIGH |
+| 12 | WebFetch | 3 | 10+ | MEDIUM |
+| 13 | WebSearch | 1 | 10+ | MEDIUM |
+| 14 | Snapshot | 10+ | 20+ | HIGH |
+| 15 | Session Store | 0 | 20+ | HIGH |
+
+---
+
+## 3. Read Tool
 
 **Files:**
 - Crow: `crow-tauri/src-tauri/core/src/tools/read.rs`
@@ -46,55 +320,55 @@ This document outlines a comprehensive testing strategy for crow-tauri, comparin
 - Empty file detection with warning
 - File size metadata in response
 - Async file I/O with tokio
-- 4 existing unit tests
 
-### OpenCode Features (gaps to implement)
+### OpenCode Features (gaps - IGNORE LSP/PERMISSIONS)
 - ❌ Image file support (JPEG, PNG, GIF, BMP, WebP with base64)
 - ❌ Binary file detection (magic bytes + heuristic analysis)
 - ❌ File not found with fuzzy filename suggestions
-- ❌ Security blocking for .env files
-- ❌ Permission system for external directory access
-- ❌ FileTime session-based read tracking
 - ❌ Relative path resolution to CWD
 - ❌ Zero-padded line numbers (5 digits)
 
 ### Unit Test Cases
-```
-test_basic_file_read_default_params
-test_line_numbers_1_indexed
-test_offset_and_limit_parameters
-test_empty_file_handling
-test_line_truncation_at_2000_chars
-test_non_existent_file_error
-test_large_file_limit_applied
-test_various_line_endings (LF, CRLF, mixed)
-test_offset_beyond_file_length
-test_image_file_detection (future)
-test_binary_file_detection (future)
-test_env_file_blocking (future)
+```rust
+test_read_basic_file_default_params
+test_read_line_numbers_1_indexed
+test_read_offset_parameter
+test_read_limit_parameter
+test_read_offset_and_limit_combined
+test_read_empty_file_warning
+test_read_line_truncation_at_2000_chars
+test_read_non_existent_file_error
+test_read_large_file_limit_applied
+test_read_lf_line_endings
+test_read_crlf_line_endings
+test_read_mixed_line_endings
+test_read_offset_beyond_file_length
+test_read_unicode_content
+test_read_binary_file_handling
 ```
 
 ### Integration Test Cases
-```
-test_read_write_sequence
-test_read_edit_integration
-test_multi_file_read_session
-test_concurrent_reads
-test_large_file_performance
+```rust
+test_read_with_session_context
+test_read_write_roundtrip
+test_read_edit_verify_workflow
+test_read_multiple_files_same_session
+test_read_concurrent_different_files
+test_read_large_file_performance
 ```
 
 ### E2E Test Cases
-```
-CLI: crow-cli chat "read /path/to/file.txt"
-CLI: crow-cli chat "read file with offset 100 limit 50"
-CLI: crow-cli chat "read non-existent file" → helpful error
-CLI: crow-cli chat "read empty file" → warning message
-CLI: crow-cli chat "read very large file" → limited output
+```bash
+crow-cli chat "read file.txt"
+crow-cli chat "read file.txt starting at line 50"
+crow-cli chat "read first 10 lines of file.txt"
+crow-cli chat "read nonexistent.txt"  # error handling
+crow-cli chat "read empty.txt"  # warning message
 ```
 
 ---
 
-## 2. Write Tool
+## 4. Write Tool
 
 **Files:**
 - Crow: `crow-tauri/src-tauri/core/src/tools/write.rs`
@@ -105,174 +379,102 @@ CLI: crow-cli chat "read very large file" → limited output
 - Automatic parent directory creation
 - File existence detection
 - Metrics tracking (bytes_written, existed flag)
-- JSON output with filepath and stats
 
-### OpenCode Features (gaps to implement)
-- ❌ Permission system (external_directory, edit permissions)
+### OpenCode Features (gaps - IGNORE LSP/PERMISSIONS)
 - ❌ FileTime tracking for concurrent modification detection
-- ❌ LSP integration with diagnostics on write
 - ❌ Event bus for file change notifications
-- ❌ Diagnostic output in tool response
 
 ### Unit Test Cases
-```
-test_write_new_file_empty_path
+```rust
+test_write_new_file
 test_write_overwrite_existing
 test_write_creates_parent_directories
 test_write_empty_file
 test_write_large_file_1mb
 test_write_special_characters_in_path
-test_write_relative_path_normalization
+test_write_relative_path
+test_write_absolute_path
 test_write_unicode_content
 test_write_various_line_endings
-test_invalid_json_input_handling
+test_write_metrics_bytes_written
+test_write_metrics_existed_flag
+test_write_invalid_path_error
 ```
 
 ### Integration Test Cases
-```
+```rust
 test_write_read_roundtrip
-test_write_triggers_snapshot_tracking
+test_write_triggers_snapshot
 test_write_session_persistence
-test_concurrent_writes_different_files
+test_write_concurrent_different_files
 ```
 
 ### E2E Test Cases
-```
-CLI: crow-cli chat "create file test.txt with content hello"
-CLI: crow-cli chat "write file and verify content"
-CLI: Write outside working directory → permission check (future)
+```bash
+crow-cli chat "create file test.txt with content hello"
+crow-cli chat "write to existing file"
+crow-cli chat "create file in nested/dir/path.txt"
 ```
 
 ---
 
-## 3. Edit Tool
+## 5. Edit Tool
 
 **Files:**
 - Crow: `crow-tauri/src-tauri/core/src/tools/edit.rs`
 - OpenCode: `opencode/packages/opencode/src/tool/edit.ts`
 
+### Status: ✅ Well Tested (70+ existing tests)
+
 ### Crow Features
-- 9 cascading fuzzy replacer strategies:
-  1. Simple exact match
-  2. Line-trimmed matching
-  3. Block anchor matching
-  4. Whitespace-normalized matching
-  5. Indentation-flexible matching
-  6. Escape-normalized matching
-  7. Trimmed boundary matching
-  8. Context-aware matching
-  9. Multi-occurrence matching
+- 9 cascading fuzzy replacer strategies
 - Levenshtein distance for similarity
 - Unified diff generation
 - replaceAll parameter support
-- 70+ existing unit tests
 
-### OpenCode Features (gaps to implement)
-- ❌ Permission system (external_directory, edit)
-- ❌ LSP diagnostics reporting after edit
+### OpenCode Features (gaps - IGNORE LSP/PERMISSIONS)
 - ❌ FileTime tracking (prevent editing without reading)
 - ❌ Snapshot/FileDiff tracking for session history
 - ❌ Bus event publishing for file edits
 
-### Unit Test Cases
-```
-test_exact_string_replacement
-test_replace_all_occurrences
-test_error_when_old_equals_new
-test_error_when_not_found
-test_error_multiple_matches_no_replaceall
-test_multiline_replacement
-test_special_characters_escaping
-test_empty_old_string_handling
-test_fuzzy_whitespace_normalization
-test_fuzzy_indentation_handling
-test_block_anchor_matching
-test_levenshtein_distance_calculations
-test_diff_generation_accuracy
-```
-
-### Integration Test Cases
-```
+### Additional Tests Needed
+```rust
 test_edit_triggers_snapshot_patch
 test_edit_session_persistence
-test_edit_after_read_filetime (future)
-test_edit_lsp_diagnostics (future)
-```
-
-### E2E Test Cases
-```
-CLI: crow-cli chat "edit file.rs change foo to bar"
-CLI: crow-cli chat "edit with fuzzy matching"
-CLI: crow-cli chat "replace all occurrences"
-CLI: Full workflow: read → edit → verify
+test_edit_xdg_session_export_shows_diff
 ```
 
 ---
 
-## 4. Bash Tool
+## 6. Bash Tool
 
 **Files:**
 - Crow: `crow-tauri/src-tauri/core/src/tools/bash.rs`
 - OpenCode: `opencode/packages/opencode/src/tool/bash.ts`
+
+### Status: ✅ Well Tested (20+ existing tests)
 
 ### Crow Features
 - Command execution via bash -c with tokio
 - Timeout handling (default 120s, max 600s)
 - Output truncation at 30,000 characters
 - Abort/cancellation via CancellationToken
-- Process tree killing (SIGTERM → grace → SIGKILL)
-- Stderr/stdout capture combined
-- Exit code reporting
-- 20+ existing unit tests
+- Process tree killing
 
-### OpenCode Features (gaps to implement)
-- ❌ Permission system with AST-based command analysis
-- ❌ Tree-sitter parsing for bash commands
+### OpenCode Features (gaps - IGNORE LSP/PERMISSIONS)
 - ❌ Stream-based metadata updates (real-time output)
-- ❌ Windows-specific path normalization (Git Bash)
 - ❌ Detached process mode
-- ❌ Wildcard-based permission matching
 
-### Unit Test Cases
-```
-test_basic_echo_command
-test_error_nonzero_exit_code
-test_stderr_capture
-test_combined_stdout_stderr
-test_working_directory_pwd
-test_multiline_output
-test_specific_exit_codes
-test_environment_variable_access
-test_command_chaining_and
-test_pipe_operations
-test_command_substitution
-test_arithmetic_expansion
-test_quote_handling
-test_custom_timeout
-test_output_truncation_boundary
-test_timeout_enforcement
-test_cancellation_abort
-```
-
-### Integration Test Cases
-```
-test_bash_with_session_context
-test_bash_triggers_snapshot_tracking
-test_bash_abort_signal_integration
-test_concurrent_bash_commands
-```
-
-### E2E Test Cases
-```
-CLI: crow-cli chat "run ls -la"
-CLI: crow-cli chat "run command with timeout"
-CLI: crow-cli chat "run long command" → abort
-CLI: crow-cli chat "run failing command" → error handling
+### Additional Tests Needed
+```rust
+test_bash_triggers_snapshot
+test_bash_session_persistence
+test_bash_with_task_subagent
 ```
 
 ---
 
-## 5. Grep Tool
+## 7. Grep Tool
 
 **Files:**
 - Crow: `crow-tauri/src-tauri/core/src/tools/grep.rs`
@@ -283,50 +485,41 @@ CLI: crow-cli chat "run failing command" → error handling
 - Full regex pattern support
 - File filtering via --glob
 - Results sorted by modification time
-- Groups output by file path
-- 100 match limit with truncation metadata
-
-### OpenCode Features (gaps to implement)
-- ❌ Ripgrep binary auto-download/management
-- ❌ JSON output parsing support
-- ❌ File tree generation from results
-- ❌ Better Instance.directory context
+- 100 match limit with truncation
 
 ### Unit Test Cases
-```
-test_basic_regex_pattern
-test_complex_regex_capture_groups
-test_case_insensitive_search
-test_multiline_patterns
-test_empty_pattern_validation
-test_invalid_regex_error
-test_glob_filtering
-test_no_matches_result
-test_match_count_accuracy
-test_truncation_at_100_matches
-test_file_grouping_format
-test_unicode_patterns
-test_hidden_files
-```
-
-### Integration Test Cases
-```
-test_grep_with_glob_pipeline
-test_grep_with_session_context
-test_concurrent_grep_operations
+```rust
+test_grep_basic_pattern
+test_grep_regex_pattern
+test_grep_case_insensitive
+test_grep_glob_filter
+test_grep_no_matches
+test_grep_truncation_at_100
+test_grep_file_grouping
+test_grep_unicode_pattern
+test_grep_special_regex_chars
+test_grep_multiline_pattern
+test_grep_hidden_files
 test_grep_respects_gitignore
 ```
 
-### E2E Test Cases
+### Integration Test Cases
+```rust
+test_grep_with_session_context
+test_grep_with_glob_pipeline
+test_grep_concurrent_searches
 ```
-CLI: crow-cli chat "search for pattern in codebase"
-CLI: crow-cli chat "grep with glob filter *.rs"
-CLI: crow-cli chat "search returns sorted by mtime"
+
+### E2E Test Cases
+```bash
+crow-cli chat "search for TODO in codebase"
+crow-cli chat "grep pattern in *.rs files"
+crow-cli chat "find all function definitions"
 ```
 
 ---
 
-## 6. Glob Tool
+## 8. Glob Tool
 
 **Files:**
 - Crow: `crow-tauri/src-tauri/core/src/tools/glob.rs`
@@ -334,48 +527,39 @@ CLI: crow-cli chat "search returns sorted by mtime"
 
 ### Crow Features
 - Ripgrep via rg --files --glob
-- Optional path parameter (defaults to ".")
-- 100 result truncation with warning
-- Count and truncated status metadata
-
-### OpenCode Features (gaps to implement)
-- ❌ Modification time sorting of results
-- ❌ Result title field (relative path)
-- ❌ Instance context management
-- ❌ Path resolution against Instance.directory
+- Optional path parameter
+- 100 result truncation
 
 ### Unit Test Cases
-```
-test_simple_glob_pattern
-test_no_matches_message
-test_optional_path_parameter
-test_nested_directory_patterns
-test_file_extension_patterns
-test_result_truncation_at_100
-test_metadata_count_truncated
-test_mtime_sorting (future)
-test_gitignore_respect
-test_hidden_files
+```rust
+test_glob_simple_pattern
+test_glob_recursive_pattern
+test_glob_extension_filter
+test_glob_no_matches
+test_glob_truncation_at_100
+test_glob_with_path_parameter
+test_glob_default_path
+test_glob_hidden_files
+test_glob_gitignore_respect
 ```
 
 ### Integration Test Cases
-```
+```rust
+test_glob_with_session_context
 test_glob_grep_pipeline
-test_glob_with_tool_registry
-test_project_root_detection
-test_concurrent_glob_operations
+test_glob_read_pipeline
 ```
 
 ### E2E Test Cases
-```
-CLI: crow-cli chat "find all rust files"
-CLI: crow-cli chat "glob **/*.ts in path"
-CLI: Large codebase performance test
+```bash
+crow-cli chat "find all rust files"
+crow-cli chat "glob **/*.ts in src/"
+crow-cli chat "find files matching *.md"
 ```
 
 ---
 
-## 7. List Tool
+## 9. List Tool
 
 **Files:**
 - Crow: `crow-tauri/src-tauri/core/src/tools/list.rs`
@@ -384,247 +568,130 @@ CLI: Large codebase performance test
 ### Crow Features
 - Lists files and directories
 - Glob pattern filtering
-- Recursive directory traversal
-- FileEntry objects (name, path, is_dir, size)
-- Directories first, alphabetical sorting
-- Skips hidden files (starting with '.')
-
-### OpenCode Features (gaps to implement)
-- ❌ Built-in ignore patterns (node_modules, .git, etc.)
-- ❌ Ripgrep-backed enumeration for performance
-- ❌ Customizable ignore patterns as array
-- ❌ Directory tree ASCII rendering
-- ❌ Includes hidden files by default
-- ❌ 100 file output limit
+- Recursive traversal option
+- FileEntry objects with metadata
 
 ### Unit Test Cases
-```
-test_basic_list_absolute_path
-test_empty_directory
-test_pattern_filtering_glob
-test_directory_detection_is_dir
-test_file_size_metadata
-test_hidden_file_handling
-test_ignore_pattern_application (future)
-test_recursive_vs_non_recursive
-test_absolute_vs_relative_paths
-test_invalid_path_error
-test_sorting_order
-test_tree_rendering (future)
+```rust
+test_list_basic_directory
+test_list_empty_directory
+test_list_with_pattern
+test_list_recursive
+test_list_non_recursive
+test_list_directories_first
+test_list_alphabetical_sort
+test_list_hidden_files_excluded
+test_list_file_size_metadata
+test_list_is_dir_flag
+test_list_invalid_path_error
 ```
 
 ### Integration Test Cases
-```
-test_list_with_read_tool
+```rust
 test_list_with_session_context
-test_large_directory_handling
-test_symlink_handling
+test_list_read_pipeline
+test_list_large_directory
 ```
 
 ### E2E Test Cases
-```
-CLI: crow-cli chat "list files in directory"
-CLI: crow-cli chat "list with pattern *.rs"
-CLI: crow-cli chat "list recursively"
+```bash
+crow-cli chat "list files in current directory"
+crow-cli chat "list only rust files"
+crow-cli chat "list recursively"
 ```
 
 ---
 
-## 8. TodoWrite Tool
+## 10. Batch Tool
 
 **Files:**
-- Crow: `crow-tauri/src-tauri/core/src/tools/todowrite.rs`
-- OpenCode: `opencode/packages/opencode/src/tool/todo.ts`
+- Crow: `crow-tauri/src-tauri/core/src/tools/batch.rs`
+- OpenCode: `opencode/packages/opencode/src/tool/batch.ts`
 
 ### Crow Features
-- In-memory storage per session (HashMap)
-- Persistent XDG storage: `~/.local/share/crow/storage/todo/{sessionID}.json`
-- Three status states: Pending, InProgress, Completed
-- TodoItem: content, status, activeForm
-- Session-scoped todos
-- Paired TodoReadTool
-
-### OpenCode Features (gaps to implement)
-- ❌ Four status states (+cancelled)
-- ❌ Priority field (high/medium/low)
-- ❌ Unique ID for each todo item
-- ❌ Event bus integration
-- ❌ Storage abstraction with locking
-
-### XDG Path
-```
-~/.local/share/crow/storage/todo/{sessionID}.json
-```
-
-### Unit Test Cases
-```
-test_valid_todo_creation
-test_invalid_input_handling
-test_status_enum_validation
-test_empty_todo_list
-test_todo_count_calculation
-test_activeform_presence
-test_priority_field (future)
-test_unique_id_generation (future)
-test_cancelled_status (future)
-test_multiple_todos_batch
-test_special_characters_content
-test_concurrent_writes
-```
-
-### Integration Test Cases
-```
-test_todowrite_todoread_roundtrip
-test_session_isolation
-test_persistence_restart
-test_event_bus_notification (future)
-test_xdg_path_creation
-```
-
-### E2E Test Cases
-```
-CLI: crow-cli chat "create todo list for task"
-CLI: crow-cli session todo <id>
-CLI: Verify persistence across sessions
-```
-
----
-
-## 9. WebFetch & WebSearch Tools
-
-**Files:**
-- Crow: `crow-tauri/src-tauri/core/src/tools/webfetch.rs`, `websearch.rs`
-- OpenCode: `opencode/packages/opencode/src/tool/webfetch.ts`, `websearch.ts`
-
-### Crow WebFetch Features
-- HTTP/HTTPS fetching with 30s timeout
-- HTTP to HTTPS auto-upgrade
-- Simple HTML tag stripper
-- 50KB truncation
-- Custom User-Agent
-
-### OpenCode WebFetch Features (gaps)
-- ❌ Multiple output formats (text, markdown, html)
-- ❌ TurndownService for HTML-to-Markdown
-- ❌ 5MB limit (vs 50KB)
-- ❌ 15-minute self-cleaning cache
-- ❌ Configurable timeout up to 120s
-
-### Crow WebSearch Features
-- SearXNG backend (localhost:8082)
-- JSON response parsing
-- Infobox support
-- Result limiting (default 5)
-
-### OpenCode WebSearch Features (gaps)
-- ❌ Exa AI backend
-- ❌ Live crawl modes (fallback/preferred)
-- ❌ Search types (auto/fast/deep)
-- ❌ Context length optimization
-- ❌ SSE response parsing
-
-### Unit Test Cases
-```
-# WebFetch
-test_basic_fetch
-test_http_to_https_upgrade
-test_html_stripping
-test_timeout_configuration
-test_size_limit_enforcement
-test_format_parameter (future)
-test_markdown_conversion (future)
-
-# WebSearch
-test_basic_search
-test_result_limit
-test_empty_results
-test_timeout_handling
-test_livecrawl_modes (future)
-test_search_types (future)
-```
-
-### E2E Test Cases
-```
-CLI: crow-cli chat "fetch https://example.com"
-CLI: crow-cli chat "search for rust programming"
-```
-
----
-
-## 10. Task, Batch, Patch Tools
-
-**Files:**
-- Crow: `crow-tauri/src-tauri/core/src/tools/task.rs`, `batch.rs`, `patch.rs`
-- OpenCode: `opencode/packages/opencode/src/tool/task.ts`, `batch.ts`, `patch.ts`
-
-### Task Tool
-**Crow Features:**
-- Launches subagents for complex tasks
-- Creates child sessions with parent-child relationships
-- Validates subagent type
-
-**Gaps:**
-- ❌ Session continuation/reuse
-- ❌ Event bus integration
-- ❌ Model selection per subagent
-- ❌ Tool access control per subagent
-- ❌ Cancellation support
-
-### Batch Tool
-**Crow Features:**
 - Up to 10 parallel tool calls
 - Disallows: batch, edit, todoread
 - Concurrent execution with tokio::spawn
 - Success/failure tracking
 
-**Gaps:**
-- ❌ Tool state persistence in session
-- ❌ Timing tracking (start/end)
-- ❌ Attachments handling
+### Unit Test Cases
+```rust
+test_batch_single_tool
+test_batch_multiple_tools
+test_batch_max_10_tools
+test_batch_rejects_over_10
+test_batch_disallows_batch
+test_batch_disallows_edit
+test_batch_disallows_todoread
+test_batch_parallel_execution
+test_batch_partial_success
+test_batch_all_success
+test_batch_all_failure
+test_batch_mixed_results
+test_batch_invalid_tool_name
+test_batch_empty_tool_calls_error
+```
 
-### Patch Tool
-**Crow Features:**
+### Integration Test Cases
+```rust
+test_batch_with_session_context
+test_batch_read_multiple_files
+test_batch_grep_multiple_patterns
+test_batch_concurrent_isolation
+```
+
+### E2E Test Cases
+```bash
+crow-cli chat "read 5 files in parallel"
+crow-cli chat "search for multiple patterns"
+```
+
+---
+
+## 11. Patch Tool
+
+**Files:**
+- Crow: `crow-tauri/src-tauri/core/src/tools/patch.rs`
+- OpenCode: `opencode/packages/opencode/src/tool/patch.ts`
+
+### Crow Features
 - Unified diff format parsing
 - Add/update/delete operations
 - Hunk-based parsing
 - Context line matching
 
-**Gaps:**
-- ❌ Custom patch format (BEGIN/END markers)
-- ❌ FileTime tracking
-- ❌ Permission system
-- ❌ File move support
-- ❌ Chunk-based matching algorithm
-
 ### Unit Test Cases
-```
-# Task
-test_task_invalid_agent
-test_task_missing_parameters
-test_task_non_subagent_error
-test_task_working_dir_inheritance
-test_task_session_creation
-
-# Batch
-test_batch_empty_tool_calls
-test_batch_max_size_10
-test_batch_disallowed_tools
-test_batch_parallel_execution
-test_batch_partial_success
-
-# Patch
-test_patch_empty_error
-test_patch_invalid_format
+```rust
 test_patch_add_new_file
-test_patch_update_existing
+test_patch_update_existing_file
 test_patch_delete_file
+test_patch_multiple_files
 test_patch_multiple_hunks
 test_patch_context_matching
+test_patch_creates_parent_dirs
+test_patch_empty_patch_error
+test_patch_invalid_format_error
+test_patch_absolute_path
+test_patch_relative_path
+test_patch_partial_success
+```
+
+### Integration Test Cases
+```rust
+test_patch_triggers_snapshot
+test_patch_session_persistence
+test_patch_with_edit_comparison
+```
+
+### E2E Test Cases
+```bash
+crow-cli chat "apply this diff to refactor code"
+crow-cli chat "create multiple files via patch"
 ```
 
 ---
 
-## 11. Snapshot Mechanism
+## 12. Snapshot Mechanism
 
 **Files:**
 - Crow: `crow-tauri/src-tauri/core/src/snapshot/mod.rs`
@@ -632,19 +699,7 @@ test_patch_context_matching
 
 ### Crow Features
 - Shadow git repository per project
-- `track()` - Creates git tree hash snapshot
-- `patch(hash)` - Returns changed files since snapshot
-- `revert(patches)` - Reverts files to snapshot state
-- `restore(hash)` - Full restoration
-- `diff(hash)` - Unified diff
-- `diff_full(from, to)` - Detailed per-file diffs
-- 10+ unit tests
-
-### OpenCode Features (gaps)
-- ❌ Configuration toggle (snapshot: boolean)
-- ❌ Session-level revert/unrevert integration
-- ❌ Git worktree support
-- ❌ 40+ comprehensive tests
+- track(), patch(), revert(), restore(), diff(), diff_full()
 
 ### XDG Path
 ```
@@ -652,37 +707,44 @@ test_patch_context_matching
 ```
 
 ### Unit Test Cases
-```
-test_snapshot_track_and_revert
-test_snapshot_new_file_delete_on_revert
-test_snapshot_diff
-test_snapshot_multiple_files
-test_snapshot_nested_directories
-test_snapshot_restore_full
-test_snapshot_diff_full_stats
+```rust
+test_snapshot_track_creates_hash
+test_snapshot_track_same_content_same_hash
+test_snapshot_patch_detects_changes
+test_snapshot_patch_empty_when_no_changes
+test_snapshot_revert_restores_files
+test_snapshot_revert_deletes_new_files
+test_snapshot_diff_unified_format
+test_snapshot_diff_full_per_file
 test_snapshot_xdg_path_structure
-test_snapshot_incremental_tracking
-test_snapshot_empty_directory
-test_binary_file_handling
-test_symlink_handling
-test_unicode_filenames
-test_hidden_files
-test_gitignore_changes
-test_concurrent_operations
-test_project_isolation
+test_snapshot_project_isolation
+test_snapshot_nested_directories
+test_snapshot_binary_files
+test_snapshot_symlinks
+test_snapshot_unicode_filenames
+test_snapshot_hidden_files
+test_snapshot_concurrent_operations
+```
+
+### Integration Test Cases
+```rust
+test_snapshot_with_edit_tool
+test_snapshot_with_write_tool
+test_snapshot_with_bash_tool
+test_snapshot_with_session_store
 ```
 
 ### E2E Test Cases
-```
-CLI: crow-cli snapshot list
-CLI: crow-cli snapshot show
-CLI: crow-cli snapshot diff
-CLI: Full workflow: track → modify → patch → revert
+```bash
+crow-cli snapshot list
+crow-cli snapshot show
+crow-cli snapshot diff
+crow-cli chat "make changes then revert"
 ```
 
 ---
 
-## 12. Session Storage
+## 13. Session Storage
 
 **Files:**
 - Crow: `crow-tauri/src-tauri/core/src/session/store.rs`
@@ -690,66 +752,61 @@ CLI: Full workflow: track → modify → patch → revert
 
 ### Crow Features
 - In-memory HashMap with Arc<RwLock<>>
-- Async/sync initialization
-- Session CRUD operations
-- Message management
-- Child session support
+- Session CRUD, message management
 - Real-time markdown export
 - Event publishing
-
-### OpenCode Features (gaps)
-- ❌ Session forking with message cloning
-- ❌ Auto-sharing functionality
-- ❌ Session compaction for context overflow
-- ❌ Revert/unrevert functionality
-- ❌ Cost calculation and token analysis
-- ❌ File diff tracking in session.summary
 
 ### XDG Paths
 ```
 ~/.local/share/crow/storage/session/{projectID}/{sessionID}.json
 ~/.local/share/crow/storage/message/{sessionID}/{messageID}.json
-~/.local/share/crow/storage/part/{messageID}/{partID}.json
 .crow/sessions/{sessionID}.md (project-relative export)
 ```
 
 ### Unit Test Cases
+```rust
+test_session_create
+test_session_get
+test_session_list
+test_session_update
+test_session_delete
+test_session_add_message
+test_session_get_messages
+test_session_child_relationships
+test_session_xdg_path_creation
+test_session_json_serialization
+test_session_markdown_export
+test_session_event_publishing
+test_session_concurrent_access
+test_session_project_id_computation
 ```
-test_session_creation
-test_session_crud_operations
-test_message_management
-test_session_metadata
-test_storage_serialization
-test_xdg_path_resolution
-test_timestamp_handling
-test_project_id_computation
-test_child_session_relationships
-test_event_publishing
-test_export_functionality
-test_token_tracking
+
+### Integration Test Cases
+```rust
+test_session_with_tool_execution
+test_session_with_task_tool
+test_session_with_todo_persistence
+test_session_persistence_across_restart
 ```
 
 ### E2E Test Cases
-```
-CLI: crow-cli session create --title "Test"
-CLI: crow-cli sessions
-CLI: crow-cli session info <id>
-CLI: crow-cli session history <id>
-CLI: Verify .crow/sessions/{id}.md export
+```bash
+crow-cli sessions
+crow-cli session info <id>
+crow-cli session history <id>
+crow-cli session todo <id>
+ls ~/.local/share/crow/storage/session/
 ```
 
 ---
 
-## 13. XDG Path Summary
-
-All crow-tauri XDG paths:
+## 14. XDG Path Summary
 
 | Component | Path |
 |-----------|------|
 | Data Home | `~/.local/share/crow/` |
 | Config Home | `~/.config/crow/` |
 | State Home | `~/.local/state/crow/` |
-| Cache Home | `~/.cache/crow/` |
 | Sessions | `~/.local/share/crow/storage/session/{projectID}/{sessionID}.json` |
 | Messages | `~/.local/share/crow/storage/message/{sessionID}/{messageID}.json` |
 | Parts | `~/.local/share/crow/storage/part/{messageID}/{partID}.json` |
@@ -763,95 +820,67 @@ All crow-tauri XDG paths:
 
 ---
 
-## 14. Test Execution Strategy
+## 15. Test Execution Strategy
 
-### Phase 1: Unit Tests (3-4 days)
-**Priority Order:**
-1. Edit tool (core fuzzy matching)
-2. Read/Write tools (file I/O foundation)
-3. Bash tool (command execution)
-4. Grep/Glob/List tools (search)
-5. TodoWrite tool (state management)
-6. Snapshot mechanism
-7. Session storage
+### Phase 1: CRITICAL (Do First)
+1. **Task Tool** - 30+ tests across all levels
+2. **TodoWrite/TodoRead** - 25+ tests across all levels
 
-**Test Framework:** `#[cfg(test)]` with tokio::test for async
+### Phase 2: HIGH Priority
+3. Glob (0 → 15+ tests)
+4. List (0 → 15+ tests)
+5. Batch (0 → 15+ tests)
+6. Patch (0 → 15+ tests)
+7. Session Store (0 → 20+ tests)
+8. Grep (1 → 15+ tests)
 
-### Phase 2: Integration Tests (2-3 days)
-**Focus Areas:**
-1. Tool + Executor pipeline
-2. Tool + Session persistence
-3. Tool + Snapshot tracking
-4. Cross-tool workflows (read → edit → verify)
-5. Concurrent operations
+### Phase 3: MEDIUM Priority
+9. Read (4 → 15+ tests)
+10. Write (2 → 15+ tests)
+11. Snapshot (10+ → 20+ tests)
+12. WebFetch (3 → 10+ tests)
+13. WebSearch (1 → 10+ tests)
 
-### Phase 3: E2E Tests (2-3 days)
-**Strategy:**
-- Fresh session per test
-- Use `crow-cli chat` command
-- Verify file system state
-- Check XDG paths for persistence
-- Parse JSON output mode for assertions
-
-**Test Harness:**
-```rust
-#[tokio::test]
-async fn test_e2e_read_file() {
-    let session_id = create_fresh_session();
-    let output = run_cli(&["chat", "--json", "--session", &session_id, "read test.txt"]);
-    let result: JsonOutput = parse_output(&output);
-    assert!(result.tools.iter().any(|t| t.name == "read"));
-    cleanup_session(&session_id);
-}
-```
-
-### Phase 4: Gap Implementation (ongoing)
-As tests reveal gaps vs OpenCode, prioritize implementation:
-
-**HIGH Priority:**
-1. FileTime tracking (edit safety)
-2. Permission system (security)
-3. Session compaction (context management)
-
-**MEDIUM Priority:**
-4. Image/binary file detection (read tool)
-5. LSP diagnostics (edit tool)
-6. Event bus integration
-
-**LOW Priority:**
-7. Exa AI search backend
-8. Session forking
-9. Advanced patch format
+### Phase 4: Already Good (Verify)
+14. Edit (70+ tests) - verify integration/E2E
+15. Bash (20+ tests) - verify integration/E2E
 
 ---
 
-## Appendix: Test File Locations
+## Test Harness Pattern
 
-```
-crow-tauri/src-tauri/core/src/tools/
-├── read.rs          # 4 existing tests
-├── write.rs         # 2 existing tests
-├── edit.rs          # 70+ existing tests
-├── bash.rs          # 20+ existing tests
-├── grep.rs          # 1 existing test
-├── glob.rs          # 0 tests
-├── list.rs          # 0 tests
-├── todowrite.rs     # 1 existing test
-├── todoread.rs      # 0 tests
-├── webfetch.rs      # 3 existing tests
-├── websearch.rs     # 1 existing test
-├── task.rs          # 0 tests
-├── batch.rs         # 0 tests
-├── patch.rs         # 0 tests
-└── mod.rs           # Tool registry
+**ALWAYS create fresh session for each E2E test:**
 
-crow-tauri/src-tauri/core/src/
-├── snapshot/mod.rs  # 10+ existing tests
-├── session/store.rs # 0 tests
-└── logging.rs       # 0 tests
+```rust
+#[tokio::test]
+async fn test_e2e_example() {
+    // 1. Create fresh session
+    let session_id = create_fresh_session().await;
+    
+    // 2. Run CLI command
+    let output = run_cli(&[
+        "chat", "--json", 
+        "--session", &session_id, 
+        "your test prompt"
+    ]).await;
+    
+    // 3. Parse and verify
+    let result: JsonOutput = parse_output(&output);
+    assert!(result.tools.iter().any(|t| t.name == "expected_tool"));
+    
+    // 4. Verify XDG paths
+    assert!(xdg_file_exists(&format!(
+        "~/.local/share/crow/storage/session/*/{}.json", 
+        session_id
+    )));
+    
+    // 5. Cleanup
+    cleanup_session(&session_id).await;
+}
 ```
 
 ---
 
 *Generated: 2025-11-26*
-*Based on analysis of crow-tauri vs opencode implementations*
+*IGNORE: LSP features, Permission system*
+*FOCUS: Task tool, Todo tools, XDG persistence, Fresh sessions*
