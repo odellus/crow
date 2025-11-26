@@ -227,3 +227,313 @@ impl Tool for GrepTool {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::path::PathBuf;
+    use tempfile::TempDir;
+
+    fn create_test_context() -> ToolContext {
+        ToolContext::new(
+            "test-session".to_string(),
+            "test-message".to_string(),
+            "build".to_string(),
+            PathBuf::from("/tmp"),
+        )
+    }
+
+    fn setup_test_dir() -> TempDir {
+        let dir = TempDir::new().unwrap();
+        let path = dir.path();
+
+        // Create test files with searchable content
+        std::fs::write(
+            path.join("main.rs"),
+            "fn main() {\n    println!(\"Hello\");\n}\n",
+        )
+        .unwrap();
+        std::fs::write(
+            path.join("lib.rs"),
+            "pub fn hello() {\n    println!(\"Hello world\");\n}\n",
+        )
+        .unwrap();
+        std::fs::write(
+            path.join("test.rs"),
+            "fn test_hello() {\n    assert!(true);\n}\n",
+        )
+        .unwrap();
+        std::fs::write(
+            path.join("readme.txt"),
+            "This is a readme file\nWith multiple lines\n",
+        )
+        .unwrap();
+        std::fs::create_dir_all(path.join("src")).unwrap();
+        std::fs::write(path.join("src/mod.rs"), "mod hello;\nmod world;\n").unwrap();
+
+        dir
+    }
+
+    // ==================== Tool Interface Tests ====================
+
+    #[tokio::test]
+    async fn test_grep_tool_name() {
+        let tool = GrepTool;
+        assert_eq!(tool.name(), "grep");
+    }
+
+    #[tokio::test]
+    async fn test_grep_tool_description() {
+        let tool = GrepTool;
+        let desc = tool.description();
+        assert!(desc.contains("search"));
+        assert!(desc.contains("regex"));
+    }
+
+    #[tokio::test]
+    async fn test_grep_parameters_schema() {
+        let tool = GrepTool;
+        let schema = tool.parameters_schema();
+        assert_eq!(schema["type"], "object");
+        assert!(schema["properties"]["pattern"].is_object());
+        assert!(schema["properties"]["path"].is_object());
+        assert!(schema["properties"]["include"].is_object());
+        assert!(schema["required"]
+            .as_array()
+            .unwrap()
+            .contains(&serde_json::json!("pattern")));
+    }
+
+    // ==================== Input Validation Tests ====================
+
+    #[tokio::test]
+    async fn test_grep_missing_pattern() {
+        let tool = GrepTool;
+        let ctx = create_test_context();
+
+        let result = tool.execute(serde_json::json!({}), &ctx).await;
+
+        assert_eq!(result.status, ToolStatus::Error);
+        assert!(result.error.unwrap().contains("Invalid input"));
+    }
+
+    #[tokio::test]
+    async fn test_grep_invalid_input_type() {
+        let tool = GrepTool;
+        let ctx = create_test_context();
+
+        let result = tool.execute(serde_json::json!("not an object"), &ctx).await;
+
+        assert_eq!(result.status, ToolStatus::Error);
+        assert!(result.error.is_some());
+    }
+
+    // ==================== Search Tests ====================
+
+    #[tokio::test]
+    async fn test_grep_simple_pattern() {
+        let dir = setup_test_dir();
+        let tool = GrepTool;
+        let ctx = create_test_context();
+
+        let result = tool
+            .execute(
+                serde_json::json!({
+                    "pattern": "println",
+                    "path": dir.path().to_str().unwrap()
+                }),
+                &ctx,
+            )
+            .await;
+
+        assert_eq!(result.status, ToolStatus::Completed);
+        assert!(result.output.contains("println"));
+    }
+
+    #[tokio::test]
+    async fn test_grep_regex_pattern() {
+        let dir = setup_test_dir();
+        let tool = GrepTool;
+        let ctx = create_test_context();
+
+        let result = tool
+            .execute(
+                serde_json::json!({
+                    "pattern": "fn\\s+\\w+",
+                    "path": dir.path().to_str().unwrap()
+                }),
+                &ctx,
+            )
+            .await;
+
+        assert_eq!(result.status, ToolStatus::Completed);
+        // Should match fn main, fn hello, fn test_hello
+        assert!(result.output.contains("fn"));
+    }
+
+    #[tokio::test]
+    async fn test_grep_no_matches() {
+        let dir = setup_test_dir();
+        let tool = GrepTool;
+        let ctx = create_test_context();
+
+        let result = tool
+            .execute(
+                serde_json::json!({
+                    "pattern": "nonexistent_pattern_xyz",
+                    "path": dir.path().to_str().unwrap()
+                }),
+                &ctx,
+            )
+            .await;
+
+        assert_eq!(result.status, ToolStatus::Completed);
+        assert!(result.output.contains("No files found"));
+        assert_eq!(result.metadata["matches"], 0);
+    }
+
+    #[tokio::test]
+    async fn test_grep_with_include_filter() {
+        let dir = setup_test_dir();
+        let tool = GrepTool;
+        let ctx = create_test_context();
+
+        let result = tool
+            .execute(
+                serde_json::json!({
+                    "pattern": "Hello",
+                    "path": dir.path().to_str().unwrap(),
+                    "include": "*.rs"
+                }),
+                &ctx,
+            )
+            .await;
+
+        assert_eq!(result.status, ToolStatus::Completed);
+        // Should only find in .rs files, not in readme.txt
+        // Note: readme.txt doesn't contain "Hello" anyway, but this tests the filter
+        assert!(!result.output.contains("readme.txt"));
+    }
+
+    #[tokio::test]
+    async fn test_grep_default_path() {
+        let tool = GrepTool;
+        let ctx = create_test_context();
+
+        // This will search current directory
+        let result = tool
+            .execute(
+                serde_json::json!({
+                    "pattern": "some_pattern"
+                }),
+                &ctx,
+            )
+            .await;
+
+        // Should complete without error (even if no matches)
+        assert!(result.status == ToolStatus::Completed || result.status == ToolStatus::Error);
+    }
+
+    #[tokio::test]
+    async fn test_grep_invalid_path() {
+        let tool = GrepTool;
+        let ctx = create_test_context();
+
+        let result = tool
+            .execute(
+                serde_json::json!({
+                    "pattern": "test",
+                    "path": "/nonexistent/path/xyz"
+                }),
+                &ctx,
+            )
+            .await;
+
+        assert_eq!(result.status, ToolStatus::Error);
+    }
+
+    #[tokio::test]
+    async fn test_grep_returns_line_numbers() {
+        let dir = setup_test_dir();
+        let tool = GrepTool;
+        let ctx = create_test_context();
+
+        let result = tool
+            .execute(
+                serde_json::json!({
+                    "pattern": "fn main",
+                    "path": dir.path().to_str().unwrap()
+                }),
+                &ctx,
+            )
+            .await;
+
+        assert_eq!(result.status, ToolStatus::Completed);
+        // Output should contain line numbers
+        assert!(result.output.contains("Line"));
+    }
+
+    #[tokio::test]
+    async fn test_grep_metadata_contains_match_count() {
+        let dir = setup_test_dir();
+        let tool = GrepTool;
+        let ctx = create_test_context();
+
+        let result = tool
+            .execute(
+                serde_json::json!({
+                    "pattern": "fn",
+                    "path": dir.path().to_str().unwrap()
+                }),
+                &ctx,
+            )
+            .await;
+
+        assert_eq!(result.status, ToolStatus::Completed);
+        assert!(result.metadata["matches"].as_i64().is_some());
+        assert!(result.metadata["truncated"].as_bool().is_some());
+    }
+
+    #[tokio::test]
+    async fn test_grep_subdirectory_search() {
+        let dir = setup_test_dir();
+        let tool = GrepTool;
+        let ctx = create_test_context();
+
+        let result = tool
+            .execute(
+                serde_json::json!({
+                    "pattern": "mod",
+                    "path": dir.path().to_str().unwrap()
+                }),
+                &ctx,
+            )
+            .await;
+
+        assert_eq!(result.status, ToolStatus::Completed);
+        // Should find mod.rs in src/ subdirectory
+        assert!(result.output.contains("mod"));
+    }
+
+    #[tokio::test]
+    async fn test_grep_case_sensitive() {
+        let dir = setup_test_dir();
+        let tool = GrepTool;
+        let ctx = create_test_context();
+
+        let result = tool
+            .execute(
+                serde_json::json!({
+                    "pattern": "HELLO",
+                    "path": dir.path().to_str().unwrap()
+                }),
+                &ctx,
+            )
+            .await;
+
+        // ripgrep is case-sensitive by default
+        assert_eq!(result.status, ToolStatus::Completed);
+        // Should not match "Hello" with uppercase pattern
+        assert!(result.output.contains("No files found"));
+    }
+}

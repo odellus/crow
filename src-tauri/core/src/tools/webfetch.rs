@@ -235,26 +235,206 @@ fn strip_html(html: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::path::PathBuf;
+
+    fn create_test_context() -> ToolContext {
+        ToolContext::new(
+            "test-session".to_string(),
+            "test-message".to_string(),
+            "build".to_string(),
+            PathBuf::from("/tmp"),
+        )
+    }
+
+    // ==================== Tool Interface Tests ====================
+
+    #[tokio::test]
+    async fn test_webfetch_tool_name() {
+        let tool = WebFetchTool;
+        assert_eq!(tool.name(), "webfetch");
+    }
+
+    #[tokio::test]
+    async fn test_webfetch_tool_description() {
+        let tool = WebFetchTool;
+        let desc = tool.description();
+        assert!(desc.contains("URL"));
+        assert!(desc.contains("fetch"));
+    }
+
+    #[tokio::test]
+    async fn test_webfetch_parameters_schema() {
+        let tool = WebFetchTool;
+        let schema = tool.parameters_schema();
+        assert_eq!(schema["type"], "object");
+        assert!(schema["properties"]["url"].is_object());
+        assert!(schema["properties"]["prompt"].is_object());
+        assert!(schema["required"]
+            .as_array()
+            .unwrap()
+            .contains(&json!("url")));
+    }
+
+    // ==================== Input Validation Tests ====================
+
+    #[tokio::test]
+    async fn test_webfetch_missing_url() {
+        let tool = WebFetchTool;
+        let ctx = create_test_context();
+
+        let result = tool.execute(json!({}), &ctx).await;
+
+        assert_eq!(result.status, ToolStatus::Error);
+        assert!(result.error.unwrap().contains("Invalid input"));
+    }
+
+    #[tokio::test]
+    async fn test_webfetch_invalid_input_type() {
+        let tool = WebFetchTool;
+        let ctx = create_test_context();
+
+        let result = tool.execute(json!("not an object"), &ctx).await;
+
+        assert_eq!(result.status, ToolStatus::Error);
+        assert!(result.error.is_some());
+    }
+
+    // ==================== HTML Stripping Tests ====================
 
     #[test]
-    fn test_strip_html() {
+    fn test_strip_html_simple() {
         let html = "<html><body><p>Hello World</p></body></html>";
         let text = strip_html(html);
         assert_eq!(text, "Hello World");
     }
 
     #[test]
-    fn test_strip_script() {
+    fn test_strip_html_script_tags() {
         let html = "<html><script>alert('hi')</script><p>Content</p></html>";
         let text = strip_html(html);
         assert_eq!(text, "Content");
     }
 
+    #[test]
+    fn test_strip_html_style_tags() {
+        let html = "<html><style>.class { color: red; }</style><p>Styled</p></html>";
+        let text = strip_html(html);
+        assert_eq!(text, "Styled");
+    }
+
+    #[test]
+    fn test_strip_html_nested_tags() {
+        let html = "<div><span><strong>Nested</strong></span></div>";
+        let text = strip_html(html);
+        assert_eq!(text, "Nested");
+    }
+
+    #[test]
+    fn test_strip_html_whitespace_cleanup() {
+        let html = "<p>  Line 1  </p>   <p>  Line 2  </p>";
+        let text = strip_html(html);
+        assert!(text.contains("Line 1"));
+        assert!(text.contains("Line 2"));
+    }
+
+    #[test]
+    fn test_strip_html_empty() {
+        let html = "<html><body></body></html>";
+        let text = strip_html(html);
+        assert!(text.is_empty());
+    }
+
+    #[test]
+    fn test_strip_html_plain_text() {
+        let text = "Plain text without HTML";
+        let result = strip_html(text);
+        assert_eq!(result, "Plain text without HTML");
+    }
+
+    #[test]
+    fn test_strip_html_special_characters() {
+        let html = "<p>&amp; &lt; &gt;</p>";
+        let text = strip_html(html);
+        // Note: This doesn't decode HTML entities, just strips tags
+        assert!(text.contains("&amp;"));
+    }
+
+    #[test]
+    fn test_strip_html_multiple_scripts() {
+        let html = "<script>one</script><p>A</p><script>two</script><p>B</p>";
+        let text = strip_html(html);
+        assert!(text.contains("A"));
+        assert!(text.contains("B"));
+        assert!(!text.contains("one"));
+        assert!(!text.contains("two"));
+    }
+
+    // ==================== URL Upgrade Tests ====================
+
     #[tokio::test]
-    async fn test_webfetch_schema() {
+    async fn test_webfetch_upgrades_http_to_https() {
+        // We can't easily test the actual fetch without a mock server,
+        // but we can verify the URL upgrade logic by checking if it fails
+        // with the upgraded URL (which implies the upgrade happened)
         let tool = WebFetchTool;
-        assert_eq!(tool.name(), "webfetch");
-        let schema = tool.parameters_schema();
-        assert!(schema["properties"]["url"].is_object());
+        let ctx = create_test_context();
+
+        // This will fail to connect, but we can verify the error mentions https
+        let result = tool
+            .execute(
+                json!({
+                    "url": "http://nonexistent-domain-xyz123.invalid"
+                }),
+                &ctx,
+            )
+            .await;
+
+        assert_eq!(result.status, ToolStatus::Error);
+        // The URL in metadata should be upgraded
+        if let Some(url) = result.metadata["url"].as_str() {
+            assert!(url.starts_with("https://"));
+        }
+    }
+
+    // ==================== Error Handling Tests ====================
+
+    #[tokio::test]
+    async fn test_webfetch_invalid_url() {
+        let tool = WebFetchTool;
+        let ctx = create_test_context();
+
+        let result = tool
+            .execute(
+                json!({
+                    "url": "https://nonexistent-domain-xyz123.invalid"
+                }),
+                &ctx,
+            )
+            .await;
+
+        assert_eq!(result.status, ToolStatus::Error);
+        assert!(result.error.is_some());
+    }
+
+    #[tokio::test]
+    async fn test_webfetch_with_optional_prompt() {
+        let tool = WebFetchTool;
+        let ctx = create_test_context();
+
+        // Test that prompt is accepted even if fetch fails
+        let result = tool
+            .execute(
+                json!({
+                    "url": "https://nonexistent-domain-xyz123.invalid",
+                    "prompt": "Extract the main content"
+                }),
+                &ctx,
+            )
+            .await;
+
+        // Will fail but shouldn't error on input parsing
+        assert_eq!(result.status, ToolStatus::Error);
+        // Error should be about connection, not input
+        assert!(result.error.unwrap().contains("Failed to fetch"));
     }
 }

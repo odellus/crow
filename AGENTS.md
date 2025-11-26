@@ -143,35 +143,208 @@ RUST_LOG=debug       # Enable debug logging
 
 ## Testing
 
-### Run Tests
+Crow has three levels of testing: **Unit Tests**, **Integration Tests**, and **E2E Tests**. 
+
+### Quick Reference
 ```bash
-cd crow-tauri/src-tauri
-cargo test --package crow_core
-cargo test --package crow_core -- test_name  # Specific test
+# Unit/Integration tests (fast, no API key needed)
+cd crow-tauri/src-tauri/core
+cargo test
+
+# E2E tests (requires API key, tests real agent behavior)
+bash crow-tauri/src-tauri/core/tests/e2e/test_crow_e2e.sh
+
+# Interactive E2E testing
+crow-cli new "My Test"  # Create fresh session
+crow-cli chat --session ses_xxx "Test something"
 ```
 
-### E2E Testing Pattern
+---
+
+## 1. Unit Tests (Rust)
+
+Run all unit tests:
 ```bash
-# 1. Run command (fresh session)
-crow-cli chat --json "test prompt"
-
-# 2. Verify XDG files created
-ls ~/.local/share/crow/storage/session/*/
-cat ~/.local/state/crow/logs/tool-calls.jsonl | tail -1 | jq
-
-# 3. Check session export
-cat .crow/sessions/*.md | tail -20
+cd crow-tauri/src-tauri/core
+cargo test
 ```
 
-## Current Focus: Testing
+Run specific test file:
+```bash
+cargo test --lib tools::bash    # All bash tool tests
+cargo test --lib tools::edit    # All edit tool tests
+cargo test --lib session::store # Session store tests
+```
 
-**Priority order for testing (see TESTING_FRAMEWORK_PLAN.md):**
+Run single test:
+```bash
+cargo test test_bash_echo
+cargo test test_edit_simple_replacement
+```
 
-1. 🚨 **Task Tool** - Most critical, 0 tests currently
-2. 🚨 **TodoWrite/TodoRead** - Critical for task tracking
-3. Glob, List, Batch, Patch - No tests
-4. Session Store - No tests
-5. Everything else
+**Current test counts (~384 tests):**
+| Module | Tests |
+|--------|-------|
+| tools/bash.rs | 21 |
+| tools/edit.rs | 51 |
+| tools/read.rs | 21 |
+| tools/write.rs | 17 |
+| tools/grep.rs | 15 |
+| tools/glob.rs | 16 |
+| tools/list.rs | 18 |
+| tools/patch.rs | 23 |
+| tools/webfetch.rs | 17 |
+| tools/websearch.rs | 14 |
+| session/store.rs | 30 |
+| snapshot/mod.rs | 10 |
+
+---
+
+## 2. E2E Tests (Agent-Level)
+
+E2E tests use `crow-cli` to run the actual agent with real API calls. These tests verify that tools work correctly when invoked by an LLM.
+
+### Running E2E Tests
+```bash
+# Automated test suite (8 tests, ~3-5 minutes)
+bash crow-tauri/src-tauri/core/tests/e2e/test_crow_e2e.sh
+```
+
+The script tests:
+- Session creation/listing
+- Bash tool (echo, pwd, pipes)
+- Write tool (file creation)
+- Read tool (file reading)
+- Edit tool (find/replace)
+- Grep tool (pattern search)
+- Glob tool (file finding)
+- List tool (directory listing)
+
+### Interactive E2E Testing
+
+For debugging or exploring behavior, run tests interactively:
+
+```bash
+# Step 1: Create a fresh test directory and session
+TEST_DIR=$(mktemp -d)
+cd "$TEST_DIR"
+crow-cli new "Interactive Test"
+# Output: ses_xxxxx
+
+# Step 2: Run test commands (use the session ID from step 1)
+SESSION="ses_xxxxx"
+
+# Test Bash
+crow-cli chat --session "$SESSION" "Run: echo HELLO_TEST"
+
+# Test Write
+crow-cli chat --session "$SESSION" "Create file test.txt with content: Hello World"
+cat test.txt  # Verify
+
+# Test Edit
+crow-cli chat --session "$SESSION" "Edit test.txt: change World to Crow"
+cat test.txt  # Verify: should say "Hello Crow"
+
+# Test Grep
+echo "ERROR: bad" > log1.txt
+echo "INFO: ok" > log2.txt
+crow-cli chat --session "$SESSION" "Grep for ERROR"
+
+# Step 3: Check session history and tool calls
+crow-cli session history "$SESSION"
+cat ~/.local/state/crow/logs/tool-calls.jsonl | tail -10
+```
+
+---
+
+## 3. What Agents Should Look For in E2E Tests
+
+E2E tests catch issues that unit tests cannot:
+
+### ✅ Things to Verify
+1. **Tool output appears in response** - Did the agent see and report the result?
+2. **Files actually created/modified** - Check filesystem after write/edit operations
+3. **Snapshots created** - `ls ~/.local/share/crow/snapshots/` should show new project
+4. **Session persisted** - `crow-cli sessions` should list the session
+5. **Reasonable token usage** - Check the cost/context stats in output
+
+### 🚨 Red Flags to Watch For
+1. **Tool called multiple times unnecessarily** - Model confusion, wastes tokens
+   ```
+   ✓ ~861 thinking, ~0 response | 10 tool calls | 76.0s  # BAD: 10 calls for simple task
+   ✓ ~82 thinking, ~5 response | 1 tool calls | 9.5s    # GOOD: 1 call
+   ```
+2. **Empty response after tool call** - Tool succeeded but agent didn't report it
+3. **Context growing too fast** - Check `Context: 63k/128k (50.2%)` in output
+4. **Agent not using the right tool** - Asked for grep but used bash grep instead
+5. **Timeout or SIGHUP** - Process killed, usually means infinite loop or hang
+
+### 📋 E2E Test Checklist for New Features
+When adding a new tool or feature:
+1. [ ] Add unit tests in `tools/new_tool.rs`
+2. [ ] Create a fresh session: `crow-cli new "Test NewTool"`
+3. [ ] Run simple case: `crow-cli chat --session $S "Use newtool to do X"`
+4. [ ] Verify output shows expected result
+5. [ ] Verify side effects (files created, APIs called, etc.)
+6. [ ] Check tool wasn't called multiple times
+7. [ ] Verify session history: `crow-cli session history $S`
+8. [ ] Check logs: `cat ~/.local/state/crow/logs/tool-calls.jsonl | tail -5`
+
+---
+
+## 4. Debugging Failed Tests
+
+### Check Logs
+```bash
+# Recent tool calls (JSONL format)
+cat ~/.local/state/crow/logs/tool-calls.jsonl | tail -10 | jq
+
+# Agent execution log
+cat ~/.local/state/crow/logs/agent.log | tail -50
+
+# Enable debug logging
+RUST_LOG=debug crow-cli chat "test"
+```
+
+### Check Session State
+```bash
+# List all sessions
+crow-cli sessions
+
+# Session details
+crow-cli session info ses_xxxxx
+
+# Message history with timestamps
+crow-cli session history ses_xxxxx
+
+# Todo state
+crow-cli session todo ses_xxxxx
+```
+
+### Check Snapshots
+```bash
+# List all project snapshots
+crow-cli snapshot list
+
+# Check specific project
+ls -la ~/.local/share/crow/snapshots/proj-*/
+
+# See git status in snapshot
+cd ~/.local/share/crow/snapshots/proj-xxxxx
+git status
+git log --oneline
+```
+
+---
+
+## 5. Provider Configuration
+
+Crow auto-detects providers based on environment variables:
+1. `ANTHROPIC_API_KEY` → Anthropic Claude
+2. `OPENAI_API_KEY` → OpenAI
+3. `MOONSHOT_API_KEY` → Moonshot/Kimi (default fallback)
+
+E2E tests work with any provider. Moonshot is the default if no keys are set.
 
 ## Key Files to Know
 

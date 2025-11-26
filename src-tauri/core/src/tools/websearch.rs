@@ -202,13 +202,218 @@ Example:
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::path::PathBuf;
+
+    fn create_test_context() -> ToolContext {
+        ToolContext::new(
+            "test-session".to_string(),
+            "test-message".to_string(),
+            "build".to_string(),
+            PathBuf::from("/tmp"),
+        )
+    }
+
+    // ==================== Tool Interface Tests ====================
 
     #[tokio::test]
-    async fn test_websearch_schema() {
+    async fn test_websearch_tool_name() {
         let tool = WebSearchTool::new();
         assert_eq!(tool.name(), "websearch");
-        let params = tool.parameters_schema();
-        assert!(params["properties"]["query"].is_object());
-        assert!(params["properties"]["limit"].is_object());
+    }
+
+    #[tokio::test]
+    async fn test_websearch_tool_description() {
+        let tool = WebSearchTool::new();
+        let desc = tool.description();
+        assert!(desc.contains("search"));
+        assert!(desc.contains("SearXNG"));
+    }
+
+    #[tokio::test]
+    async fn test_websearch_parameters_schema() {
+        let tool = WebSearchTool::new();
+        let schema = tool.parameters_schema();
+        assert_eq!(schema["type"], "object");
+        assert!(schema["properties"]["query"].is_object());
+        assert!(schema["properties"]["limit"].is_object());
+        assert!(schema["required"]
+            .as_array()
+            .unwrap()
+            .contains(&json!("query")));
+    }
+
+    #[tokio::test]
+    async fn test_websearch_clone() {
+        let tool = WebSearchTool::new();
+        let cloned = tool.clone();
+        assert_eq!(tool.name(), cloned.name());
+    }
+
+    // ==================== Input Validation Tests ====================
+
+    #[tokio::test]
+    async fn test_websearch_missing_query() {
+        let tool = WebSearchTool::new();
+        let ctx = create_test_context();
+
+        let result = tool.execute(json!({}), &ctx).await;
+
+        assert_eq!(result.status, ToolStatus::Error);
+        assert!(result.error.unwrap().contains("Invalid input"));
+    }
+
+    #[tokio::test]
+    async fn test_websearch_invalid_input_type() {
+        let tool = WebSearchTool::new();
+        let ctx = create_test_context();
+
+        let result = tool.execute(json!("not an object"), &ctx).await;
+
+        assert_eq!(result.status, ToolStatus::Error);
+        assert!(result.error.is_some());
+    }
+
+    #[tokio::test]
+    async fn test_websearch_empty_query() {
+        let tool = WebSearchTool::new();
+        let ctx = create_test_context();
+
+        let result = tool
+            .execute(
+                json!({
+                    "query": ""
+                }),
+                &ctx,
+            )
+            .await;
+
+        // Empty query is valid input, but will fail to connect to SearXNG
+        // (since we don't have a mock server running)
+        assert_eq!(result.status, ToolStatus::Error);
+        assert!(result.error.unwrap().contains("SearXNG"));
+    }
+
+    // ==================== Response Structure Tests ====================
+
+    #[test]
+    fn test_search_result_deserialization() {
+        let json_str = r#"{
+            "url": "https://example.com",
+            "title": "Example Title",
+            "content": "Example content snippet"
+        }"#;
+
+        let result: SearchResult = serde_json::from_str(json_str).unwrap();
+        assert_eq!(result.url, "https://example.com");
+        assert_eq!(result.title, "Example Title");
+        assert_eq!(result.content, "Example content snippet");
+    }
+
+    #[test]
+    fn test_infobox_deserialization() {
+        let json_str = r#"{
+            "infobox": "Test Infobox",
+            "id": "test-id",
+            "content": "Infobox content",
+            "urls": [{"title": "Link", "url": "https://example.com"}]
+        }"#;
+
+        let infobox: Infobox = serde_json::from_str(json_str).unwrap();
+        assert_eq!(infobox.infobox, "Test Infobox");
+        assert_eq!(infobox.id, "test-id");
+        assert_eq!(infobox.urls.len(), 1);
+    }
+
+    #[test]
+    fn test_searxng_response_deserialization() {
+        let json_str = r#"{
+            "query": "rust programming",
+            "number_of_results": 100,
+            "results": [
+                {"url": "https://rust-lang.org", "title": "Rust", "content": "A systems language"}
+            ],
+            "infoboxes": []
+        }"#;
+
+        let response: SearXNGResponse = serde_json::from_str(json_str).unwrap();
+        assert_eq!(response.query, "rust programming");
+        assert_eq!(response.number_of_results, 100);
+        assert_eq!(response.results.len(), 1);
+        assert!(response.infoboxes.is_empty());
+    }
+
+    #[test]
+    fn test_searxng_response_empty_infoboxes() {
+        // Test that infoboxes default to empty when not present
+        let json_str = r#"{
+            "query": "test",
+            "number_of_results": 0,
+            "results": []
+        }"#;
+
+        let response: SearXNGResponse = serde_json::from_str(json_str).unwrap();
+        assert!(response.infoboxes.is_empty());
+    }
+
+    // ==================== Default Value Tests ====================
+
+    #[tokio::test]
+    async fn test_websearch_default_limit() {
+        let tool = WebSearchTool::new();
+        let ctx = create_test_context();
+
+        // When limit is not specified, it should default to 5
+        // We can't test the actual behavior without a mock server,
+        // but we can verify the schema mentions the default
+        let schema = tool.parameters_schema();
+        assert_eq!(schema["properties"]["limit"]["default"], 5);
+    }
+
+    // ==================== Connection Error Tests ====================
+
+    #[tokio::test]
+    async fn test_websearch_connection_failure() {
+        // Set an invalid SearXNG URL to test connection error handling
+        std::env::set_var("SEARXNG_URL", "http://invalid-host-xyz123:9999");
+
+        let tool = WebSearchTool::new();
+        let ctx = create_test_context();
+
+        let result = tool
+            .execute(
+                json!({
+                    "query": "test query"
+                }),
+                &ctx,
+            )
+            .await;
+
+        assert_eq!(result.status, ToolStatus::Error);
+        assert!(result.error.unwrap().contains("SearXNG"));
+
+        // Reset env var
+        std::env::remove_var("SEARXNG_URL");
+    }
+
+    #[tokio::test]
+    async fn test_websearch_with_custom_limit() {
+        let tool = WebSearchTool::new();
+        let ctx = create_test_context();
+
+        // Test that custom limit is accepted (will fail on connection)
+        let result = tool
+            .execute(
+                json!({
+                    "query": "test",
+                    "limit": 10
+                }),
+                &ctx,
+            )
+            .await;
+
+        // Will fail to connect but shouldn't error on input parsing
+        assert_eq!(result.status, ToolStatus::Error);
+        // Error should mention SearXNG connection
+        assert!(result.error.unwrap().contains("SearXNG"));
     }
 }

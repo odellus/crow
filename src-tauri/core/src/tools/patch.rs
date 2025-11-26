@@ -353,3 +353,429 @@ fn find_and_replace_lines(current: &[&str], old: &[&str], new: &[String]) -> Opt
 
     None
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::path::PathBuf;
+    use tempfile::TempDir;
+
+    fn create_test_context(working_dir: PathBuf) -> ToolContext {
+        ToolContext::new(
+            "test-session".to_string(),
+            "test-message".to_string(),
+            "build".to_string(),
+            working_dir,
+        )
+    }
+
+    // ==================== Tool Interface Tests ====================
+
+    #[tokio::test]
+    async fn test_patch_tool_name() {
+        let tool = PatchTool;
+        assert_eq!(tool.name(), "patch");
+    }
+
+    #[tokio::test]
+    async fn test_patch_tool_description() {
+        let tool = PatchTool;
+        let desc = tool.description();
+        assert!(desc.contains("unified diff"));
+        assert!(desc.contains("patch"));
+    }
+
+    #[tokio::test]
+    async fn test_patch_parameters_schema() {
+        let tool = PatchTool;
+        let schema = tool.parameters_schema();
+        assert_eq!(schema["type"], "object");
+        assert!(schema["properties"]["patchText"].is_object());
+        assert!(schema["required"]
+            .as_array()
+            .unwrap()
+            .contains(&json!("patchText")));
+    }
+
+    // ==================== Input Validation Tests ====================
+
+    #[tokio::test]
+    async fn test_patch_empty_patch_text() {
+        let dir = TempDir::new().unwrap();
+        let tool = PatchTool;
+        let ctx = create_test_context(dir.path().to_path_buf());
+
+        let result = tool
+            .execute(
+                json!({
+                    "patchText": ""
+                }),
+                &ctx,
+            )
+            .await;
+
+        assert_eq!(result.status, ToolStatus::Error);
+        assert!(result.error.unwrap().contains("patchText is required"));
+    }
+
+    #[tokio::test]
+    async fn test_patch_whitespace_only() {
+        let dir = TempDir::new().unwrap();
+        let tool = PatchTool;
+        let ctx = create_test_context(dir.path().to_path_buf());
+
+        let result = tool
+            .execute(
+                json!({
+                    "patchText": "   \n\t  "
+                }),
+                &ctx,
+            )
+            .await;
+
+        assert_eq!(result.status, ToolStatus::Error);
+        assert!(result.error.unwrap().contains("patchText is required"));
+    }
+
+    #[tokio::test]
+    async fn test_patch_invalid_input() {
+        let dir = TempDir::new().unwrap();
+        let tool = PatchTool;
+        let ctx = create_test_context(dir.path().to_path_buf());
+
+        let result = tool.execute(json!({"wrong_field": "value"}), &ctx).await;
+
+        assert_eq!(result.status, ToolStatus::Error);
+        assert!(result.error.unwrap().contains("Invalid input"));
+    }
+
+    #[tokio::test]
+    async fn test_patch_no_hunks_found() {
+        let dir = TempDir::new().unwrap();
+        let tool = PatchTool;
+        let ctx = create_test_context(dir.path().to_path_buf());
+
+        let result = tool
+            .execute(
+                json!({
+                    "patchText": "This is not a valid patch format"
+                }),
+                &ctx,
+            )
+            .await;
+
+        assert_eq!(result.status, ToolStatus::Error);
+        assert!(result.error.unwrap().contains("No file changes found"));
+    }
+
+    // ==================== Diff Parsing Tests ====================
+
+    #[test]
+    fn test_parse_unified_diff_new_file() {
+        let patch = r#"--- /dev/null
++++ b/new_file.txt
+@@ -0,0 +1,3 @@
++line 1
++line 2
++line 3"#;
+
+        let hunks = parse_unified_diff(patch).unwrap();
+        assert_eq!(hunks.len(), 1);
+        assert_eq!(hunks[0].file_path, "new_file.txt");
+        assert!(hunks[0].is_new_file);
+        assert!(!hunks[0].is_delete);
+        assert_eq!(hunks[0].new_content, vec!["line 1", "line 2", "line 3"]);
+    }
+
+    #[test]
+    fn test_parse_unified_diff_delete_file() {
+        let patch = r#"--- a/old_file.txt
++++ /dev/null
+@@ -1,3 +0,0 @@
+-line 1
+-line 2
+-line 3"#;
+
+        let hunks = parse_unified_diff(patch).unwrap();
+        assert_eq!(hunks.len(), 1);
+        assert_eq!(hunks[0].file_path, "old_file.txt");
+        assert!(!hunks[0].is_new_file);
+        assert!(hunks[0].is_delete);
+        assert_eq!(hunks[0].old_content, vec!["line 1", "line 2", "line 3"]);
+    }
+
+    #[test]
+    fn test_parse_unified_diff_modify_file() {
+        let patch = r#"--- a/file.txt
++++ b/file.txt
+@@ -1,3 +1,3 @@
+ context line
+-old line
++new line
+ another context"#;
+
+        let hunks = parse_unified_diff(patch).unwrap();
+        assert_eq!(hunks.len(), 1);
+        assert_eq!(hunks[0].file_path, "file.txt");
+        assert!(!hunks[0].is_new_file);
+        assert!(!hunks[0].is_delete);
+        assert!(hunks[0].old_content.contains(&"old line".to_string()));
+        assert!(hunks[0].new_content.contains(&"new line".to_string()));
+    }
+
+    #[test]
+    fn test_parse_unified_diff_multiple_files() {
+        let patch = r#"--- a/file1.txt
++++ b/file1.txt
+@@ -1 +1 @@
+-old
++new
+--- a/file2.txt
++++ b/file2.txt
+@@ -1 +1 @@
+-foo
++bar"#;
+
+        let hunks = parse_unified_diff(patch).unwrap();
+        assert_eq!(hunks.len(), 2);
+        assert_eq!(hunks[0].file_path, "file1.txt");
+        assert_eq!(hunks[1].file_path, "file2.txt");
+    }
+
+    #[test]
+    fn test_parse_unified_diff_strips_a_b_prefixes() {
+        let patch = r#"--- a/src/main.rs
++++ b/src/main.rs
+@@ -1 +1 @@
+-old
++new"#;
+
+        let hunks = parse_unified_diff(patch).unwrap();
+        assert_eq!(hunks[0].file_path, "src/main.rs");
+    }
+
+    // ==================== Apply Patch Tests ====================
+
+    #[tokio::test]
+    async fn test_patch_create_new_file() {
+        let dir = TempDir::new().unwrap();
+        let tool = PatchTool;
+        let ctx = create_test_context(dir.path().to_path_buf());
+
+        let patch = r#"--- /dev/null
++++ b/newfile.txt
+@@ -0,0 +1,2 @@
++Hello
++World"#;
+
+        let result = tool
+            .execute(
+                json!({
+                    "patchText": patch
+                }),
+                &ctx,
+            )
+            .await;
+
+        assert_eq!(result.status, ToolStatus::Completed);
+
+        let file_path = dir.path().join("newfile.txt");
+        assert!(file_path.exists());
+        let content = std::fs::read_to_string(&file_path).unwrap();
+        assert!(content.contains("Hello"));
+        assert!(content.contains("World"));
+    }
+
+    #[tokio::test]
+    async fn test_patch_delete_file() {
+        let dir = TempDir::new().unwrap();
+        let file_path = dir.path().join("to_delete.txt");
+        std::fs::write(&file_path, "content").unwrap();
+        assert!(file_path.exists());
+
+        let tool = PatchTool;
+        let ctx = create_test_context(dir.path().to_path_buf());
+
+        let patch = r#"--- a/to_delete.txt
++++ /dev/null
+@@ -1 +0,0 @@
+-content"#;
+
+        let result = tool
+            .execute(
+                json!({
+                    "patchText": patch
+                }),
+                &ctx,
+            )
+            .await;
+
+        assert_eq!(result.status, ToolStatus::Completed);
+        assert!(!file_path.exists());
+    }
+
+    #[tokio::test]
+    async fn test_patch_modify_file() {
+        let dir = TempDir::new().unwrap();
+        let file_path = dir.path().join("modify.txt");
+        std::fs::write(&file_path, "line 1\nold line\nline 3").unwrap();
+
+        let tool = PatchTool;
+        let ctx = create_test_context(dir.path().to_path_buf());
+
+        let patch = r#"--- a/modify.txt
++++ b/modify.txt
+@@ -1,3 +1,3 @@
+ line 1
+-old line
++new line
+ line 3"#;
+
+        let result = tool
+            .execute(
+                json!({
+                    "patchText": patch
+                }),
+                &ctx,
+            )
+            .await;
+
+        assert_eq!(result.status, ToolStatus::Completed);
+        let content = std::fs::read_to_string(&file_path).unwrap();
+        assert!(content.contains("new line"));
+        assert!(!content.contains("old line"));
+    }
+
+    #[tokio::test]
+    async fn test_patch_creates_parent_directories() {
+        let dir = TempDir::new().unwrap();
+        let tool = PatchTool;
+        let ctx = create_test_context(dir.path().to_path_buf());
+
+        let patch = r#"--- /dev/null
++++ b/deep/nested/dir/file.txt
+@@ -0,0 +1 @@
++content"#;
+
+        let result = tool
+            .execute(
+                json!({
+                    "patchText": patch
+                }),
+                &ctx,
+            )
+            .await;
+
+        assert_eq!(result.status, ToolStatus::Completed);
+        let file_path = dir.path().join("deep/nested/dir/file.txt");
+        assert!(file_path.exists());
+    }
+
+    #[tokio::test]
+    async fn test_patch_returns_metadata() {
+        let dir = TempDir::new().unwrap();
+        let tool = PatchTool;
+        let ctx = create_test_context(dir.path().to_path_buf());
+
+        let patch = r#"--- /dev/null
++++ b/file.txt
+@@ -0,0 +1 @@
++content"#;
+
+        let result = tool
+            .execute(
+                json!({
+                    "patchText": patch
+                }),
+                &ctx,
+            )
+            .await;
+
+        assert_eq!(result.status, ToolStatus::Completed);
+        assert_eq!(result.metadata["filesChanged"], 1);
+        assert!(result.metadata["files"].as_array().is_some());
+    }
+
+    #[tokio::test]
+    async fn test_patch_file_not_found_for_modify() {
+        let dir = TempDir::new().unwrap();
+        let tool = PatchTool;
+        let ctx = create_test_context(dir.path().to_path_buf());
+
+        let patch = r#"--- a/nonexistent.txt
++++ b/nonexistent.txt
+@@ -1 +1 @@
+-old
++new"#;
+
+        let result = tool
+            .execute(
+                json!({
+                    "patchText": patch
+                }),
+                &ctx,
+            )
+            .await;
+
+        assert_eq!(result.status, ToolStatus::Error);
+        assert!(result.metadata["filesFailed"].as_i64().unwrap() > 0);
+    }
+
+    // ==================== Line Matching Tests ====================
+
+    #[test]
+    fn test_find_and_replace_lines_exact_match() {
+        let current = vec!["line 1", "old", "line 3"];
+        let old = vec!["old"];
+        let new = vec!["new".to_string()];
+
+        let result = find_and_replace_lines(&current, &old, &new);
+        assert!(result.is_some());
+        let result = result.unwrap();
+        assert!(result.contains("new"));
+        assert!(!result.contains("old"));
+    }
+
+    #[test]
+    fn test_find_and_replace_lines_multiple_lines() {
+        let current = vec!["a", "b", "c", "d"];
+        let old = vec!["b", "c"];
+        let new = vec!["x".to_string(), "y".to_string(), "z".to_string()];
+
+        let result = find_and_replace_lines(&current, &old, &new);
+        assert!(result.is_some());
+        let result = result.unwrap();
+        assert_eq!(result, "a\nx\ny\nz\nd");
+    }
+
+    #[test]
+    fn test_find_and_replace_lines_not_found() {
+        let current = vec!["a", "b", "c"];
+        let old = vec!["x", "y"];
+        let new = vec!["z".to_string()];
+
+        let result = find_and_replace_lines(&current, &old, &new);
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_find_and_replace_lines_empty_old() {
+        let current = vec!["a", "b"];
+        let old: Vec<&str> = vec![];
+        let new = vec!["c".to_string()];
+
+        let result = find_and_replace_lines(&current, &old, &new);
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_find_and_replace_lines_whitespace_tolerance() {
+        let current = vec!["  line 1  ", "old", "line 3"];
+        let old = vec!["line 1"];
+        let new = vec!["replaced".to_string()];
+
+        // Should match trimmed content
+        let result = find_and_replace_lines(&current, &old, &new);
+        assert!(result.is_some());
+    }
+}
