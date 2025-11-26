@@ -44,9 +44,6 @@ fn thinking_purple(s: &str) -> ColoredString {
     s.truecolor(147, 112, 219) // Medium purple for thinking - softer, contemplative
 }
 
-fn dim_purple(s: &str) -> ColoredString {
-    s.truecolor(120, 100, 160) // Dimmed purple for secondary/meta info
-}
 use crow_core::{
     agent::{AgentExecutor, ExecutionEvent},
     global::GlobalPaths,
@@ -1756,6 +1753,14 @@ impl StreamRenderer {
         self.end_current_output();
 
         if self.mode == OutputMode::Json {
+            // Extract cost and token usage from response
+            let (cost, tokens_in, tokens_out) = match &response.info {
+                Message::Assistant { cost, tokens, .. } => (*cost, tokens.input, tokens.output),
+                _ => (0.0, 0, 0),
+            };
+            let context_limit: u64 = 128_000;
+            let context_pct = ((tokens_in + tokens_out) as f64 / context_limit as f64) * 100.0;
+
             // JSON output
             let output = serde_json::json!({
                 "session_id": session_id,
@@ -1780,10 +1785,35 @@ impl StreamRenderer {
                     "response_tokens": self.text_tokens,
                     "tool_calls": self.tools.len(),
                     "duration_ms": elapsed.as_millis(),
+                },
+                "usage": {
+                    "cost": cost,
+                    "tokens_in": tokens_in,
+                    "tokens_out": tokens_out,
+                    "context_limit": context_limit,
+                    "context_pct": context_pct,
                 }
             });
             println!("{}", serde_json::to_string_pretty(&output).unwrap());
         } else if self.mode == OutputMode::Verbose {
+            // Extract cost and token usage from response
+            let (cost, tokens_in, tokens_out) = match &response.info {
+                Message::Assistant { cost, tokens, .. } => (*cost, tokens.input, tokens.output),
+                _ => (0.0, 0, 0),
+            };
+
+            // Calculate context usage (assume 128k context window for now)
+            let context_limit: u64 = 128_000;
+            let total_tokens = tokens_in + tokens_out;
+            let context_pct = (total_tokens as f64 / context_limit as f64) * 100.0;
+
+            // Format cost nicely
+            let cost_str = if cost < 0.01 {
+                format!("${:.4}", cost)
+            } else {
+                format!("${:.2}", cost)
+            };
+
             // Verbose stats
             eprintln!();
             eprintln!(
@@ -1797,6 +1827,15 @@ impl StreamRenderer {
                 light_purple(&format!("~{}", self.text_tokens)),
                 mint_green(&self.tools.len().to_string()),
                 elapsed.as_secs_f64()
+            );
+            eprintln!(
+                "{} {} | {} {}k/{}k ({:.1}%)",
+                "Cost:".dimmed(),
+                cost_str.green(),
+                "Context:".dimmed(),
+                (tokens_in / 1000),
+                context_limit / 1000,
+                context_pct
             );
             eprintln!("{} {}", "Session:".dimmed(), session_id.yellow());
             eprintln!(
@@ -1918,7 +1957,9 @@ async fn get_messages(session_id: &str) {
                                 );
                                 println!(
                                     "   Input: {}",
-                                    serde_json::to_string(input).unwrap_or_default().cyan()
+                                    serde_json::to_string_pretty(input)
+                                        .unwrap_or_default()
+                                        .cyan()
                                 );
                                 println!("{}", mint_green("✓ RESULT:").bold());
                                 for line in output.lines().take(10) {
@@ -2126,17 +2167,18 @@ fn render_edit(input: &serde_json::Value, output: &str, duration_ms: Option<u64>
         .and_then(|v| v.as_str())
         .unwrap_or("???");
 
-    // Try to extract just the filename
-    let filename = std::path::Path::new(file_path)
-        .file_name()
-        .and_then(|n| n.to_str())
-        .unwrap_or(file_path);
-
     eprintln!(
         "{} {} {}",
         purple_bold("📝 edit"),
-        light_purple(&format!("({})", filename)),
+        light_purple(file_path),
         format!("({}ms)", duration_ms.unwrap_or(0)).dimmed()
+    );
+    eprintln!(
+        "   {} {}",
+        "→".cyan().bold(),
+        serde_json::to_string_pretty(input)
+            .unwrap_or_default()
+            .cyan()
     );
 
     // Try to parse output as JSON for structured info
@@ -2151,37 +2193,57 @@ fn render_edit(input: &serde_json::Value, output: &str, duration_ms: Option<u64>
             .unwrap_or(0);
 
         eprintln!(
-            "   {} {}, {} {}",
-            mint_green(&format!("+{}", additions)),
-            "additions".dimmed(),
-            format!("-{}", deletions).red(),
-            "deletions".dimmed()
+            "   {} {} {}  {} {}",
+            "←".yellow().bold(),
+            mint_green(&format!("+{}", additions)).bold(),
+            "added".dimmed(),
+            format!("-{}", deletions).red().bold(),
+            "removed".dimmed()
         );
 
-        // Show diff if available
+        // Show diff if available - full unified diff style
         if let Some(diff) = edit_output.get("diff").and_then(|v| v.as_str()) {
-            eprintln!("   {}", purple("───"));
-            for line in diff.lines().take(20) {
-                if line.starts_with('+') && !line.starts_with("+++") {
-                    eprintln!("   {}", mint_green(line));
-                } else if line.starts_with('-') && !line.starts_with("---") {
-                    eprintln!("   {}", line.red());
+            eprintln!(
+                "{}",
+                "   ┌────────────────────────────────────────────────────────────".dimmed()
+            );
+            for line in diff.lines() {
+                if line.starts_with("+++") || line.starts_with("---") {
+                    // File headers
+                    eprintln!("   │ {}", light_purple(line).bold());
                 } else if line.starts_with("@@") {
-                    eprintln!("   {}", light_purple(line));
+                    // Hunk headers
+                    eprintln!("   │ {}", purple(line));
+                } else if line.starts_with('+') {
+                    // Additions - bright green background effect
+                    eprintln!(
+                        "   │ {}",
+                        line.truecolor(150, 255, 150).on_truecolor(0, 50, 0)
+                    );
+                } else if line.starts_with('-') {
+                    // Deletions - red background effect
+                    eprintln!(
+                        "   │ {}",
+                        line.truecolor(255, 150, 150).on_truecolor(50, 0, 0)
+                    );
                 } else {
-                    eprintln!("   {}", line.dimmed());
+                    // Context lines
+                    eprintln!("   │ {}", line.dimmed());
                 }
             }
+            eprintln!(
+                "{}",
+                "   └────────────────────────────────────────────────────────────".dimmed()
+            );
         }
     } else {
-        // Plain text output
-        eprintln!("   {}", file_path.dimmed());
-        for line in output.lines().take(10) {
+        // Plain text output - show full
+        for line in output.lines() {
             eprintln!("   {}", soft_green(line));
         }
     }
 
-    eprintln!("   {}", mint_green("✓"));
+    eprintln!("   {}", mint_green("✓ saved"));
 }
 
 /// 📖 read/file_read - File reading
@@ -2191,11 +2253,6 @@ fn render_read(input: &serde_json::Value, output: &str, duration_ms: Option<u64>
         .or_else(|| input.get("filePath"))
         .and_then(|v| v.as_str())
         .unwrap_or("???");
-
-    let filename = std::path::Path::new(file_path)
-        .file_name()
-        .and_then(|n| n.to_str())
-        .unwrap_or(file_path);
 
     // Parse JSON output to get content
     let content = if let Ok(json) = serde_json::from_str::<serde_json::Value>(output) {
@@ -2209,60 +2266,49 @@ fn render_read(input: &serde_json::Value, output: &str, duration_ms: Option<u64>
 
     let line_count = content.lines().count();
 
+    // Tool call header
     eprintln!(
         "{} {} {}",
         purple_bold("📖 read"),
-        light_purple(&format!("({})", filename)),
+        light_purple(file_path),
         format!("({}ms)", duration_ms.unwrap_or(0)).dimmed()
     );
+    eprintln!(
+        "   {} {}",
+        "→".cyan().bold(),
+        serde_json::to_string_pretty(input)
+            .unwrap_or_default()
+            .cyan()
+    );
 
-    // Show preview
-    let preview_lines = 8;
-    for line in content.lines().take(preview_lines) {
-        let truncated = if line.len() > 80 {
-            format!("{}...", &line[..77])
-        } else {
-            line.to_string()
-        };
-        eprintln!("   {}", truncated.dimmed());
-    }
-
-    if line_count > preview_lines {
-        eprintln!("   {} ({} total lines)", "...".dimmed(), line_count);
+    // Tool response
+    eprintln!("   {} {} lines", "←".yellow().bold(), line_count);
+    for line in content.lines() {
+        eprintln!("   │ {}", line.yellow());
     }
 }
 
 /// 🔍 grep - Search results
 fn render_grep(input: &serde_json::Value, output: &str, duration_ms: Option<u64>) {
-    let pattern = input
-        .get("pattern")
-        .and_then(|v| v.as_str())
-        .unwrap_or("???");
-    let path = input.get("path").and_then(|v| v.as_str());
-
     let match_count = output.lines().filter(|l| !l.is_empty()).count();
 
     eprintln!(
-        "{} {} {}",
+        "{} {}",
         purple_bold("🔍 grep"),
-        light_purple(&format!("\"{}\"", pattern)),
         format!("({}ms)", duration_ms.unwrap_or(0)).dimmed()
     );
-
-    if let Some(p) = path {
-        eprintln!("   {} {}", "in:".dimmed(), p.dimmed());
-    }
-
     eprintln!(
         "   {} {}",
-        mint_green(&format!("{}", match_count)).bold(),
-        "matches".dimmed()
+        "→".cyan().bold(),
+        serde_json::to_string_pretty(input)
+            .unwrap_or_default()
+            .cyan()
     );
 
-    // Show matches with context
-    for line in output.lines().take(10) {
+    // Tool response
+    eprintln!("   {} {} matches", "←".yellow().bold(), match_count);
+    for line in output.lines() {
         if line.contains(':') {
-            // Format: file:line:content
             let parts: Vec<&str> = line.splitn(3, ':').collect();
             if parts.len() >= 2 {
                 let file = std::path::Path::new(parts[0])
@@ -2270,52 +2316,42 @@ fn render_grep(input: &serde_json::Value, output: &str, duration_ms: Option<u64>
                     .and_then(|n| n.to_str())
                     .unwrap_or(parts[0]);
                 let rest = parts[1..].join(":");
-                eprintln!("   {}:{}", purple(file), soft_green(&rest));
+                eprintln!("   │ {}:{}", purple(file), rest.yellow());
             } else {
-                eprintln!("   {}", soft_green(line));
+                eprintln!("   │ {}", line.yellow());
             }
         } else {
-            eprintln!("   {}", soft_green(line));
+            eprintln!("   │ {}", line.yellow());
         }
-    }
-
-    if match_count > 10 {
-        eprintln!("   {} ({} more)", "...".dimmed(), match_count - 10);
     }
 }
 
 /// 📁 list/glob - Directory listing
 fn render_list(input: &serde_json::Value, output: &str, duration_ms: Option<u64>) {
-    let path = input.get("path").and_then(|v| v.as_str()).unwrap_or(".");
-    let pattern = input.get("pattern").and_then(|v| v.as_str());
-
     let item_count = output.lines().filter(|l| !l.is_empty()).count();
 
     eprintln!(
-        "{} {} {}",
+        "{} {}",
         purple_bold("📁 list"),
-        light_purple(path),
         format!("({}ms)", duration_ms.unwrap_or(0)).dimmed()
     );
+    eprintln!(
+        "   {} {}",
+        "→".cyan().bold(),
+        serde_json::to_string_pretty(input)
+            .unwrap_or_default()
+            .cyan()
+    );
 
-    if let Some(p) = pattern {
-        eprintln!("   {} {}", "pattern:".dimmed(), light_purple(p));
-    }
-
-    eprintln!("   {} items", mint_green(&item_count.to_string()));
-
-    // Show items
-    for line in output.lines().take(20) {
+    // Tool response
+    eprintln!("   {} {} items", "←".yellow().bold(), item_count);
+    for line in output.lines() {
         let trimmed = line.trim();
         if trimmed.ends_with('/') {
-            eprintln!("   {}", purple(trimmed)); // Directories in purple
+            eprintln!("   │ {}", purple(trimmed));
         } else {
-            eprintln!("   {}", trimmed.dimmed());
+            eprintln!("   │ {}", trimmed.yellow());
         }
-    }
-
-    if item_count > 20 {
-        eprintln!("   {} ({} more)", "...".dimmed(), item_count - 20);
     }
 }
 
@@ -2350,8 +2386,8 @@ fn render_todoread(output: &str, duration_ms: Option<u64>) {
             }
         }
     } else {
-        // Plain text
-        for line in output.lines().take(10) {
+        // Plain text - show all
+        for line in output.lines() {
             eprintln!("   {}", line.dimmed());
         }
     }
@@ -2391,73 +2427,63 @@ fn render_todowrite(input: &serde_json::Value, duration_ms: Option<u64>) {
 
 /// 🌐 webfetch - URL fetching
 fn render_webfetch(input: &serde_json::Value, output: &str, duration_ms: Option<u64>) {
-    let url = input.get("url").and_then(|v| v.as_str()).unwrap_or("???");
-
     eprintln!(
         "{} {}",
         purple_bold("🌐 webfetch"),
         format!("({}ms)", duration_ms.unwrap_or(0)).dimmed()
     );
-
-    eprintln!("   {}", light_purple(url).underline());
+    eprintln!(
+        "   {} {}",
+        "→".cyan().bold(),
+        serde_json::to_string_pretty(input)
+            .unwrap_or_default()
+            .cyan()
+    );
 
     let char_count = output.len();
     let line_count = output.lines().count();
 
+    // Tool response
     eprintln!(
-        "   {} chars, {} lines",
-        mint_green(&char_count.to_string()),
+        "   {} {} chars, {} lines",
+        "←".yellow().bold(),
+        char_count,
         line_count
     );
-
-    // Show preview
-    for line in output.lines().take(5) {
-        let truncated = if line.len() > 60 {
-            format!("{}...", &line[..57])
-        } else {
-            line.to_string()
-        };
-        eprintln!("   {}", truncated.dimmed());
-    }
-
-    if line_count > 5 {
-        eprintln!("   {}", "...".dimmed());
+    for line in output.lines() {
+        eprintln!("   │ {}", line.yellow());
     }
 }
 
 /// 🔎 websearch - Web search
 fn render_websearch(input: &serde_json::Value, output: &str, duration_ms: Option<u64>) {
-    let query = input.get("query").and_then(|v| v.as_str()).unwrap_or("???");
-
     eprintln!(
         "{} {}",
         purple_bold("🔎 websearch"),
         format!("({}ms)", duration_ms.unwrap_or(0)).dimmed()
     );
+    eprintln!(
+        "   {} {}",
+        "→".cyan().bold(),
+        serde_json::to_string_pretty(input)
+            .unwrap_or_default()
+            .cyan()
+    );
 
-    eprintln!("   {} \"{}\"", "query:".dimmed(), light_purple(query));
-
-    // Try to show result count
+    // Tool response
     let result_lines = output.lines().filter(|l| !l.is_empty()).count();
-    eprintln!("   {} results", mint_green(&result_lines.to_string()));
-
-    // Show preview
-    for line in output.lines().take(5) {
-        eprintln!("   {}", line.dimmed());
+    eprintln!("   {} {} results", "←".yellow().bold(), result_lines);
+    for line in output.lines() {
+        eprintln!("   │ {}", line.yellow());
     }
 }
 
 /// 🤖 task - Subagent execution
 fn render_task(input: &serde_json::Value, output: &str, duration_ms: Option<u64>) {
-    let description = input
-        .get("description")
-        .and_then(|v| v.as_str())
-        .unwrap_or("task");
     let subagent_type = input
         .get("subagent_type")
         .and_then(|v| v.as_str())
         .unwrap_or("unknown");
-    let prompt = input.get("prompt").and_then(|v| v.as_str()).unwrap_or("");
 
     eprintln!(
         "{} {} {}",
@@ -2465,33 +2491,19 @@ fn render_task(input: &serde_json::Value, output: &str, duration_ms: Option<u64>
         light_purple(&format!("[{}]", subagent_type)),
         format!("({}ms)", duration_ms.unwrap_or(0)).dimmed()
     );
+    eprintln!(
+        "   {} {}",
+        "→".cyan().bold(),
+        serde_json::to_string_pretty(input)
+            .unwrap_or_default()
+            .cyan()
+    );
 
-    eprintln!("   {} {}", "description:".dimmed(), description.white());
-
-    // Show prompt (truncated)
-    let prompt_preview = if prompt.len() > 100 {
-        format!("{}...", &prompt[..97])
-    } else {
-        prompt.to_string()
-    };
-    eprintln!("   {} {}", "prompt:".dimmed(), prompt_preview.dimmed());
-
-    // Show result
-    eprintln!("   {}", purple("─── subagent result ───"));
-    let lines: Vec<&str> = output.lines().collect();
-    let show_lines = lines.len().min(20);
-    for line in lines.iter().take(show_lines) {
-        eprintln!("   {}", soft_green(line));
+    // Tool response
+    eprintln!("   {} subagent result:", "←".yellow().bold());
+    for line in output.lines() {
+        eprintln!("   │ {}", line.yellow());
     }
-    if lines.len() > show_lines {
-        eprintln!(
-            "   {} ({} more lines)",
-            "...".dimmed(),
-            lines.len() - show_lines
-        );
-    }
-
-    eprintln!("   {}", mint_green("✓"));
 }
 
 /// Generic fallback renderer
@@ -2508,29 +2520,17 @@ fn render_generic(
         if !title.is_empty() { title } else { "" },
         format!("({}ms)", duration_ms.unwrap_or(0)).dimmed()
     );
-
-    // Show input args for debugging
     eprintln!(
         "   {} {}",
-        "input:".dimmed(),
-        serde_json::to_string(input).unwrap_or_default().cyan()
+        "→".cyan().bold(),
+        serde_json::to_string_pretty(input)
+            .unwrap_or_default()
+            .cyan()
     );
 
-    // Show output (truncated)
-    let lines: Vec<&str> = output.lines().collect();
-    let show_lines = lines.len().min(15);
-
-    for line in lines.iter().take(show_lines) {
-        eprintln!("   {}", soft_green(line));
+    // Tool response
+    eprintln!("   {}", "←".yellow().bold());
+    for line in output.lines() {
+        eprintln!("   │ {}", line.yellow());
     }
-
-    if lines.len() > show_lines {
-        eprintln!(
-            "   {} ({} more lines)",
-            "...".dimmed(),
-            lines.len() - show_lines
-        );
-    }
-
-    eprintln!("   {}", mint_green("✓"));
 }

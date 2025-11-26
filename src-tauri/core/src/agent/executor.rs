@@ -6,7 +6,7 @@
 //! 4. Executes tools (with permission checking)
 //! 5. Loops until complete
 
-use crate::logging::log_agent_execution;
+use crate::logging::{log_agent_execution, log_tool_call};
 use crate::{
     agent::{AgentInfo, AgentRegistry, SystemPromptBuilder},
     providers::ProviderClient,
@@ -289,6 +289,28 @@ impl AgentExecutor {
                         "Tool {} completed: status={:?}",
                         tool_name,
                         tool_result.status
+                    );
+
+                    let end_time = std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .unwrap()
+                        .as_millis() as u64;
+                    let duration_ms = end_time - now;
+
+                    // Log tool call to JSONL
+                    log_tool_call(
+                        session_id,
+                        &message_id,
+                        tool_name,
+                        &tool_call.id,
+                        args.clone(),
+                        Some(tool_result.output.clone()),
+                        if tool_result.status == crate::tools::ToolStatus::Error {
+                            Some(tool_result.output.clone())
+                        } else {
+                            None
+                        },
+                        duration_ms,
                     );
 
                     let end_time = std::time::SystemTime::now()
@@ -714,6 +736,23 @@ impl AgentExecutor {
                         .duration_since(std::time::UNIX_EPOCH)
                         .unwrap()
                         .as_millis() as u64;
+                    let duration_ms = end_time - start_time;
+
+                    // Log tool call to JSONL
+                    log_tool_call(
+                        session_id,
+                        &message_id,
+                        &tool_name,
+                        &tool_id,
+                        args.clone(),
+                        Some(tool_result.output.clone()),
+                        if tool_result.status == crate::tools::ToolStatus::Error {
+                            Some(tool_result.output.clone())
+                        } else {
+                            None
+                        },
+                        duration_ms,
+                    );
 
                     // Create patch for file-modifying tools
                     if let Some(ref hash) = snapshot_hash {
