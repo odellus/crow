@@ -49,6 +49,9 @@ tracing-subscriber.workspace = true
 # Process management
 nix.workspace = true
 
+# File system utilities
+walkdir = "2"
+
 # Random (for tool IDs)
 getrandom = "0.2"
 

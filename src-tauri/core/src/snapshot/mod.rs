@@ -471,4 +471,255 @@ mod tests {
         let diff = manager.diff(&hash).await.unwrap();
         assert!(diff.contains("+line3"));
     }
+
+    #[tokio::test]
+    async fn test_snapshot_multiple_files() {
+        let work_dir = TempDir::new().unwrap();
+        let data_temp = TempDir::new().unwrap();
+        let work_tree = work_dir.path().to_path_buf();
+        let data_dir = data_temp.path().to_path_buf();
+
+        let manager = SnapshotManager::new(&data_dir, "test-multi", work_tree.clone());
+
+        // Create multiple files
+        tokio::fs::write(work_tree.join("file1.txt"), "content1")
+            .await
+            .unwrap();
+        tokio::fs::write(work_tree.join("file2.txt"), "content2")
+            .await
+            .unwrap();
+
+        // Track initial state
+        let hash = manager.track().await.unwrap().unwrap();
+
+        // Modify both files
+        tokio::fs::write(work_tree.join("file1.txt"), "modified1")
+            .await
+            .unwrap();
+        tokio::fs::write(work_tree.join("file2.txt"), "modified2")
+            .await
+            .unwrap();
+
+        // Get patch - should show both files
+        let patch = manager.patch(&hash).await.unwrap();
+        assert_eq!(patch.files.len(), 2);
+
+        // Revert
+        manager.revert(&[patch]).await.unwrap();
+
+        // Both files should be restored
+        let c1 = tokio::fs::read_to_string(work_tree.join("file1.txt"))
+            .await
+            .unwrap();
+        let c2 = tokio::fs::read_to_string(work_tree.join("file2.txt"))
+            .await
+            .unwrap();
+        assert_eq!(c1, "content1");
+        assert_eq!(c2, "content2");
+    }
+
+    #[tokio::test]
+    async fn test_snapshot_nested_directories() {
+        let work_dir = TempDir::new().unwrap();
+        let data_temp = TempDir::new().unwrap();
+        let work_tree = work_dir.path().to_path_buf();
+        let data_dir = data_temp.path().to_path_buf();
+
+        let manager = SnapshotManager::new(&data_dir, "test-nested", work_tree.clone());
+
+        // Create nested structure
+        let nested_dir = work_tree.join("src").join("components");
+        tokio::fs::create_dir_all(&nested_dir).await.unwrap();
+        tokio::fs::write(
+            nested_dir.join("Button.tsx"),
+            "export const Button = () => <button/>;",
+        )
+        .await
+        .unwrap();
+
+        // Track
+        let hash = manager.track().await.unwrap().unwrap();
+
+        // Modify nested file
+        tokio::fs::write(
+            nested_dir.join("Button.tsx"),
+            "export const Button = () => <button className='btn'/>;",
+        )
+        .await
+        .unwrap();
+
+        // Patch should find nested file
+        let patch = manager.patch(&hash).await.unwrap();
+        assert_eq!(patch.files.len(), 1);
+        assert!(patch.files[0].to_string_lossy().contains("Button.tsx"));
+
+        // Revert
+        manager.revert(&[patch]).await.unwrap();
+
+        let content = tokio::fs::read_to_string(nested_dir.join("Button.tsx"))
+            .await
+            .unwrap();
+        assert_eq!(content, "export const Button = () => <button/>;");
+    }
+
+    #[tokio::test]
+    async fn test_snapshot_restore_full() {
+        let work_dir = TempDir::new().unwrap();
+        let data_temp = TempDir::new().unwrap();
+        let work_tree = work_dir.path().to_path_buf();
+        let data_dir = data_temp.path().to_path_buf();
+
+        let manager = SnapshotManager::new(&data_dir, "test-restore", work_tree.clone());
+
+        // Create initial state
+        tokio::fs::write(work_tree.join("keep.txt"), "keep me")
+            .await
+            .unwrap();
+        tokio::fs::write(work_tree.join("modify.txt"), "original")
+            .await
+            .unwrap();
+
+        // Track
+        let hash = manager.track().await.unwrap().unwrap();
+
+        // Make various changes
+        tokio::fs::write(work_tree.join("modify.txt"), "changed")
+            .await
+            .unwrap();
+        tokio::fs::write(work_tree.join("new.txt"), "new file")
+            .await
+            .unwrap();
+
+        // Full restore
+        manager.restore(&hash).await.unwrap();
+
+        // Verify restore
+        let keep = tokio::fs::read_to_string(work_tree.join("keep.txt"))
+            .await
+            .unwrap();
+        let modify = tokio::fs::read_to_string(work_tree.join("modify.txt"))
+            .await
+            .unwrap();
+
+        assert_eq!(keep, "keep me");
+        assert_eq!(modify, "original");
+        // Note: restore doesn't delete new files (only checkout-index tracked files)
+    }
+
+    #[tokio::test]
+    async fn test_snapshot_diff_full_stats() {
+        let work_dir = TempDir::new().unwrap();
+        let data_temp = TempDir::new().unwrap();
+        let work_tree = work_dir.path().to_path_buf();
+        let data_dir = data_temp.path().to_path_buf();
+
+        let manager = SnapshotManager::new(&data_dir, "test-diff-full", work_tree.clone());
+
+        // Create file
+        tokio::fs::write(
+            work_tree.join("code.rs"),
+            "fn main() {\n    println!(\"hello\");\n}\n",
+        )
+        .await
+        .unwrap();
+
+        let hash1 = manager.track().await.unwrap().unwrap();
+
+        // Modify
+        tokio::fs::write(
+            work_tree.join("code.rs"),
+            "fn main() {\n    println!(\"hello\");\n    println!(\"world\");\n}\n",
+        )
+        .await
+        .unwrap();
+
+        let hash2 = manager.track().await.unwrap().unwrap();
+
+        // Get detailed diff
+        let diffs = manager.diff_full(&hash1, &hash2).await.unwrap();
+        assert_eq!(diffs.len(), 1);
+        assert_eq!(diffs[0].file, "code.rs");
+        assert_eq!(diffs[0].additions, 1);
+        assert_eq!(diffs[0].deletions, 0);
+    }
+
+    #[tokio::test]
+    async fn test_snapshot_xdg_path_structure() {
+        let work_dir = TempDir::new().unwrap();
+        let data_temp = TempDir::new().unwrap();
+        let work_tree = work_dir.path().to_path_buf();
+        let data_dir = data_temp.path().to_path_buf();
+
+        let project_id = "proj-abc123";
+        let manager = SnapshotManager::new(&data_dir, project_id, work_tree.clone());
+
+        // Verify paths are set correctly
+        assert_eq!(manager.project_id(), project_id);
+        assert_eq!(
+            manager.snapshot_dir(),
+            data_dir.join("snapshots").join(project_id)
+        );
+
+        // Create a file and track to ensure directory is created
+        tokio::fs::write(work_tree.join("test.txt"), "test")
+            .await
+            .unwrap();
+        let _hash = manager.track().await.unwrap();
+
+        // Verify snapshot directory was created in XDG location
+        assert!(manager.snapshot_dir().exists());
+        assert!(manager.snapshot_dir().join("HEAD").exists()); // git init creates HEAD
+    }
+
+    #[tokio::test]
+    async fn test_snapshot_incremental_tracking() {
+        let work_dir = TempDir::new().unwrap();
+        let data_temp = TempDir::new().unwrap();
+        let work_tree = work_dir.path().to_path_buf();
+        let data_dir = data_temp.path().to_path_buf();
+
+        let manager = SnapshotManager::new(&data_dir, "test-incremental", work_tree.clone());
+
+        // First file
+        tokio::fs::write(work_tree.join("v1.txt"), "version 1")
+            .await
+            .unwrap();
+        let hash1 = manager.track().await.unwrap().unwrap();
+
+        // Second file (simulating another tool call)
+        tokio::fs::write(work_tree.join("v2.txt"), "version 2")
+            .await
+            .unwrap();
+        let hash2 = manager.track().await.unwrap().unwrap();
+
+        // Hashes should be different
+        assert_ne!(hash1, hash2);
+
+        // Third modification
+        tokio::fs::write(work_tree.join("v1.txt"), "version 1 modified")
+            .await
+            .unwrap();
+        let hash3 = manager.track().await.unwrap().unwrap();
+
+        assert_ne!(hash2, hash3);
+
+        // Can get diff between any two snapshots
+        let diff = manager.diff(&hash1).await.unwrap();
+        assert!(diff.contains("v2.txt") || diff.contains("v1.txt"));
+    }
+
+    #[tokio::test]
+    async fn test_snapshot_empty_directory() {
+        let work_dir = TempDir::new().unwrap();
+        let data_temp = TempDir::new().unwrap();
+        let work_tree = work_dir.path().to_path_buf();
+        let data_dir = data_temp.path().to_path_buf();
+
+        let manager = SnapshotManager::new(&data_dir, "test-empty", work_tree.clone());
+
+        // Track empty directory - should still work
+        let hash = manager.track().await.unwrap();
+        // Empty tree still has a hash (git's empty tree hash)
+        assert!(hash.is_some());
+    }
 }

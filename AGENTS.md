@@ -111,7 +111,63 @@ crow-cli messages <session-id>         # View full history with parts
 crow-cli paths                         # Show XDG storage paths
 crow-cli logs [count]                  # Show recent agent execution logs
 crow-cli prompt [agent]                # Dump full system prompt for agent
+crow-cli repl [session-id]             # Interactive REPL (for humans only!)
 ```
+
+### For AI Agents: Chained CLI Calls (NOT REPL)
+
+**IMPORTANT:** AI agents should NEVER use `crow-cli repl`. Instead, chain CLI calls:
+
+```bash
+# Create a session and capture the ID (first line of output)
+SESSION_ID=$(crow-cli new "Test Session" 2>/dev/null | head -1)
+echo "Session: $SESSION_ID"
+
+# Send messages to that session (full verbose output - see everything!)
+crow-cli chat --session "$SESSION_ID" "list files"
+
+# Continue the conversation
+crow-cli chat --session "$SESSION_ID" "now create hello.txt"
+
+# Check session history
+crow-cli messages "$SESSION_ID"
+
+# Inspect XDG storage directly
+ls -la ~/.local/share/crow/sessions/
+cat ~/.local/share/crow/sessions/${SESSION_ID}.json | jq '.title'
+cat ~/.local/share/crow/sessions/${SESSION_ID}.json | jq '.messages | length'
+```
+
+**For scripting (less preferred):** Use `--json` mode when you need structured parsing:
+```bash
+crow-cli chat --session "$SESSION_ID" --json "list files" | jq '.response'
+crow-cli chat --session "$SESSION_ID" --json "create file" | jq '.tools'
+```
+
+**Why not REPL for agents?**
+- REPL requires interactive stdin which agents can't provide reliably
+- Chained calls are explicit and debuggable
+- Can inspect XDG storage between calls
+- Full verbose output shows thinking, tools, and response
+
+### REPL Mode (For Humans Only)
+
+The REPL is for **human** interactive use:
+
+```bash
+# Start new REPL session
+crow-cli repl
+
+# Resume existing session  
+crow-cli repl ses_abc123
+```
+
+**REPL Commands:** `/exit`, `/new`, `/session`, `/help`
+
+**During Execution:**
+- **Type + Enter** - Interrupt agent and send new message
+- **Ctrl+C** - Abort execution
+- **Ctrl+D** - Exit (at prompt)
 
 ### Debugging & Verification
 ```bash
@@ -357,5 +413,9 @@ This codebase follows patterns from OpenCode (`../opencode/`):
 - [x] XDG storage persistence
 - [x] Shadow git snapshots
 - [x] Streaming with thinking tokens
-- [ ] Tauri commands (in progress)
-- [ ] Frontend migration
+- [x] Interactive REPL mode
+- [x] Type-to-interrupt during execution
+- [x] Session continuity in REPL
+- [ ] Structured trace logging (Langfuse/Phoenix style)
+- [ ] Tauri commands (pending)
+- [ ] Frontend migration (pending)

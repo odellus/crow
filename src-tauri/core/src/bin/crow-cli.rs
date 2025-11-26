@@ -1,18 +1,52 @@
 //! Crow CLI - Full observability streaming interface for agent interaction
 //!
-//! Color scheme:
+//! Color scheme (Purple + Green theme):
+//!   🟪 Purple  - Tool names, headers, branding
+//!   🟩 Green   - Success, completions, positive output
 //!   🟦 Blue    - Agent thinking/reasoning
-//!   🟩 Green   - Tool calls starting
-//!   🟨 Yellow  - Tool results
+//!   🟨 Yellow  - Warnings, in-progress states
 //!   🟥 Red     - Errors
-//!   ⬜ White   - Final response text
+//!   ⬜ White   - Response text, neutral content
 //!
 //! Usage:
 //!   crow-cli chat "your message"           - Full verbose streaming output
 //!   crow-cli chat --json "message"         - JSON output (no streaming)
 //!   crow-cli chat --quiet "message"        - Minimal output (just response)
 
-use colored::Colorize;
+use colored::{ColoredString, Colorize};
+
+// Brand colors - consistent purple/green theme
+fn purple(s: &str) -> ColoredString {
+    s.truecolor(138, 43, 226) // BlueViolet
+}
+
+fn purple_bold(s: &str) -> ColoredString {
+    s.truecolor(138, 43, 226).bold()
+}
+
+fn light_purple(s: &str) -> ColoredString {
+    s.truecolor(180, 130, 255) // Lighter purple for secondary elements
+}
+
+fn mint_green(s: &str) -> ColoredString {
+    s.truecolor(0, 255, 170) // Mint green for success
+}
+
+fn soft_green(s: &str) -> ColoredString {
+    s.truecolor(130, 220, 130) // Softer green for output
+}
+
+fn lime_green(s: &str) -> ColoredString {
+    s.truecolor(180, 255, 100) // Lime green for response text
+}
+
+fn thinking_purple(s: &str) -> ColoredString {
+    s.truecolor(147, 112, 219) // Medium purple for thinking - softer, contemplative
+}
+
+fn dim_purple(s: &str) -> ColoredString {
+    s.truecolor(120, 100, 160) // Dimmed purple for secondary/meta info
+}
 use crow_core::{
     agent::{AgentExecutor, ExecutionEvent},
     global::GlobalPaths,
@@ -76,6 +110,75 @@ async fn main() {
         "sessions" | "list" => {
             list_sessions().await;
         }
+        "session" => {
+            if args.len() < 3 {
+                eprintln!(
+                    "{}",
+                    "Usage: crow-cli session <info|history|todo> <session-id>".yellow()
+                );
+                return;
+            }
+            match args[2].as_str() {
+                "info" => {
+                    if args.len() < 4 {
+                        eprintln!("{}", "Usage: crow-cli session info <session-id>".yellow());
+                        return;
+                    }
+                    session_info(&args[3]).await;
+                }
+                "history" => {
+                    if args.len() < 4 {
+                        eprintln!(
+                            "{}",
+                            "Usage: crow-cli session history <session-id>".yellow()
+                        );
+                        return;
+                    }
+                    session_history(&args[3]).await;
+                }
+                "todo" => {
+                    if args.len() < 4 {
+                        eprintln!("{}", "Usage: crow-cli session todo <session-id>".yellow());
+                        return;
+                    }
+                    session_todo(&args[3]).await;
+                }
+                _ => {
+                    eprintln!(
+                        "{}",
+                        "Usage: crow-cli session <info|history|todo> <session-id>".yellow()
+                    );
+                }
+            }
+        }
+        "snapshot" => {
+            if args.len() < 3 {
+                eprintln!(
+                    "{}",
+                    "Usage: crow-cli snapshot <list|show|diff> [project-id]".yellow()
+                );
+                return;
+            }
+            match args[2].as_str() {
+                "list" => {
+                    snapshot_list().await;
+                }
+                "show" => {
+                    let project_id = args.get(3).map(|s| s.as_str());
+                    snapshot_show(project_id).await;
+                }
+                "diff" => {
+                    let project_id = args.get(3).map(|s| s.as_str());
+                    snapshot_diff(project_id).await;
+                }
+                _ => {
+                    eprintln!(
+                        "{}",
+                        "Usage: crow-cli snapshot <list|show|diff> [project-id]".yellow()
+                    );
+                }
+            }
+        }
         "new" => {
             let title = args.get(2).map(|s| s.as_str());
             create_session(title).await;
@@ -109,6 +212,28 @@ async fn main() {
     }
 }
 
+fn print_banner() {
+    // ASCII art banner - only shown in REPL mode
+    const BANNER: &str = r#"
+ ▄████▄   ██▀███   ▒█████   █     █░
+▒██▀ ▀█  ▓██ ▒ ██▒▒██▒  ██▒▓█░ █ ░█░
+▒▓█    ▄ ▓██ ░▄█ ▒▒██░  ██▒▒█░ █ ░█
+▒▓▓▄ ▄██▒▒██▀▀█▄  ▒██   ██░░█░ █ ░█
+▒ ▓███▀ ░░██▓ ▒██▒░ ████▓▒░░░██▒██▓
+░ ░▒ ▒  ░░ ▒▓ ░▒▓░░ ▒░▒░▒░ ░ ▓░▒ ▒
+  ░  ▒     ░▒ ░ ▒░  ░ ▒ ▒░   ▒ ░ ░
+░          ░░   ░ ░ ░ ░ ▒    ░   ░
+░ ░         ░         ░ ░      ░
+░                                   "#;
+
+    for line in BANNER.lines() {
+        if !line.is_empty() {
+            // Blue-leaning purple (more blue, no pink)
+            println!("{}", line.truecolor(100, 60, 180));
+        }
+    }
+}
+
 fn print_usage() {
     let paths = GlobalPaths::new();
     println!(
@@ -124,19 +249,37 @@ fn print_usage() {
     println!("  crow-cli chat --quiet \"msg\"         Just the final response");
     println!("  crow-cli chat --json \"msg\"          JSON output, no streaming");
     println!("  crow-cli chat --session ID \"msg\"    Send to specific session");
+    println!();
+    println!("{}", "SESSION COMMANDS:".yellow());
     println!("  crow-cli new [title]                 Create new session");
     println!("  crow-cli sessions                    List all sessions");
-    println!("  crow-cli messages <session-id>       Show messages with full history");
+    println!("  crow-cli session info <id>           Detailed session info");
+    println!("  crow-cli session history <id>        Message timeline with timestamps");
+    println!("  crow-cli session todo <id>           Todo list state for session");
+    println!("  crow-cli messages <id>               Show messages (legacy, use session history)");
+    println!();
+    println!("{}", "SNAPSHOT COMMANDS:".yellow());
+    println!("  crow-cli snapshot list               List all project snapshots");
+    println!("  crow-cli snapshot show [project]     Show snapshot details");
+    println!("  crow-cli snapshot diff [project]     Show file changes");
+    println!();
+    println!("{}", "DEBUG COMMANDS:".yellow());
     println!("  crow-cli logs [count]                Show recent agent logs");
     println!("  crow-cli prompt [agent]              Dump full system prompt");
     println!("  crow-cli paths                       Show storage paths");
     println!();
     println!("{}", "COLOR LEGEND:".yellow());
-    println!("  {}  Agent thinking/reasoning", "🟦 Blue".blue());
-    println!("  {}  Tool calls", "🟩 Green".green());
-    println!("  {}  Tool results", "🟨 Yellow".yellow());
+    println!(
+        "  {}  Tool names, headers, branding",
+        purple_bold("🟪 Purple")
+    );
+    println!(
+        "  {}  Agent thinking/reasoning",
+        thinking_purple("🔮 Thinking")
+    );
+    println!("  {}  Success, completions, output", mint_green("🟩 Green"));
+    println!("  {}  Warnings, in-progress", "🟨 Yellow".yellow());
     println!("  {}  Errors", "🟥 Red".red());
-    println!("  {}  Response text", "⬜ White".white());
     println!();
     println!("{}", "PATHS:".yellow());
     println!("  Storage: {}", paths.data.display());
@@ -221,6 +364,504 @@ fn show_logs(count: usize) {
     println!("{} {}", "Log files:".dimmed(), log.log_dir().display());
 }
 
+/// Session info - detailed view of a session
+async fn session_info(session_id: &str) {
+    let store = SessionStore::new();
+    if let Err(e) = store.init_sync() {
+        eprintln!("{}", format!("Failed to init storage: {}", e).red());
+        return;
+    }
+
+    match store.get(session_id) {
+        Ok(session) => {
+            println!("{}", "Session Info".cyan().bold());
+            println!("{}", "═".repeat(60).dimmed());
+            println!("  {} {}", "ID:".dimmed(), session.id.yellow());
+            let title = if session.title.is_empty() {
+                "(untitled)"
+            } else {
+                &session.title
+            };
+            println!("  {} {}", "Title:".dimmed(), title);
+            println!("  {} {}", "Working Dir:".dimmed(), session.directory);
+            println!("  {} {}", "Project ID:".dimmed(), session.project_id);
+
+            // Format timestamps
+            let created = chrono::DateTime::from_timestamp_millis(session.time.created as i64)
+                .map(|dt| dt.format("%Y-%m-%d %H:%M:%S").to_string())
+                .unwrap_or_else(|| "unknown".to_string());
+            let updated = chrono::DateTime::from_timestamp_millis(session.time.updated as i64)
+                .map(|dt| dt.format("%Y-%m-%d %H:%M:%S").to_string())
+                .unwrap_or_else(|| "never".to_string());
+
+            println!("  {} {}", "Created:".dimmed(), created);
+            println!("  {} {}", "Updated:".dimmed(), updated);
+
+            // Get message count
+            match store.get_messages(session_id) {
+                Ok(messages) => {
+                    let user_count = messages
+                        .iter()
+                        .filter(|m| matches!(m.info, Message::User { .. }))
+                        .count();
+                    let assistant_count = messages
+                        .iter()
+                        .filter(|m| matches!(m.info, Message::Assistant { .. }))
+                        .count();
+                    println!();
+                    println!("{}", "Messages".cyan().bold());
+                    println!("  {} {}", "Total:".dimmed(), messages.len());
+                    println!("  {} {}", "User:".dimmed(), user_count);
+                    println!("  {} {}", "Assistant:".dimmed(), assistant_count);
+
+                    // Count tool calls
+                    let tool_calls: usize = messages
+                        .iter()
+                        .flat_map(|m| m.parts.iter())
+                        .filter(|p| matches!(p, Part::Tool { .. }))
+                        .count();
+                    println!("  {} {}", "Tool Calls:".dimmed(), tool_calls);
+                }
+                Err(e) => {
+                    eprintln!("{}", format!("Failed to get messages: {}", e).red());
+                }
+            }
+
+            // XDG file location
+            let paths = GlobalPaths::new();
+            let session_file = paths
+                .data
+                .join("sessions")
+                .join(format!("{}.json", session_id));
+            println!();
+            println!("{}", "Storage".cyan().bold());
+            println!("  {} {}", "File:".dimmed(), session_file.display());
+            if session_file.exists() {
+                if let Ok(meta) = std::fs::metadata(&session_file) {
+                    println!("  {} {} bytes", "Size:".dimmed(), meta.len());
+                }
+            }
+        }
+        Err(e) => {
+            eprintln!("{}", format!("Session not found: {}", e).red());
+        }
+    }
+}
+
+/// Session history - timeline of messages with timestamps
+async fn session_history(session_id: &str) {
+    let store = SessionStore::new();
+    if let Err(e) = store.init_sync() {
+        eprintln!("{}", format!("Failed to init storage: {}", e).red());
+        return;
+    }
+
+    match store.get_messages(session_id) {
+        Ok(messages) => {
+            println!(
+                "{} {}",
+                "Session History:".cyan().bold(),
+                session_id.yellow()
+            );
+            println!("{}", "═".repeat(70).dimmed());
+
+            for msg in &messages {
+                let (role, id, created) = match &msg.info {
+                    Message::User { id, time, .. } => ("USER", id.as_str(), time.created),
+                    Message::Assistant { id, time, .. } => ("ASSISTANT", id.as_str(), time.created),
+                };
+
+                let timestamp = chrono::DateTime::from_timestamp_millis(created as i64)
+                    .map(|dt| dt.format("%H:%M:%S").to_string())
+                    .unwrap_or_else(|| "??:??:??".to_string());
+
+                let role_colored = if role == "USER" {
+                    mint_green(role).bold()
+                } else {
+                    purple_bold(role)
+                };
+
+                println!();
+                println!("{} {} {}", timestamp.dimmed(), role_colored, id.dimmed());
+
+                // Show parts summary
+                for part in &msg.parts {
+                    match part {
+                        Part::Text { text, .. } => {
+                            let preview = if text.len() > 100 {
+                                format!("{}...", &text[..100])
+                            } else {
+                                text.clone()
+                            };
+                            println!("  📝 {}", preview.replace('\n', " "));
+                        }
+                        Part::Thinking { text, .. } => {
+                            let preview = if text.len() > 80 {
+                                format!("{}...", &text[..80])
+                            } else {
+                                text.clone()
+                            };
+                            println!("  🧠 {}", preview.replace('\n', " ").dimmed());
+                        }
+                        Part::Tool { tool, state, .. } => {
+                            let status = match state {
+                                ToolState::Pending { .. } => "⏳",
+                                ToolState::Running { .. } => "🔄",
+                                ToolState::Completed { .. } => "✅",
+                                ToolState::Error { .. } => "❌",
+                            };
+                            println!("  {} {}", status, tool.cyan(),);
+                        }
+                        _ => {}
+                    }
+                }
+            }
+
+            println!();
+            println!("{}", "═".repeat(70).dimmed());
+            println!("{} messages total", messages.len());
+        }
+        Err(e) => {
+            eprintln!("{}", format!("Failed to get messages: {}", e).red());
+        }
+    }
+}
+
+/// Session todo - show todo list state for a session
+async fn session_todo(session_id: &str) {
+    let store = SessionStore::new();
+    if let Err(e) = store.init_sync() {
+        eprintln!("{}", format!("Failed to init storage: {}", e).red());
+        return;
+    }
+
+    match store.get_messages(session_id) {
+        Ok(messages) => {
+            println!(
+                "{} {}",
+                "Todo List for Session:".cyan().bold(),
+                session_id.yellow()
+            );
+            println!("{}", "═".repeat(60).dimmed());
+
+            // Find the most recent todowrite/todoread result
+            let mut last_todo_state: Option<String> = None;
+
+            for msg in &messages {
+                for part in &msg.parts {
+                    if let Part::Tool { tool, state, .. } = part {
+                        if tool == "todowrite" || tool == "todoread" {
+                            if let ToolState::Completed { output, .. } = state {
+                                last_todo_state = Some(output.to_string());
+                            }
+                        }
+                    }
+                }
+            }
+
+            match last_todo_state {
+                Some(state) => {
+                    // Try to parse as JSON and pretty print
+                    if let Ok(todos) = serde_json::from_str::<serde_json::Value>(&state) {
+                        if let Some(items) = todos.get("todos").and_then(|t| t.as_array()) {
+                            for item in items {
+                                let content =
+                                    item.get("content").and_then(|c| c.as_str()).unwrap_or("?");
+                                let status = item
+                                    .get("status")
+                                    .and_then(|s| s.as_str())
+                                    .unwrap_or("pending");
+
+                                let icon = match status {
+                                    "completed" => "✅",
+                                    "in_progress" => "🔄",
+                                    _ => "⬜",
+                                };
+
+                                let content_colored = match status {
+                                    "completed" => content.dimmed().to_string(),
+                                    "in_progress" => content.yellow().to_string(),
+                                    _ => content.to_string(),
+                                };
+
+                                println!("  {} {}", icon, content_colored);
+                            }
+                        } else {
+                            println!("{}", state);
+                        }
+                    } else {
+                        println!("{}", state);
+                    }
+                }
+                None => {
+                    println!("{}", "No todo list found in session".dimmed());
+                }
+            }
+        }
+        Err(e) => {
+            eprintln!("{}", format!("Failed to get messages: {}", e).red());
+        }
+    }
+}
+
+/// List all project snapshots
+async fn snapshot_list() {
+    let paths = GlobalPaths::new();
+    let snapshots_dir = paths.data.join("snapshots");
+
+    println!("{}", "Project Snapshots".cyan().bold());
+    println!("{}", "═".repeat(60).dimmed());
+    println!("  {} {}", "Location:".dimmed(), snapshots_dir.display());
+    println!();
+
+    if !snapshots_dir.exists() {
+        println!("{}", "No snapshots directory found".dimmed());
+        return;
+    }
+
+    match std::fs::read_dir(&snapshots_dir) {
+        Ok(entries) => {
+            let mut projects: Vec<_> = entries.filter_map(|e| e.ok()).collect();
+            projects.sort_by_key(|e| e.file_name());
+
+            if projects.is_empty() {
+                println!("{}", "No project snapshots found".dimmed());
+                return;
+            }
+
+            for entry in projects {
+                let name = entry.file_name();
+                let path = entry.path();
+
+                // Check if it's a valid git directory (bare repo - has HEAD file)
+                let has_head = path.join("HEAD").exists();
+                let has_git_subdir = path.join(".git").exists();
+                let status = if has_head || has_git_subdir {
+                    "✅"
+                } else {
+                    "⚠️"
+                };
+
+                // Get size (scan the directory itself for bare repos, or .git for normal)
+                let scan_dir = if has_head { &path } else { &path.join(".git") };
+                let size = if has_head || has_git_subdir {
+                    walkdir::WalkDir::new(scan_dir)
+                        .into_iter()
+                        .filter_map(|e| e.ok())
+                        .filter_map(|e| e.metadata().ok())
+                        .filter(|m| m.is_file())
+                        .map(|m| m.len())
+                        .sum::<u64>()
+                } else {
+                    0
+                };
+
+                let size_str = if size > 1_000_000 {
+                    format!("{:.1} MB", size as f64 / 1_000_000.0)
+                } else if size > 1_000 {
+                    format!("{:.1} KB", size as f64 / 1_000.0)
+                } else {
+                    format!("{} B", size)
+                };
+
+                println!(
+                    "  {} {} {}",
+                    status,
+                    name.to_string_lossy().yellow(),
+                    size_str.dimmed()
+                );
+            }
+        }
+        Err(e) => {
+            eprintln!("{}", format!("Failed to read snapshots: {}", e).red());
+        }
+    }
+}
+
+/// Show snapshot details for a project
+async fn snapshot_show(project_id: Option<&str>) {
+    let paths = GlobalPaths::new();
+    let snapshots_dir = paths.data.join("snapshots");
+
+    // If no project specified, use CrowStorage::project_id for current directory
+    let project_id = match project_id {
+        Some(id) => id.to_string(),
+        None => {
+            let cwd = env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+            CrowStorage::project_id(&cwd)
+        }
+    };
+
+    println!(
+        "{}",
+        format!("Looking for project: {}", project_id).dimmed()
+    );
+
+    // Find matching snapshot directory
+    let snapshot_dir = if snapshots_dir.join(&project_id).exists() {
+        snapshots_dir.join(&project_id)
+    } else {
+        // Try to find partial match
+        match std::fs::read_dir(&snapshots_dir) {
+            Ok(entries) => {
+                let found = entries
+                    .filter_map(|e| e.ok())
+                    .find(|e| e.file_name().to_string_lossy().starts_with(&project_id));
+                match found {
+                    Some(entry) => entry.path(),
+                    None => {
+                        eprintln!(
+                            "{}",
+                            format!("No snapshot found for project: {}", project_id).red()
+                        );
+                        return;
+                    }
+                }
+            }
+            Err(e) => {
+                eprintln!("{}", format!("Failed to read snapshots: {}", e).red());
+                return;
+            }
+        }
+    };
+
+    println!("{}", "Snapshot Details".cyan().bold());
+    println!("{}", "═".repeat(60).dimmed());
+    println!(
+        "  {} {}",
+        "Project:".dimmed(),
+        snapshot_dir.file_name().unwrap().to_string_lossy().yellow()
+    );
+    println!("  {} {}", "Path:".dimmed(), snapshot_dir.display());
+
+    // Detect if it's a bare repo (has HEAD) or normal repo (has .git subdir)
+    let git_dir = if snapshot_dir.join("HEAD").exists() {
+        snapshot_dir.clone() // Bare repo - the dir itself is the git dir
+    } else {
+        snapshot_dir.join(".git") // Normal repo
+    };
+
+    if git_dir.join("HEAD").exists() || git_dir.exists() {
+        // Show object count / statistics
+        println!();
+        println!("{}", "Git Object Storage".cyan().bold());
+        match std::process::Command::new("git")
+            .args([
+                "--git-dir",
+                &git_dir.to_string_lossy(),
+                "count-objects",
+                "-v",
+            ])
+            .output()
+        {
+            Ok(output) => {
+                let stats = String::from_utf8_lossy(&output.stdout);
+                for line in stats.lines() {
+                    println!("  {}", line.dimmed());
+                }
+            }
+            Err(_) => {}
+        }
+    } else {
+        println!("{}", "  No .git directory found".red());
+    }
+}
+
+/// Show diff for a project snapshot
+async fn snapshot_diff(project_id: Option<&str>) {
+    let paths = GlobalPaths::new();
+    let snapshots_dir = paths.data.join("snapshots");
+
+    // If no project specified, use CrowStorage::project_id for current directory
+    let project_id = match project_id {
+        Some(id) => id.to_string(),
+        None => {
+            let cwd = env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+            CrowStorage::project_id(&cwd)
+        }
+    };
+
+    // Find matching snapshot directory
+    let snapshot_dir = match std::fs::read_dir(&snapshots_dir) {
+        Ok(entries) => {
+            let found = entries
+                .filter_map(|e| e.ok())
+                .find(|e| e.file_name().to_string_lossy().starts_with(&project_id));
+            match found {
+                Some(entry) => entry.path(),
+                None => {
+                    eprintln!(
+                        "{}",
+                        format!("No snapshot found for project: {}", project_id).red()
+                    );
+                    return;
+                }
+            }
+        }
+        Err(e) => {
+            eprintln!("{}", format!("Failed to read snapshots: {}", e).red());
+            return;
+        }
+    };
+
+    let git_dir = snapshot_dir.join(".git");
+    if !git_dir.exists() {
+        eprintln!("{}", "No .git directory in snapshot".red());
+        return;
+    }
+
+    println!("{}", "Snapshot Diff".cyan().bold());
+    println!("{}", "═".repeat(60).dimmed());
+    println!(
+        "  {} {}",
+        "Project:".dimmed(),
+        snapshot_dir.file_name().unwrap().to_string_lossy().yellow()
+    );
+    println!();
+
+    // Show diff between first and last commit (all changes)
+    match std::process::Command::new("git")
+        .args([
+            "--git-dir",
+            &git_dir.to_string_lossy(),
+            "diff",
+            "--stat",
+            "--color=always",
+            "$(git rev-list --max-parents=0 HEAD)..HEAD",
+        ])
+        .output()
+    {
+        Ok(output) => {
+            if output.stdout.is_empty() {
+                // Try alternative: show all files changed
+                match std::process::Command::new("git")
+                    .args([
+                        "--git-dir",
+                        &git_dir.to_string_lossy(),
+                        "log",
+                        "--stat",
+                        "--oneline",
+                        "-5",
+                    ])
+                    .output()
+                {
+                    Ok(output) => {
+                        println!("{}", String::from_utf8_lossy(&output.stdout));
+                    }
+                    Err(_) => {
+                        println!("{}", "No changes to show".dimmed());
+                    }
+                }
+            } else {
+                println!("{}", String::from_utf8_lossy(&output.stdout));
+            }
+        }
+        Err(e) => {
+            eprintln!("{}", format!("Failed to get diff: {}", e).red());
+        }
+    }
+}
+
 /// Interactive REPL mode - the real developer experience
 async fn run_repl(session_id: Option<&str>) {
     use rustyline::error::ReadlineError;
@@ -273,22 +914,10 @@ async fn run_repl(session_id: Option<&str>) {
         ("moonshot", ProviderConfig::moonshot())
     };
 
-    // Print header
+    // Print banner
     println!();
-    println!(
-        "{}",
-        "═══════════════════════════════════════════════════════════════".dimmed()
-    );
-    println!(
-        "{}",
-        "  🔥 CROW REPL - Real Developers Talk to Their Code 🔥"
-            .cyan()
-            .bold()
-    );
-    println!(
-        "{}",
-        "═══════════════════════════════════════════════════════════════".dimmed()
-    );
+    print_banner();
+    println!();
     println!("{} {}", "Session:".dimmed(), session.id.yellow());
     println!(
         "{} {} {}",
@@ -358,7 +987,7 @@ async fn run_repl(session_id: Option<&str>) {
 
     // REPL loop
     loop {
-        let prompt = format!("{}", "crow> ".green().bold());
+        let prompt = format!("{}", "crow> ".truecolor(138, 43, 226).bold());
 
         match rl.readline(&prompt) {
             Ok(line) => {
@@ -970,12 +1599,12 @@ impl StreamRenderer {
 
         // Start thinking block
         if !self.in_thinking {
-            eprintln!("{}", "🟦 THINKING".blue().bold());
+            eprintln!("{}", thinking_purple("🔮 THINKING").bold());
             self.in_thinking = true;
         }
 
         // Stream thinking in blue
-        eprint!("{}", delta.blue());
+        eprint!("{}", thinking_purple(delta));
         let _ = io::stderr().flush();
     }
 
@@ -997,13 +1626,13 @@ impl StreamRenderer {
         // Start text block
         if !self.in_text {
             if self.mode == OutputMode::Verbose {
-                eprintln!("{}", "⬜ RESPONSE".white().bold());
+                eprintln!("{}", lime_green("🟢 RESPONSE").bold());
             }
             self.in_text = true;
         }
 
-        // Stream text - white/normal
-        print!("{}", delta);
+        // Stream text - lime green
+        print!("{}", lime_green(delta));
         let _ = io::stdout().flush();
     }
 
@@ -1047,14 +1676,14 @@ impl StreamRenderer {
 
                     if self.mode == OutputMode::Verbose {
                         eprintln!();
-                        eprintln!("{} {}", "🟩 TOOL CALL:".green().bold(), tool.green().bold());
+                        eprintln!("{} {}", purple_bold("🟪 TOOL CALL:"), purple_bold(tool));
                         eprintln!("{} {}", "   Call ID:".dimmed(), call_id.dimmed());
                         eprintln!(
                             "{} {}",
                             "   Input:".dimmed(),
                             serde_json::to_string_pretty(input)
                                 .unwrap_or_else(|_| input.to_string())
-                                .dimmed()
+                                .cyan()
                         );
                     }
                 }
@@ -1163,10 +1792,10 @@ impl StreamRenderer {
             );
             eprintln!(
                 "{} {} thinking, {} response | {} tool calls | {:.1}s",
-                "✓".green().bold(),
-                format!("~{}", self.thinking_tokens).blue(),
-                format!("~{}", self.text_tokens).white(),
-                self.tools.len().to_string().green(),
+                mint_green("✓").bold(),
+                thinking_purple(&format!("~{}", self.thinking_tokens)),
+                light_purple(&format!("~{}", self.text_tokens)),
+                mint_green(&self.tools.len().to_string()),
                 elapsed.as_secs_f64()
             );
             eprintln!("{} {}", "Session:".dimmed(), session_id.yellow());
@@ -1269,9 +1898,9 @@ async fn get_messages(session_id: &str) {
                             println!("{}", text);
                         }
                         Part::Thinking { text, .. } => {
-                            println!("{}", "🟦 THINKING:".blue().bold());
+                            println!("{}", thinking_purple("🔮 THINKING:").bold());
                             for line in text.lines() {
-                                println!("   {}", line.blue());
+                                println!("   {}", thinking_purple(line));
                             }
                         }
                         Part::Tool {
@@ -1283,20 +1912,20 @@ async fn get_messages(session_id: &str) {
                             ToolState::Completed { input, output, .. } => {
                                 println!(
                                     "{} {} {}",
-                                    "🟩 TOOL:".green().bold(),
-                                    tool.green(),
+                                    purple_bold("🟪 TOOL:"),
+                                    purple(tool),
                                     call_id.dimmed()
                                 );
                                 println!(
                                     "   Input: {}",
-                                    serde_json::to_string(input).unwrap_or_default().dimmed()
+                                    serde_json::to_string(input).unwrap_or_default().cyan()
                                 );
-                                println!("{}", "🟨 RESULT:".yellow().bold());
+                                println!("{}", mint_green("✓ RESULT:").bold());
                                 for line in output.lines().take(10) {
-                                    println!("   {}", line.yellow());
+                                    println!("   {}", soft_green(line));
                                 }
                                 if output.lines().count() > 10 {
-                                    println!("   {}", "...".yellow());
+                                    println!("   {}", "...".dimmed());
                                 }
                             }
                             ToolState::Error { error, .. } => {
@@ -1304,7 +1933,12 @@ async fn get_messages(session_id: &str) {
                                 println!("   {}", error.red());
                             }
                             _ => {
-                                println!("{} {} ({})", "⏳ TOOL:".yellow(), tool, call_id.dimmed());
+                                println!(
+                                    "{} {} ({})",
+                                    light_purple("⏳ TOOL:"),
+                                    purple(tool),
+                                    call_id.dimmed()
+                                );
                             }
                         },
                         _ => {}
@@ -1448,16 +2082,16 @@ fn render_bash(input: &serde_json::Value, output: &str, duration_ms: Option<u64>
 
     eprintln!(
         "{} {}",
-        "🔧 bash".cyan().bold(),
+        purple_bold("🔧 bash"),
         format!("({}ms)", duration_ms.unwrap_or(0)).dimmed()
     );
 
     // Show command
-    eprintln!("   {} {}", "$".green(), cmd.white());
+    eprintln!("   {} {}", mint_green("$"), cmd.white());
 
     // Show description if available
     if let Some(d) = desc {
-        eprintln!("   {}", d.dimmed());
+        eprintln!("   {}", light_purple(d));
     }
 
     // Show output (limited)
@@ -1465,7 +2099,7 @@ fn render_bash(input: &serde_json::Value, output: &str, duration_ms: Option<u64>
         let lines: Vec<&str> = output.lines().collect();
         let show_lines = lines.len().min(15);
         for line in lines.iter().take(show_lines) {
-            eprintln!("   {}", line.yellow());
+            eprintln!("   {}", soft_green(line));
         }
         if lines.len() > show_lines {
             eprintln!(
@@ -1480,7 +2114,7 @@ fn render_bash(input: &serde_json::Value, output: &str, duration_ms: Option<u64>
     if output.contains("error") || output.contains("Error") || output.contains("ERROR") {
         eprintln!("   {}", "⚠ may contain errors".red().dimmed());
     } else {
-        eprintln!("   {}", "✓".green());
+        eprintln!("   {}", mint_green("✓"));
     }
 }
 
@@ -1500,8 +2134,8 @@ fn render_edit(input: &serde_json::Value, output: &str, duration_ms: Option<u64>
 
     eprintln!(
         "{} {} {}",
-        "📝 edit".cyan().bold(),
-        format!("({})", filename).white(),
+        purple_bold("📝 edit"),
+        light_purple(&format!("({})", filename)),
         format!("({}ms)", duration_ms.unwrap_or(0)).dimmed()
     );
 
@@ -1518,7 +2152,7 @@ fn render_edit(input: &serde_json::Value, output: &str, duration_ms: Option<u64>
 
         eprintln!(
             "   {} {}, {} {}",
-            format!("+{}", additions).green(),
+            mint_green(&format!("+{}", additions)),
             "additions".dimmed(),
             format!("-{}", deletions).red(),
             "deletions".dimmed()
@@ -1526,14 +2160,14 @@ fn render_edit(input: &serde_json::Value, output: &str, duration_ms: Option<u64>
 
         // Show diff if available
         if let Some(diff) = edit_output.get("diff").and_then(|v| v.as_str()) {
-            eprintln!("   {}", "───".dimmed());
+            eprintln!("   {}", purple("───"));
             for line in diff.lines().take(20) {
                 if line.starts_with('+') && !line.starts_with("+++") {
-                    eprintln!("   {}", line.green());
+                    eprintln!("   {}", mint_green(line));
                 } else if line.starts_with('-') && !line.starts_with("---") {
                     eprintln!("   {}", line.red());
                 } else if line.starts_with("@@") {
-                    eprintln!("   {}", line.cyan());
+                    eprintln!("   {}", light_purple(line));
                 } else {
                     eprintln!("   {}", line.dimmed());
                 }
@@ -1543,11 +2177,11 @@ fn render_edit(input: &serde_json::Value, output: &str, duration_ms: Option<u64>
         // Plain text output
         eprintln!("   {}", file_path.dimmed());
         for line in output.lines().take(10) {
-            eprintln!("   {}", line.yellow());
+            eprintln!("   {}", soft_green(line));
         }
     }
 
-    eprintln!("   {}", "✓".green());
+    eprintln!("   {}", mint_green("✓"));
 }
 
 /// 📖 read/file_read - File reading
@@ -1577,8 +2211,8 @@ fn render_read(input: &serde_json::Value, output: &str, duration_ms: Option<u64>
 
     eprintln!(
         "{} {} {}",
-        "📖 read".cyan().bold(),
-        format!("({})", filename).white(),
+        purple_bold("📖 read"),
+        light_purple(&format!("({})", filename)),
         format!("({}ms)", duration_ms.unwrap_or(0)).dimmed()
     );
 
@@ -1610,8 +2244,8 @@ fn render_grep(input: &serde_json::Value, output: &str, duration_ms: Option<u64>
 
     eprintln!(
         "{} {} {}",
-        "🔍 grep".cyan().bold(),
-        format!("\"{}\"", pattern).yellow(),
+        purple_bold("🔍 grep"),
+        light_purple(&format!("\"{}\"", pattern)),
         format!("({}ms)", duration_ms.unwrap_or(0)).dimmed()
     );
 
@@ -1621,7 +2255,7 @@ fn render_grep(input: &serde_json::Value, output: &str, duration_ms: Option<u64>
 
     eprintln!(
         "   {} {}",
-        format!("{}", match_count).green().bold(),
+        mint_green(&format!("{}", match_count)).bold(),
         "matches".dimmed()
     );
 
@@ -1636,12 +2270,12 @@ fn render_grep(input: &serde_json::Value, output: &str, duration_ms: Option<u64>
                     .and_then(|n| n.to_str())
                     .unwrap_or(parts[0]);
                 let rest = parts[1..].join(":");
-                eprintln!("   {}:{}", file.cyan(), rest.yellow());
+                eprintln!("   {}:{}", purple(file), soft_green(&rest));
             } else {
-                eprintln!("   {}", line.yellow());
+                eprintln!("   {}", soft_green(line));
             }
         } else {
-            eprintln!("   {}", line.yellow());
+            eprintln!("   {}", soft_green(line));
         }
     }
 
@@ -1659,22 +2293,22 @@ fn render_list(input: &serde_json::Value, output: &str, duration_ms: Option<u64>
 
     eprintln!(
         "{} {} {}",
-        "📁 list".cyan().bold(),
-        path.white(),
+        purple_bold("📁 list"),
+        light_purple(path),
         format!("({}ms)", duration_ms.unwrap_or(0)).dimmed()
     );
 
     if let Some(p) = pattern {
-        eprintln!("   {} {}", "pattern:".dimmed(), p.yellow());
+        eprintln!("   {} {}", "pattern:".dimmed(), light_purple(p));
     }
 
-    eprintln!("   {} items", item_count.to_string().green());
+    eprintln!("   {} items", mint_green(&item_count.to_string()));
 
     // Show items
     for line in output.lines().take(20) {
         let trimmed = line.trim();
         if trimmed.ends_with('/') {
-            eprintln!("   {}", trimmed.blue()); // Directories in blue
+            eprintln!("   {}", purple(trimmed)); // Directories in purple
         } else {
             eprintln!("   {}", trimmed.dimmed());
         }
@@ -1689,7 +2323,7 @@ fn render_list(input: &serde_json::Value, output: &str, duration_ms: Option<u64>
 fn render_todoread(output: &str, duration_ms: Option<u64>) {
     eprintln!(
         "{} {}",
-        "📋 todoread".cyan().bold(),
+        purple_bold("📋 todoread"),
         format!("({}ms)", duration_ms.unwrap_or(0)).dimmed()
     );
 
@@ -1707,9 +2341,9 @@ fn render_todoread(output: &str, duration_ms: Option<u64>) {
                     .unwrap_or("pending");
 
                 let icon = match status {
-                    "completed" => "✓".green(),
+                    "completed" => mint_green("✓"),
                     "in_progress" => "⧗".yellow(),
-                    _ => "☐".white(),
+                    _ => light_purple("☐"),
                 };
 
                 eprintln!("   {} {}", icon, content);
@@ -1727,7 +2361,7 @@ fn render_todoread(output: &str, duration_ms: Option<u64>) {
 fn render_todowrite(input: &serde_json::Value, duration_ms: Option<u64>) {
     eprintln!(
         "{} {}",
-        "📋 todowrite".cyan().bold(),
+        purple_bold("📋 todowrite"),
         format!("({}ms)", duration_ms.unwrap_or(0)).dimmed()
     );
 
@@ -1743,16 +2377,16 @@ fn render_todowrite(input: &serde_json::Value, duration_ms: Option<u64>) {
                 .unwrap_or("pending");
 
             let icon = match status {
-                "completed" => "✓".green(),
+                "completed" => mint_green("✓"),
                 "in_progress" => "⧗".yellow(),
-                _ => "☐".white(),
+                _ => light_purple("☐"),
             };
 
             eprintln!("   {} {}", icon, content);
         }
     }
 
-    eprintln!("   {}", "✓ updated".green());
+    eprintln!("   {}", mint_green("✓ updated"));
 }
 
 /// 🌐 webfetch - URL fetching
@@ -1761,18 +2395,18 @@ fn render_webfetch(input: &serde_json::Value, output: &str, duration_ms: Option<
 
     eprintln!(
         "{} {}",
-        "🌐 webfetch".cyan().bold(),
+        purple_bold("🌐 webfetch"),
         format!("({}ms)", duration_ms.unwrap_or(0)).dimmed()
     );
 
-    eprintln!("   {}", url.blue().underline());
+    eprintln!("   {}", light_purple(url).underline());
 
     let char_count = output.len();
     let line_count = output.lines().count();
 
     eprintln!(
         "   {} chars, {} lines",
-        char_count.to_string().green(),
+        mint_green(&char_count.to_string()),
         line_count
     );
 
@@ -1797,15 +2431,15 @@ fn render_websearch(input: &serde_json::Value, output: &str, duration_ms: Option
 
     eprintln!(
         "{} {}",
-        "🔎 websearch".cyan().bold(),
+        purple_bold("🔎 websearch"),
         format!("({}ms)", duration_ms.unwrap_or(0)).dimmed()
     );
 
-    eprintln!("   {} \"{}\"", "query:".dimmed(), query.yellow());
+    eprintln!("   {} \"{}\"", "query:".dimmed(), light_purple(query));
 
     // Try to show result count
     let result_lines = output.lines().filter(|l| !l.is_empty()).count();
-    eprintln!("   {} results", result_lines.to_string().green());
+    eprintln!("   {} results", mint_green(&result_lines.to_string()));
 
     // Show preview
     for line in output.lines().take(5) {
@@ -1827,8 +2461,8 @@ fn render_task(input: &serde_json::Value, output: &str, duration_ms: Option<u64>
 
     eprintln!(
         "{} {} {}",
-        "🤖 task".magenta().bold(),
-        format!("[{}]", subagent_type).cyan(),
+        purple_bold("🤖 task"),
+        light_purple(&format!("[{}]", subagent_type)),
         format!("({}ms)", duration_ms.unwrap_or(0)).dimmed()
     );
 
@@ -1843,11 +2477,11 @@ fn render_task(input: &serde_json::Value, output: &str, duration_ms: Option<u64>
     eprintln!("   {} {}", "prompt:".dimmed(), prompt_preview.dimmed());
 
     // Show result
-    eprintln!("   {}", "─── subagent result ───".dimmed());
+    eprintln!("   {}", purple("─── subagent result ───"));
     let lines: Vec<&str> = output.lines().collect();
     let show_lines = lines.len().min(20);
     for line in lines.iter().take(show_lines) {
-        eprintln!("   {}", line.yellow());
+        eprintln!("   {}", soft_green(line));
     }
     if lines.len() > show_lines {
         eprintln!(
@@ -1857,7 +2491,7 @@ fn render_task(input: &serde_json::Value, output: &str, duration_ms: Option<u64>
         );
     }
 
-    eprintln!("   {}", "✓".green());
+    eprintln!("   {}", mint_green("✓"));
 }
 
 /// Generic fallback renderer
@@ -1870,7 +2504,7 @@ fn render_generic(
 ) {
     eprintln!(
         "{} {} {}",
-        format!("🔧 {}", tool).cyan().bold(),
+        purple_bold(&format!("🔧 {}", tool)),
         if !title.is_empty() { title } else { "" },
         format!("({}ms)", duration_ms.unwrap_or(0)).dimmed()
     );
@@ -1879,7 +2513,7 @@ fn render_generic(
     eprintln!(
         "   {} {}",
         "input:".dimmed(),
-        serde_json::to_string(input).unwrap_or_default().dimmed()
+        serde_json::to_string(input).unwrap_or_default().cyan()
     );
 
     // Show output (truncated)
@@ -1887,7 +2521,7 @@ fn render_generic(
     let show_lines = lines.len().min(15);
 
     for line in lines.iter().take(show_lines) {
-        eprintln!("   {}", line.yellow());
+        eprintln!("   {}", soft_green(line));
     }
 
     if lines.len() > show_lines {
@@ -1898,5 +2532,5 @@ fn render_generic(
         );
     }
 
-    eprintln!("   {}", "✓".green());
+    eprintln!("   {}", mint_green("✓"));
 }
