@@ -60,7 +60,6 @@ impl Tool for TodoReadTool {
     }
 
     async fn execute(&self, _input: Value, ctx: &ToolContext) -> ToolResult {
-        // Use session_id from context, NOT from LLM input (matching todowrite behavior)
         let session_id = &ctx.session_id;
 
         let todos = self.todo_write_tool.get_todos(session_id);

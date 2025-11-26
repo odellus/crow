@@ -29,6 +29,16 @@ use serde_json::json;
 use std::path::Path;
 use std::sync::Arc;
 
+/// A tool call made by an agent during execution
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AgentToolCall {
+    pub agent: String,    // "executor" or "arbiter"
+    pub tool: String,     // tool name
+    pub step: u32,        // which step this was in
+    pub duration_ms: u64, // how long it took
+    pub success: bool,    // did it succeed
+}
+
 /// Result of dual-agent execution
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DualAgentResult {
@@ -46,6 +56,14 @@ pub struct DualAgentResult {
     pub arbiter_session_id: String,
     /// The pair ID linking both sessions
     pub pair_id: String,
+    /// All tool calls made during execution (for CLI visibility)
+    pub tool_calls: Vec<AgentToolCall>,
+    /// Total cost across all LLM calls
+    pub total_cost: f64,
+    /// Total input tokens
+    pub total_input_tokens: u64,
+    /// Total output tokens
+    pub total_output_tokens: u64,
 }
 
 /// Information extracted from task_complete tool call
@@ -131,10 +149,19 @@ impl DualAgentRuntime {
         )
         .await;
 
+        // Share todo state between executor and arbiter sessions
+        tool_registry.share_todo_sessions(&executor_session.id, &arbiter_session.id);
+
         // Step 0: Send initial prompt to BOTH sessions
         // Both executor and arbiter need to know what the task is
         let initial_user_msg = self.add_user_message(&executor_session.id, initial_prompt)?;
         self.add_user_message(&arbiter_session.id, initial_prompt)?;
+
+        // Track tool calls and costs - both for agent visibility AND CLI streaming
+        let mut all_tool_calls: Vec<AgentToolCall> = vec![];
+        let mut total_cost = 0.0f64;
+        let mut total_input_tokens = 0u64;
+        let mut total_output_tokens = 0u64;
 
         for step in 1..=max_steps {
             // === EXECUTOR TURN ===
@@ -160,6 +187,18 @@ impl DualAgentRuntime {
             let executor_result = executor
                 .execute_turn(&executor_session.id, executor_agent, working_dir, vec![])
                 .await?;
+
+            // Track costs and tool calls from executor
+            if let Message::Assistant { cost, tokens, .. } = &executor_result.info {
+                total_cost += cost;
+                total_input_tokens += tokens.input;
+                total_output_tokens += tokens.output;
+            }
+            all_tool_calls.extend(self.extract_tool_calls(
+                &executor_result.parts,
+                "executor",
+                step,
+            ));
 
             // Render executor's LATEST TURN to markdown (not full session!)
             let executor_turn_markdown =
@@ -187,6 +226,14 @@ impl DualAgentRuntime {
                 .execute_turn(&arbiter_session.id, arbiter_agent, working_dir, vec![])
                 .await?;
 
+            // Track costs and tool calls from arbiter
+            if let Message::Assistant { cost, tokens, .. } = &arbiter_result.info {
+                total_cost += cost;
+                total_input_tokens += tokens.input;
+                total_output_tokens += tokens.output;
+            }
+            all_tool_calls.extend(self.extract_tool_calls(&arbiter_result.parts, "arbiter", step));
+
             // Check if arbiter called task_complete
             if let Some(completion) = self.find_task_complete(&arbiter_result.parts) {
                 // Mark sessions as complete
@@ -205,6 +252,10 @@ impl DualAgentRuntime {
                     executor_session_id: executor_session.id,
                     arbiter_session_id: arbiter_session.id,
                     pair_id,
+                    tool_calls: all_tool_calls,
+                    total_cost,
+                    total_input_tokens,
+                    total_output_tokens,
                 });
             }
 
@@ -231,6 +282,10 @@ impl DualAgentRuntime {
             executor_session_id: executor_session.id,
             arbiter_session_id: arbiter_session.id,
             pair_id,
+            tool_calls: all_tool_calls,
+            total_cost,
+            total_input_tokens,
+            total_output_tokens,
         })
     }
 
@@ -326,6 +381,38 @@ impl DualAgentRuntime {
             .ok_or_else(|| "No user message found in session".to_string())
     }
 
+    /// Extract tool calls from message parts for agent visibility
+    fn extract_tool_calls(&self, parts: &[Part], agent: &str, step: u32) -> Vec<AgentToolCall> {
+        parts
+            .iter()
+            .filter_map(|part| {
+                if let Part::Tool { tool, state, .. } = part {
+                    // Only count completed or error states (not pending/running)
+                    let (success, duration_ms) = match state {
+                        crate::types::ToolState::Completed { time, .. } => (
+                            true,
+                            time.end.unwrap_or(time.start).saturating_sub(time.start),
+                        ),
+                        crate::types::ToolState::Error { time, .. } => (
+                            false,
+                            time.end.unwrap_or(time.start).saturating_sub(time.start),
+                        ),
+                        _ => return None, // Skip pending/running
+                    };
+                    Some(AgentToolCall {
+                        agent: agent.to_string(),
+                        tool: tool.clone(),
+                        step,
+                        duration_ms,
+                        success,
+                    })
+                } else {
+                    None
+                }
+            })
+            .collect()
+    }
+
     /// Check if any part is a completed task_complete tool call
     fn find_task_complete(&self, parts: &[Part]) -> Option<TaskCompleteInfo> {
         for part in parts {
@@ -406,6 +493,16 @@ mod tests {
             executor_session_id: "ses-exec-1".to_string(),
             arbiter_session_id: "ses-arb-1".to_string(),
             pair_id: "pair-123".to_string(),
+            tool_calls: vec![AgentToolCall {
+                agent: "executor".to_string(),
+                tool: "Write".to_string(),
+                step: 1,
+                duration_ms: 50,
+                success: true,
+            }],
+            total_cost: 0.05,
+            total_input_tokens: 1000,
+            total_output_tokens: 500,
         };
 
         let json = serde_json::to_string(&result).unwrap();
@@ -416,6 +513,8 @@ mod tests {
         assert_eq!(parsed.summary, Some("Implemented feature X".to_string()));
         assert_eq!(parsed.executor_session_id, "ses-exec-1");
         assert_eq!(parsed.arbiter_session_id, "ses-arb-1");
+        assert_eq!(parsed.tool_calls.len(), 1);
+        assert_eq!(parsed.tool_calls[0].tool, "Write");
     }
 
     #[test]

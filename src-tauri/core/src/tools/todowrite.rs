@@ -1,5 +1,8 @@
 //! TodoWrite tool - manages todo lists during coding sessions
 //! Critical for agent planning and progress tracking
+//!
+//! Sibling sessions (dual-agent executor/arbiter) share the same todo list
+//! via share_sessions() which maps both session IDs to a shared key.
 
 use super::ToolContext;
 use super::{Tool, ToolResult, ToolStatus};
@@ -30,21 +33,44 @@ pub enum TodoStatus {
 
 #[derive(Clone)]
 pub struct TodoWriteTool {
-    // Store todos per session
+    // Store todos per session (or shared key for siblings)
     todos: Arc<RwLock<HashMap<String, Vec<TodoItem>>>>,
+    // Maps session_id -> shared_key for sibling sessions
+    shared_keys: Arc<RwLock<HashMap<String, String>>>,
 }
 
 impl TodoWriteTool {
     pub fn new() -> Self {
         Self {
             todos: Arc::new(RwLock::new(HashMap::new())),
+            shared_keys: Arc::new(RwLock::new(HashMap::new())),
         }
     }
 
-    pub fn get_todos(&self, session_id: &str) -> Vec<TodoItem> {
-        self.todos
+    /// Make two sessions share the same todo state (for dual-agent mode)
+    /// Both session IDs will map to the same underlying storage key
+    pub fn share_sessions(&self, session_a: &str, session_b: &str) {
+        let shared_key = session_a.to_string(); // Use first session as the shared key
+        let mut keys = self.shared_keys.write();
+        keys.insert(session_a.to_string(), shared_key.clone());
+        keys.insert(session_b.to_string(), shared_key);
+    }
+
+    /// Get the effective storage key for a session
+    /// Returns shared key if session is part of a sibling pair, otherwise session_id
+    fn get_todo_key(&self, session_id: &str) -> String {
+        self.shared_keys
             .read()
             .get(session_id)
+            .cloned()
+            .unwrap_or_else(|| session_id.to_string())
+    }
+
+    pub fn get_todos(&self, session_id: &str) -> Vec<TodoItem> {
+        let todo_key = self.get_todo_key(session_id);
+        self.todos
+            .read()
+            .get(&todo_key)
             .cloned()
             .unwrap_or_default()
     }
@@ -120,17 +146,17 @@ impl Tool for TodoWriteTool {
             }
         };
 
-        // Use session_id from context, NOT from LLM input
-        let session_id = &ctx.session_id;
+        // Use shared key for sibling sessions (dual-agent), otherwise session_id
+        let todo_key = self.get_todo_key(&ctx.session_id);
 
         // Store todos in memory
         {
             let mut todos = self.todos.write();
-            todos.insert(session_id.clone(), todo_input.todos.clone());
+            todos.insert(todo_key.clone(), todo_input.todos.clone());
         }
 
         // Persist to disk (like OpenCode does)
-        // Write to ~/.local/share/crow/storage/todo/{sessionID}.json
+        // Write to ~/.local/share/crow/storage/todo/{todo_key}.json
         if let Ok(global_paths) = std::env::var("HOME").map(|home| {
             let data_home =
                 std::env::var("XDG_DATA_HOME").unwrap_or_else(|_| format!("{}/.local/share", home));
@@ -139,7 +165,7 @@ impl Tool for TodoWriteTool {
             if let Err(e) = std::fs::create_dir_all(&global_paths) {
                 tracing::warn!("Failed to create todo storage directory: {}", e);
             } else {
-                let todo_file = global_paths.join(format!("{}.json", session_id));
+                let todo_file = global_paths.join(format!("{}.json", todo_key));
                 if let Ok(json) = serde_json::to_string_pretty(&todo_input.todos) {
                     if let Err(e) = std::fs::write(&todo_file, json) {
                         tracing::warn!("Failed to write todo file: {}", e);
@@ -160,7 +186,8 @@ impl Tool for TodoWriteTool {
             output: serde_json::to_string(&output).unwrap_or_default(),
             error: None,
             metadata: json!({
-                "session_id": session_id,
+                "session_id": ctx.session_id,
+                "todo_key": todo_key,
                 "count": output.count,
             }),
         }

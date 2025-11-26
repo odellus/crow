@@ -194,13 +194,25 @@ impl TaskTool {
                     output.push_str("The arbiter did not call task_complete. Review the executor and arbiter sessions for details.");
                 }
 
+                // Add tool calls summary to output for agent visibility
+                if !result.tool_calls.is_empty() {
+                    output.push_str("\n**Tool calls:**\n");
+                    for tc in &result.tool_calls {
+                        let status = if tc.success { "✓" } else { "✗" };
+                        output.push_str(&format!(
+                            "- {} {}/{}: {} ({}ms)\n",
+                            status, tc.agent, tc.step, tc.tool, tc.duration_ms
+                        ));
+                    }
+                }
+
                 ToolResult {
                     status: ToolStatus::Completed,
                     output,
                     error: None,
                     metadata: json!({
                         "title": task_input.description,
-                        "subagent": "dual",
+                        "subagent": "verified",
                         "completed": result.completed,
                         "steps": result.steps,
                         "executor_session_id": result.executor_session_id,
@@ -208,15 +220,19 @@ impl TaskTool {
                         "pair_id": result.pair_id,
                         "summary": result.summary,
                         "verification": result.verification,
+                        "tool_calls": result.tool_calls,
+                        "total_cost": result.total_cost,
+                        "total_input_tokens": result.total_input_tokens,
+                        "total_output_tokens": result.total_output_tokens,
                     }),
                 }
             }
             Err(e) => ToolResult {
                 status: ToolStatus::Error,
                 output: String::new(),
-                error: Some(format!("Dual-agent execution failed: {}", e)),
+                error: Some(format!("Verified agent execution failed: {}", e)),
                 metadata: json!({
-                    "subagent": "dual",
+                    "subagent": "verified",
                 }),
             },
         }
@@ -247,7 +263,7 @@ impl Tool for TaskTool {
                 },
                 "subagent_type": {
                     "type": "string",
-                    "description": "The type of specialized agent to use for this task. Use 'dual' for verified execution with executor+arbiter."
+                    "description": "The type of specialized agent to use for this task. Use 'verified' for verified execution with automatic testing and validation."
                 },
                 "max_steps": {
                     "type": "integer",

@@ -1338,8 +1338,13 @@ async fn chat_streaming(session_id: Option<&str>, message: &str, mode: OutputMod
             }
         },
         None => {
-            // Use most recent session or create new one
-            match store.list(None).ok().and_then(|s| s.first().cloned()) {
+            // Use most recent TOP-LEVEL session (no parent) or create new one
+            // Filter out subagent sessions which have parent_id set
+            match store
+                .list(None)
+                .ok()
+                .and_then(|sessions| sessions.into_iter().find(|s| s.parent_id.is_none()))
+            {
                 Some(s) => s,
                 None => store
                     .create(
@@ -1491,9 +1496,38 @@ async fn chat_streaming(session_id: Option<&str>, message: &str, mode: OutputMod
     // Stream renderer with full observability
     let mut renderer = StreamRenderer::new(mode);
 
-    // Process streaming events
-    while let Some(event) = rx.recv().await {
-        renderer.handle_event(event);
+    // Subscribe to global bus for subagent events
+    let mut bus_rx = crow_core::bus::subscribe();
+
+    // Process streaming events from both parent and subagents
+    loop {
+        tokio::select! {
+            // Parent agent events (direct channel)
+            event = rx.recv() => {
+                match event {
+                    Some(e) => renderer.handle_event(e),
+                    None => break, // Channel closed, parent done
+                }
+            }
+            // Subagent events (global bus)
+            bus_event = bus_rx.recv() => {
+                if let Ok(event) = bus_event {
+                    // Only handle MESSAGE_PART_UPDATED events from child sessions
+                    if event.event_type == crow_core::bus::events::MESSAGE_PART_UPDATED {
+                        if let Some(part) = event.properties.get("part") {
+                            // Check if this is from a different session (subagent)
+                            let event_session = part.get("session_id").and_then(|v| v.as_str());
+                            if let Some(sid) = event_session {
+                                if sid != session.id {
+                                    // This is from a subagent - render it
+                                    renderer.handle_subagent_event(&event.properties);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
     }
 
     // Wait for execution to complete
@@ -1860,6 +1894,72 @@ impl StreamRenderer {
             );
         }
         // Quiet mode - just the response which was already printed
+    }
+
+    /// Handle events from subagents (via global bus)
+    fn handle_subagent_event(&mut self, properties: &serde_json::Value) {
+        if self.mode != OutputMode::Verbose {
+            return; // Only show subagent details in verbose mode
+        }
+
+        if let Some(part) = properties.get("part") {
+            let part_type = part.get("type").and_then(|v| v.as_str()).unwrap_or("");
+            let session_id = part
+                .get("session_id")
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+
+            // Determine if this is executor or arbiter based on session title
+            // For now just show the session ID prefix
+            let agent_label = if session_id.len() > 10 {
+                &session_id[4..10] // Show partial session ID
+            } else {
+                session_id
+            };
+
+            match part_type {
+                "tool" => {
+                    let tool_name = part.get("tool").and_then(|v| v.as_str()).unwrap_or("?");
+                    if let Some(state) = part.get("state") {
+                        let state_type = state.get("type").and_then(|v| v.as_str()).unwrap_or("");
+                        if state_type == "completed" {
+                            let duration = state
+                                .get("time")
+                                .and_then(|t| {
+                                    let start = t.get("start").and_then(|v| v.as_u64())?;
+                                    let end = t.get("end").and_then(|v| v.as_u64())?;
+                                    Some(end.saturating_sub(start))
+                                })
+                                .unwrap_or(0);
+
+                            eprintln!(
+                                "   {} {} {} {}",
+                                "⤷".cyan(),
+                                format!("[{}]", agent_label).dimmed(),
+                                tool_name.yellow(),
+                                format!("({}ms)", duration).dimmed()
+                            );
+                        }
+                    }
+                }
+                "text" => {
+                    // Subagent text - could show a preview
+                    if let Some(text) = part.get("text").and_then(|v| v.as_str()) {
+                        if !text.is_empty() {
+                            let preview: String = text.chars().take(60).collect();
+                            let preview = preview.replace('\n', " ");
+                            eprintln!(
+                                "   {} {} {}",
+                                "⤷".cyan(),
+                                format!("[{}]", agent_label).dimmed(),
+                                preview.dimmed()
+                            );
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
     }
 }
 
@@ -2501,24 +2601,76 @@ fn render_task(input: &serde_json::Value, output: &str, duration_ms: Option<u64>
         .and_then(|v| v.as_str())
         .unwrap_or("unknown");
 
+    let description = input
+        .get("description")
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
+
     eprintln!(
         "{} {} {}",
         purple_bold("🤖 task"),
         light_purple(&format!("[{}]", subagent_type)),
         format!("({}ms)", duration_ms.unwrap_or(0)).dimmed()
     );
-    eprintln!(
-        "   {} {}",
-        "→".cyan().bold(),
-        serde_json::to_string_pretty(input)
-            .unwrap_or_default()
-            .cyan()
-    );
 
-    // Tool response
-    eprintln!("   {} subagent result:", "←".yellow().bold());
-    for line in output.lines() {
-        eprintln!("   │ {}", line.yellow());
+    if !description.is_empty() {
+        eprintln!("   {}", description.white());
+    }
+
+    // Show prompt (truncated)
+    if let Some(prompt) = input.get("prompt").and_then(|v| v.as_str()) {
+        let truncated = if prompt.len() > 100 {
+            format!("{}...", &prompt[..100])
+        } else {
+            prompt.to_string()
+        };
+        eprintln!("   {} {}", "→".cyan().bold(), truncated.dimmed());
+    }
+
+    // Parse output for tool calls (they're in the output text from the result)
+    // The output contains lines like "- ✓ executor/1: Write (50ms)"
+    let has_tool_calls = output.contains("**Tool calls:**");
+
+    if has_tool_calls {
+        // Split output into main result and tool calls
+        let parts: Vec<&str> = output.split("**Tool calls:**").collect();
+        let main_output = parts.get(0).unwrap_or(&"");
+
+        // Show main result
+        eprintln!("   {} result:", "←".yellow().bold());
+        for line in main_output.lines() {
+            if line.contains("✅") {
+                eprintln!("   │ {}", line.green());
+            } else if line.contains("⚠️") {
+                eprintln!("   │ {}", line.yellow());
+            } else if !line.trim().is_empty() {
+                eprintln!("   │ {}", line.white());
+            }
+        }
+
+        // Show tool calls summary
+        if let Some(tool_calls_section) = parts.get(1) {
+            eprintln!("   {} tool calls:", "⚡".purple().bold());
+            for line in tool_calls_section.lines() {
+                if line.starts_with("- ✓") {
+                    eprintln!("   │ {}", line.green());
+                } else if line.starts_with("- ✗") {
+                    eprintln!("   │ {}", line.red());
+                } else if !line.trim().is_empty() {
+                    eprintln!("   │ {}", line.dimmed());
+                }
+            }
+        }
+    } else {
+        // Simple output (non-verified agent)
+        eprintln!("   {} result:", "←".yellow().bold());
+        for line in output.lines().take(20) {
+            eprintln!("   │ {}", line.yellow());
+        }
+        let total_lines = output.lines().count();
+        if total_lines > 20 {
+            eprintln!("   │ {} ({} more lines)", "...".dimmed(), total_lines - 20);
+        }
     }
 }
 

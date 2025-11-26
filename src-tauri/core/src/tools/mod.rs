@@ -180,6 +180,8 @@ pub trait Tool: Send + Sync {
 /// Registry of all available tools
 pub struct ToolRegistry {
     tools: Vec<Box<dyn Tool>>,
+    // Keep reference to TodoWriteTool for share_sessions support
+    todo_write: std::sync::Arc<TodoWriteTool>,
 }
 
 impl ToolRegistry {
@@ -200,7 +202,7 @@ impl ToolRegistry {
             Box::new(WriteTool),
             // Todo management (critical for planning!)
             Box::new((*todo_write_shared).clone()),
-            Box::new(TodoReadTool::new(todo_write_shared)),
+            Box::new(TodoReadTool::new(todo_write_shared.clone())),
             // Web tools
             Box::new(WebFetchTool),
             Box::new(WebSearchTool::new()),
@@ -214,7 +216,10 @@ impl ToolRegistry {
             Box::new(TaskCompleteTool),
         ];
 
-        Self { tools }
+        Self {
+            tools,
+            todo_write: todo_write_shared,
+        }
     }
 
     /// Create a new tool registry with all tools including Task tool
@@ -243,7 +248,7 @@ impl ToolRegistry {
             Box::new(WriteTool),
             // Todo management (critical for planning!)
             Box::new((*todo_write_shared).clone()),
-            Box::new(TodoReadTool::new(todo_write_shared)),
+            Box::new(TodoReadTool::new(todo_write_shared.clone())),
             // Web tools
             Box::new(WebFetchTool),
             Box::new(WebSearchTool::new()),
@@ -267,7 +272,10 @@ impl ToolRegistry {
             Box::new(TaskCompleteTool),
         ];
 
-        let tool_registry = std::sync::Arc::new(Self { tools });
+        let tool_registry = std::sync::Arc::new(Self {
+            tools,
+            todo_write: todo_write_shared,
+        });
 
         // Store the registry reference for TaskTool to use
         *registry.write() = Some(tool_registry.clone());
@@ -281,6 +289,12 @@ impl ToolRegistry {
             .iter()
             .find(|t| t.name() == name)
             .map(|b| b.as_ref())
+    }
+
+    /// Make two sessions share the same todo state (for dual-agent mode)
+    /// Call this after creating executor and arbiter sessions
+    pub fn share_todo_sessions(&self, session_a: &str, session_b: &str) {
+        self.todo_write.share_sessions(session_a, session_b);
     }
 
     /// Execute a tool by name
