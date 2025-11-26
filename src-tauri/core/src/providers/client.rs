@@ -158,12 +158,6 @@ impl ProviderClient {
     ) -> Result<async_openai::types::CreateChatCompletionResponse, String> {
         let model = model.unwrap_or(&self.config.default_model);
 
-        eprintln!("[DEBUG] Using model: {}", model);
-        eprintln!(
-            "[DEBUG] Config default_model: {}",
-            self.config.default_model
-        );
-
         let mut request_builder = CreateChatCompletionRequestArgs::default();
         request_builder.model(model).messages(messages.clone());
 

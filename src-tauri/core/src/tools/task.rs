@@ -1,7 +1,12 @@
 //! Task tool - launches subagents to handle complex tasks
 //! Based on opencode/packages/opencode/src/tool/task.ts
+//!
+//! Special subagent type: "verified"
+//! When subagent_type is "verified", runs a dual-agent loop (executor + arbiter)
+//! instead of a single agent. The dual-agent pattern provides verification
+//! via an arbiter that can run tests, take screenshots, and call task_complete.
 
-use crate::agent::{AgentExecutor, AgentRegistry};
+use crate::agent::{AgentExecutor, AgentRegistry, DualAgentRuntime};
 use crate::providers::ProviderClient;
 use crate::session::SessionStore;
 use crate::tools::{Tool, ToolResult, ToolStatus};
@@ -78,6 +83,13 @@ struct TaskInput {
     description: String,
     prompt: String,
     subagent_type: String,
+    /// For dual-agent mode: maximum executor↔arbiter iterations (default: 5)
+    #[serde(default = "default_max_steps")]
+    max_steps: u32,
+}
+
+fn default_max_steps() -> u32 {
+    5
 }
 
 pub struct TaskTool {
@@ -100,7 +112,7 @@ impl TaskTool {
         // Build dynamic description like OpenCode does
         // Get all subagents (non-primary agents)
         let agents = agent_registry.get_subagents().await;
-        let agent_list = agents
+        let mut agent_list = agents
             .iter()
             .map(|a| {
                 let desc = a
@@ -110,10 +122,14 @@ impl TaskTool {
                     .unwrap_or("This subagent should only be called manually by the user.");
                 format!("- {}: {}", a.name, desc)
             })
-            .collect::<Vec<_>>()
-            .join("\n");
+            .collect::<Vec<_>>();
 
-        let description = DESCRIPTION.replace("{agents}", &agent_list);
+        // Add verified agent type - keep description simple, parent doesn't need to know internals
+        agent_list.push(
+            "- verified: Agent for tasks requiring verified completion with automatic testing and validation before marking done.".to_string(),
+        );
+
+        let description = DESCRIPTION.replace("{agents}", &agent_list.join("\n"));
 
         Self {
             session_store,
@@ -122,6 +138,87 @@ impl TaskTool {
             lock_manager,
             provider_config,
             description,
+        }
+    }
+
+    /// Execute dual-agent mode: executor + arbiter in a verification loop
+    async fn execute_dual_agent(
+        &self,
+        task_input: &TaskInput,
+        ctx: &crate::tools::ToolContext,
+    ) -> ToolResult {
+        let working_dir = ctx.working_dir.clone();
+
+        // Create dual-agent runtime
+        let runtime = DualAgentRuntime::new(
+            self.session_store.clone(),
+            self.agent_registry.clone(),
+            self.lock_manager.clone(),
+            self.provider_config.clone(),
+        );
+
+        // Run the dual-agent loop
+        match runtime
+            .run(
+                &task_input.prompt,
+                Some(&ctx.session_id), // Parent session
+                &working_dir,
+                "build",   // executor agent
+                "arbiter", // arbiter agent
+                task_input.max_steps,
+            )
+            .await
+        {
+            Ok(result) => {
+                // Build output message
+                let mut output = String::new();
+
+                if result.completed {
+                    output.push_str(&format!(
+                        "✅ Task completed and verified in {} step(s).\n\n",
+                        result.steps
+                    ));
+
+                    if let Some(summary) = &result.summary {
+                        output.push_str(&format!("**Summary:** {}\n\n", summary));
+                    }
+
+                    if let Some(verification) = &result.verification {
+                        output.push_str(&format!("**Verification:** {}\n", verification));
+                    }
+                } else {
+                    output.push_str(&format!(
+                        "⚠️ Task incomplete after {} step(s) (max steps reached).\n\n",
+                        result.steps
+                    ));
+                    output.push_str("The arbiter did not call task_complete. Review the executor and arbiter sessions for details.");
+                }
+
+                ToolResult {
+                    status: ToolStatus::Completed,
+                    output,
+                    error: None,
+                    metadata: json!({
+                        "title": task_input.description,
+                        "subagent": "dual",
+                        "completed": result.completed,
+                        "steps": result.steps,
+                        "executor_session_id": result.executor_session_id,
+                        "arbiter_session_id": result.arbiter_session_id,
+                        "pair_id": result.pair_id,
+                        "summary": result.summary,
+                        "verification": result.verification,
+                    }),
+                }
+            }
+            Err(e) => ToolResult {
+                status: ToolStatus::Error,
+                output: String::new(),
+                error: Some(format!("Dual-agent execution failed: {}", e)),
+                metadata: json!({
+                    "subagent": "dual",
+                }),
+            },
         }
     }
 }
@@ -150,7 +247,11 @@ impl Tool for TaskTool {
                 },
                 "subagent_type": {
                     "type": "string",
-                    "description": "The type of specialized agent to use for this task"
+                    "description": "The type of specialized agent to use for this task. Use 'dual' for verified execution with executor+arbiter."
+                },
+                "max_steps": {
+                    "type": "integer",
+                    "description": "For dual-agent mode only: maximum executor↔arbiter iterations (default: 5)"
                 }
             },
             "required": ["description", "prompt", "subagent_type"]
@@ -170,6 +271,11 @@ impl Tool for TaskTool {
                 };
             }
         };
+
+        // Check for dual-agent mode
+        if task_input.subagent_type == "verified" {
+            return self.execute_dual_agent(&task_input, ctx).await;
+        }
 
         // Validate subagent type - must exist and be usable as subagent
         let agent = match self.agent_registry.get(&task_input.subagent_type).await {

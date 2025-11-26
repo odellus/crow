@@ -348,7 +348,7 @@ mod tests {
     async fn test_registry_creation() {
         let registry = AgentRegistry::new();
         let count = registry.count().await;
-        assert_eq!(count, 3); // 3 built-in agents (general, build, plan) matching OpenCode
+        assert_eq!(count, 4); // 4 built-in agents (general, build, plan, arbiter)
     }
 
     #[tokio::test]
@@ -384,11 +384,12 @@ mod tests {
         let registry = AgentRegistry::new();
         let subagents = registry.get_subagents().await;
 
-        // general (subagent)
-        assert_eq!(subagents.len(), 1);
+        // general (subagent), arbiter (subagent)
+        assert_eq!(subagents.len(), 2);
 
         let names: Vec<String> = subagents.iter().map(|a| a.name.clone()).collect();
         assert!(names.contains(&"general".to_string()));
+        assert!(names.contains(&"arbiter".to_string()));
     }
 
     #[tokio::test]
@@ -399,7 +400,7 @@ mod tests {
         registry.register(custom).await;
 
         let count = registry.count().await;
-        assert_eq!(count, 4); // 3 built-in + 1 custom
+        assert_eq!(count, 5); // 4 built-in + 1 custom
 
         let agent = registry.get("custom-agent").await;
         assert!(agent.is_some());
@@ -431,9 +432,10 @@ mod tests {
         let registry = AgentRegistry::new();
         let ids = registry.list_ids().await;
 
-        assert_eq!(ids.len(), 3);
+        assert_eq!(ids.len(), 4);
         assert!(ids.contains(&"general".to_string()));
         assert!(ids.contains(&"build".to_string()));
         assert!(ids.contains(&"plan".to_string()));
+        assert!(ids.contains(&"arbiter".to_string()));
     }
 }

@@ -153,8 +153,71 @@ pub fn get_builtin_agents() -> HashMap<String, AgentInfo> {
     };
     agents.insert("plan".to_string(), plan);
 
+    // Arbiter agent - verification agent for dual-agent system
+    let arbiter = AgentInfo {
+        name: "arbiter".to_string(),
+        description: Some(
+            "Verification agent that reviews work and calls task_complete when satisfied."
+                .to_string(),
+        ),
+        mode: AgentMode::Primary, // Internal use only - NOT available as a subtask
+        built_in: true,
+        temperature: Some(0.3), // Lower temperature for more deterministic verification
+        top_p: None,
+        color: Some("#10B981".to_string()), // Green color for arbiter
+        permission: default_permissions(),
+        model: None,
+        prompt: Some(ARBITER_PROMPT.to_string()),
+        tools: {
+            let mut tools = HashMap::new();
+            // Enable task_complete (disabled by default for other agents)
+            tools.insert("task_complete".to_string(), true);
+            // Disable todoread/todowrite like general agent
+            tools.insert("todoread".to_string(), false);
+            tools.insert("todowrite".to_string(), false);
+            tools
+        },
+        options: HashMap::new(),
+    };
+    agents.insert("arbiter".to_string(), arbiter);
+
     agents
 }
+
+/// System prompt for the arbiter agent in dual-agent mode
+const ARBITER_PROMPT: &str = r#"You are the Arbiter agent in a dual-agent verification system.
+
+You receive the Executor's full session showing everything it did - all thinking, tool calls, and outputs.
+
+Your job is to VERIFY the work:
+
+1. **Read carefully** - Understand what the Executor did and why
+2. **Run tests** - Execute test commands (cargo test, npm test, pytest, etc.)
+3. **Check the code** - Read modified files to verify correctness
+4. **Verify requirements** - Ensure the original task requirements are met
+
+## When to call task_complete
+
+Call `task_complete` with summary and verification when ALL of these are true:
+- Tests pass (if applicable)
+- Code compiles/runs without errors
+- The original requirements are satisfied
+- No obvious bugs or issues
+
+## When NOT to call task_complete
+
+If there are problems:
+- Explain clearly what's wrong and why
+- Provide specific feedback the Executor can act on
+- Your full response will be sent back to the Executor
+
+## Important
+
+- You have ALL the same tools as the Executor (bash, read, edit, etc.)
+- Actually run tests - don't just assume they pass
+- Be thorough but efficient - verify the critical paths
+- If you find issues, be constructive in your feedback
+"#;
 
 #[cfg(test)]
 mod tests {
@@ -163,7 +226,7 @@ mod tests {
     #[test]
     fn test_builtin_agents_count() {
         let agents = get_builtin_agents();
-        assert_eq!(agents.len(), 3); // general, build, plan (matching OpenCode)
+        assert_eq!(agents.len(), 4); // general, build, plan, arbiter
     }
 
     #[test]
@@ -194,5 +257,19 @@ mod tests {
 
         assert_eq!(plan.permission.edit, Permission::Deny);
         assert_eq!(plan.mode, AgentMode::Primary);
+    }
+
+    #[test]
+    fn test_arbiter_agent() {
+        let agents = get_builtin_agents();
+        let arbiter = agents.get("arbiter").unwrap();
+
+        assert!(arbiter.built_in);
+        assert_eq!(arbiter.mode, AgentMode::Primary); // Internal use only, not a subtask
+        assert!(arbiter.is_tool_enabled("task_complete"));
+        assert!(!arbiter.is_tool_enabled("todowrite"));
+        assert!(!arbiter.is_tool_enabled("todoread"));
+        assert!(arbiter.prompt.is_some());
+        assert_eq!(arbiter.temperature, Some(0.3));
     }
 }

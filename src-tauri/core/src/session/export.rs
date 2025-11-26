@@ -6,6 +6,103 @@ use std::path::{Path, PathBuf};
 
 pub struct SessionExport;
 
+/// Render a single turn (user message + assistant ReACT loop) to markdown.
+/// This is used for dual-agent handoff - the rendered markdown becomes a role:user
+/// message for the other agent.
+pub fn render_turn_to_markdown(
+    user_message: &MessageWithParts,
+    assistant_message: &MessageWithParts,
+) -> String {
+    let mut markdown = String::new();
+
+    // Render user message content
+    markdown.push_str("## User Request\n\n");
+    for part in &user_message.parts {
+        if let Part::Text { text, .. } = part {
+            markdown.push_str(text);
+            markdown.push_str("\n\n");
+        }
+    }
+
+    // Render assistant's full ReACT loop
+    markdown.push_str("## Agent Response\n\n");
+
+    // First, render any thinking
+    for part in &assistant_message.parts {
+        if let Part::Thinking { text, .. } = part {
+            markdown.push_str("### Thinking\n\n");
+            markdown.push_str(text);
+            markdown.push_str("\n\n");
+        }
+    }
+
+    // Render tool calls with full input/output (NO truncation)
+    let tool_parts: Vec<&Part> = assistant_message
+        .parts
+        .iter()
+        .filter(|p| matches!(p, Part::Tool { .. }))
+        .collect();
+
+    if !tool_parts.is_empty() {
+        markdown.push_str("### Tool Calls\n\n");
+
+        for part in &tool_parts {
+            if let Part::Tool { tool, state, .. } = part {
+                markdown.push_str(&format!("#### Tool: {}\n\n", tool));
+
+                match state {
+                    ToolState::Completed { input, output, .. } => {
+                        // Full input - no truncation
+                        markdown.push_str("**Input:**\n```json\n");
+                        markdown.push_str(
+                            &serde_json::to_string_pretty(input)
+                                .unwrap_or_else(|_| input.to_string()),
+                        );
+                        markdown.push_str("\n```\n\n");
+
+                        // Full output - no truncation
+                        markdown.push_str("**Output:**\n```\n");
+                        markdown.push_str(output);
+                        markdown.push_str("\n```\n\n");
+                    }
+                    ToolState::Error { input, error, .. } => {
+                        markdown.push_str("**Input:**\n```json\n");
+                        markdown.push_str(
+                            &serde_json::to_string_pretty(input)
+                                .unwrap_or_else(|_| input.to_string()),
+                        );
+                        markdown.push_str("\n```\n\n");
+
+                        markdown.push_str("**Error:**\n```\n");
+                        markdown.push_str(error);
+                        markdown.push_str("\n```\n\n");
+                    }
+                    ToolState::Pending { input, .. } | ToolState::Running { input, .. } => {
+                        markdown.push_str("**Input:**\n```json\n");
+                        markdown.push_str(
+                            &serde_json::to_string_pretty(input)
+                                .unwrap_or_else(|_| input.to_string()),
+                        );
+                        markdown.push_str("\n```\n\n");
+                        markdown.push_str("**Status:** In progress...\n\n");
+                    }
+                }
+            }
+        }
+    }
+
+    // Render final text response
+    for part in &assistant_message.parts {
+        if let Part::Text { text, .. } = part {
+            markdown.push_str("### Response\n\n");
+            markdown.push_str(text);
+            markdown.push_str("\n\n");
+        }
+    }
+
+    markdown
+}
+
 impl SessionExport {
     /// Export session to markdown format (matches OpenCode exactly)
     pub fn to_markdown(session_store: &SessionStore, session_id: &str) -> Result<String, String> {

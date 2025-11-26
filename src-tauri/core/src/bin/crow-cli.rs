@@ -94,15 +94,20 @@ async fn main() {
             run_repl(session_id).await;
         }
         "chat" => {
-            let (session_id, message, mode) = parse_chat_args(&args[2..]);
-            if message.is_empty() {
+            let chat_args = parse_chat_args(&args[2..]);
+            if chat_args.message.is_empty() {
                 eprintln!(
                     "{}",
                     "Usage: crow-cli chat [--json|--quiet] [--session <id>] \"message\"".yellow()
                 );
                 return;
             }
-            chat_streaming(session_id.as_deref(), &message, mode).await;
+            chat_streaming(
+                chat_args.session_id.as_deref(),
+                &chat_args.message,
+                chat_args.mode,
+            )
+            .await;
         }
         "sessions" | "list" => {
             list_sessions().await;
@@ -288,7 +293,14 @@ fn print_usage() {
     println!("  RUST_LOG=debug       Enable debug logging");
 }
 
-fn parse_chat_args(args: &[String]) -> (Option<String>, String, OutputMode) {
+/// Parsed chat arguments
+struct ChatArgs {
+    session_id: Option<String>,
+    message: String,
+    mode: OutputMode,
+}
+
+fn parse_chat_args(args: &[String]) -> ChatArgs {
     let mut session_id = None;
     let mut mode = OutputMode::Verbose;
     let mut message_parts = Vec::new();
@@ -320,7 +332,11 @@ fn parse_chat_args(args: &[String]) -> (Option<String>, String, OutputMode) {
         i += 1;
     }
 
-    (session_id, message_parts.join(" "), mode)
+    ChatArgs {
+        session_id,
+        message: message_parts.join(" "),
+        mode,
+    }
 }
 
 fn show_paths() {

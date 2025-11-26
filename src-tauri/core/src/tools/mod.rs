@@ -17,6 +17,7 @@ pub mod multiedit;
 pub mod patch;
 pub mod read;
 pub mod task;
+pub mod task_complete;
 pub mod todoread;
 pub mod todowrite;
 pub mod webfetch;
@@ -35,6 +36,7 @@ pub use multiedit::MultiEditTool;
 pub use patch::PatchTool;
 pub use read::ReadTool;
 pub use task::TaskTool;
+pub use task_complete::TaskCompleteTool;
 pub use todoread::TodoReadTool;
 pub use todowrite::TodoWriteTool;
 pub use webfetch::WebFetchTool;
@@ -208,7 +210,8 @@ impl ToolRegistry {
             // Note: TaskTool requires dependencies, use new_with_deps() instead
             // Error handling
             Box::new(InvalidTool),
-            // Note: WorkCompletedTool hidden for now
+            // Dual-agent tools (task_complete only enabled for arbiter via agent config)
+            Box::new(TaskCompleteTool),
         ];
 
         Self { tools }
@@ -260,7 +263,8 @@ impl ToolRegistry {
             ), // NOW ASYNC!
             // Error handling
             Box::new(InvalidTool),
-            // Note: WorkCompletedTool hidden for now
+            // Dual-agent tools (task_complete only enabled for arbiter via agent config)
+            Box::new(TaskCompleteTool),
         ];
 
         let tool_registry = std::sync::Arc::new(Self { tools });

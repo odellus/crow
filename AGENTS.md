@@ -346,12 +346,96 @@ Crow auto-detects providers based on environment variables:
 
 E2E tests work with any provider. Moonshot is the default if no keys are set.
 
+## Agent Execution Model
+
+### The ReACT Loop (execute_turn)
+
+A single "turn" is NOT a single LLM call. It's a **ReACT loop** that keeps going until the agent stops calling tools.
+
+```
+execute_turn() {
+    for iteration in 0..max_iterations (10) {
+        response = LLM.call(messages, tools)
+        
+        if response.has_tool_calls() {
+            for tool_call in response.tool_calls {
+                result = execute_tool(tool_call)
+                messages.push(tool_result)
+            }
+            continue  // <-- KEEPS LOOPING
+        }
+        
+        // No tool calls - agent is done with this turn
+        return response.text
+        break
+    }
+}
+```
+
+So when you call `execute_turn`, the agent might:
+1. Call `read` tool → get result → continue
+2. Call `write` tool → get result → continue  
+3. Call `bash` tool → get result → continue
+4. Return final text → **turn ends**
+
+One turn = full ReACT loop until agent responds with just text (no tools).
+
+### Dual-Agent Architecture (subagent_type: "verified")
+
+The dual-agent system pairs an **Executor** (build agent) with an **Arbiter** (verification agent).
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│  DUAL-AGENT TASK (single invocation via Task tool)         │
+│                                                             │
+│  ┌─────────────────┐         ┌─────────────────┐           │
+│  │ EXECUTOR        │         │ ARBITER         │           │
+│  │ (build agent)   │         │ (arbiter agent) │           │
+│  │                 │         │                 │           │
+│  │ Own session     │ ──────► │ Own session     │           │
+│  │ Full ReACT loop │  turn   │ Full ReACT loop │           │
+│  │                 │ ◄────── │                 │           │
+│  └─────────────────┘ feedback└─────────────────┘           │
+│                                      │                      │
+│                              task_complete?                 │
+│                                      │                      │
+│                              YES ────┴───► DONE             │
+└─────────────────────────────────────────────────────────────┘
+```
+
+**Flow:**
+1. Task tool receives `subagent_type: "verified"`
+2. Creates TWO sessions (once, not per step): Executor + Arbiter
+3. Loop:
+   - Executor does full ReACT turn (may call many tools)
+   - Executor's turn rendered to markdown
+   - Markdown sent to Arbiter as user message
+   - Arbiter does full ReACT turn (can run tests, read files)
+   - If Arbiter calls `task_complete` → done, return result
+   - Otherwise, Arbiter's feedback sent to Executor
+   - Repeat (max 5 steps)
+
+**Key points:**
+- Each agent has ONE session that persists across all steps
+- Each "step" is a full ReACT loop, not a single LLM call
+- Only the LATEST turn is passed between agents (not full session history)
+- Arbiter has `task_complete` tool to signal verified completion
+- Arbiter is NOT a subtask - it's internal, not visible to parent agents
+
+**Files:**
+- `agent/dual.rs` - DualAgentRuntime orchestration
+- `agent/executor.rs` - ReACT loop (execute_turn)
+- `tools/task.rs` - Task tool, handles `subagent_type: "verified"`
+- `session/export.rs` - render_turn_to_markdown()
+
 ## Key Files to Know
 
 - `tools/task.rs` - Subagent spawning (CRITICAL)
 - `tools/todowrite.rs` - Task tracking (CRITICAL)
 - `agent/executor.rs` - Main ReACT loop
+- `agent/dual.rs` - Dual-agent orchestration
 - `session/store.rs` - Session persistence
+- `session/export.rs` - Turn rendering for dual-agent handoff
 - `snapshot/mod.rs` - Shadow git tracking
 - `bin/crow-cli.rs` - CLI implementation
 
