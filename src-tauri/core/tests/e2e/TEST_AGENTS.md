@@ -284,6 +284,67 @@ crow-cli chat --session ses_XXX "Read the file nonexistent_file_12345.txt"
 
 ---
 
+## Test 11: Task Tool (Subagent Spawning)
+
+This is a critical test - Task spawns autonomous subagents that do the heavy lifting.
+
+### Setup
+```bash
+crow-cli new "Task Test"
+```
+
+### Run
+```bash
+crow-cli chat --session ses_XXX "Use the Task tool to research: What are the latest developments in Rust async runtimes in 2024-2025? Compare tokio, async-std, and smol. I need a subagent to do deep research on this."
+```
+
+### Verify
+- Task tool was invoked (look for `🤖 task [general]` in output)
+- Subagent executed (may take several minutes for deep research)
+- Subagent used websearch/webfetch tools
+- Parent agent synthesized results
+- Response contains current 2024-2025 information
+
+### Subagent Observability Check (CRITICAL)
+
+Sessions are stored in XDG data directory:
+```
+~/.local/share/crow/storage/session/{projectID}/{sessionID}.json
+```
+
+```bash
+# List sessions - subagent should appear with "Subagent:" prefix
+crow-cli sessions | grep -i subagent
+
+# Find recently created session files (subagent sessions created in last 5 min)
+find ~/.local/share/crow/storage/session -name "*.json" -mmin -5
+
+# Get subagent session ID from list, then:
+crow-cli session info ses_SUBAGENT_ID
+# Should show: tool call count, tokens used, cost
+
+crow-cli session history ses_SUBAGENT_ID  
+# Should show: all websearch/webfetch calls the subagent made
+```
+
+### What to watch for
+- **RED FLAG**: Agent answered from memory instead of spawning Task
+- **RED FLAG**: Subagent session NOT appearing in `crow-cli sessions`
+- **RED FLAG**: Subagent has 0 tool calls (didn't do research)
+- **RED FLAG**: Results are outdated (only pre-2024 info)
+- Note: Task tool can take 2-5 minutes for deep research - this is normal
+
+### Why Subagent Observability Matters
+Subagents do ~90% of the actual work in production. If subagent sessions aren't logged:
+- Can't debug what went wrong
+- Can't see token usage breakdown
+- Can't audit tool calls
+- Blind spot in the system
+
+Every subagent session MUST be persisted with full history.
+
+---
+
 ## Evaluating Results
 
 After running tests, evaluate:
