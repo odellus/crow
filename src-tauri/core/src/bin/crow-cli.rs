@@ -58,6 +58,10 @@ async fn main() {
     }
 
     match args[1].as_str() {
+        "repl" => {
+            let session_id = args.get(2).map(|s| s.as_str());
+            run_repl(session_id).await;
+        }
         "chat" => {
             let (session_id, message, mode) = parse_chat_args(&args[2..]);
             if message.is_empty() {
@@ -92,7 +96,7 @@ async fn main() {
         }
         "prompt" => {
             let agent = args.get(2).map(|s| s.as_str()).unwrap_or("build");
-            dump_prompt(agent);
+            dump_prompt(agent).await;
         }
         "-h" | "--help" | "help" => {
             print_usage();
@@ -115,6 +119,7 @@ fn print_usage() {
     );
     println!();
     println!("{}", "USAGE:".yellow());
+    println!("  crow-cli repl [session-id]           Interactive REPL mode");
     println!("  crow-cli chat \"message\"              Full verbose streaming (default)");
     println!("  crow-cli chat --quiet \"msg\"         Just the final response");
     println!("  crow-cli chat --json \"msg\"          JSON output, no streaming");
@@ -214,6 +219,459 @@ fn show_logs(count: usize) {
 
     println!();
     println!("{} {}", "Log files:".dimmed(), log.log_dir().display());
+}
+
+/// Interactive REPL mode - the real developer experience
+async fn run_repl(session_id: Option<&str>) {
+    use rustyline::error::ReadlineError;
+    use rustyline::DefaultEditor;
+
+    let working_dir = env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+
+    // Initialize store
+    let store = SessionStore::new();
+    if let Err(e) = store.init_sync() {
+        eprintln!("{}", format!("Failed to init storage: {}", e).red());
+        return;
+    }
+
+    // Get or create session
+    let session = match session_id {
+        Some(id) => match store.get(id) {
+            Ok(s) => s,
+            Err(e) => {
+                eprintln!("{}", format!("Session not found: {}", e).red());
+                return;
+            }
+        },
+        None => {
+            // Create new REPL session
+            store
+                .create(
+                    working_dir.to_string_lossy().to_string(),
+                    None,
+                    Some("REPL Session".to_string()),
+                )
+                .expect("Failed to create session")
+        }
+    };
+
+    // Determine provider
+    let (provider_name, provider_config) = if env::var("ANTHROPIC_API_KEY").is_ok() {
+        (
+            "anthropic",
+            ProviderConfig::custom(
+                "anthropic".to_string(),
+                "https://api.anthropic.com/v1".to_string(),
+                "ANTHROPIC_API_KEY".to_string(),
+                "claude-sonnet-4-20250514".to_string(),
+            ),
+        )
+    } else if env::var("OPENAI_API_KEY").is_ok() {
+        ("openai", ProviderConfig::openai())
+    } else {
+        ("moonshot", ProviderConfig::moonshot())
+    };
+
+    // Print header
+    println!();
+    println!(
+        "{}",
+        "═══════════════════════════════════════════════════════════════".dimmed()
+    );
+    println!(
+        "{}",
+        "  🔥 CROW REPL - Real Developers Talk to Their Code 🔥"
+            .cyan()
+            .bold()
+    );
+    println!(
+        "{}",
+        "═══════════════════════════════════════════════════════════════".dimmed()
+    );
+    println!("{} {}", "Session:".dimmed(), session.id.yellow());
+    println!(
+        "{} {} {}",
+        "Provider:".dimmed(),
+        provider_name.cyan(),
+        format!("({})", provider_config.default_model).dimmed()
+    );
+    println!(
+        "{} {}",
+        "Working dir:".dimmed(),
+        working_dir.display().to_string().dimmed()
+    );
+    println!();
+    println!(
+        "{}",
+        "Type your message and press Enter. Ctrl+C to abort. Commands: /exit, /new, /session"
+            .dimmed()
+    );
+    println!(
+        "{}",
+        "═══════════════════════════════════════════════════════════════".dimmed()
+    );
+    println!();
+
+    // Create readline editor
+    let mut rl = match DefaultEditor::new() {
+        Ok(editor) => editor,
+        Err(e) => {
+            eprintln!("{}", format!("Failed to init readline: {}", e).red());
+            return;
+        }
+    };
+
+    // Try to load history
+    let history_path = GlobalPaths::new().state.join("repl_history.txt");
+    let _ = rl.load_history(&history_path);
+
+    // Create provider and executor once (reuse across iterations)
+    let provider = match ProviderClient::new(provider_config.clone()) {
+        Ok(p) => p,
+        Err(e) => {
+            eprintln!("{}", format!("Failed to create provider: {}", e).red());
+            return;
+        }
+    };
+
+    let session_store = Arc::new(store);
+    let lock_manager = Arc::new(SessionLockManager::new());
+    let agent_registry = Arc::new(AgentRegistry::new_with_config(&working_dir).await);
+    let tool_registry = ToolRegistry::new_with_deps(
+        session_store.clone(),
+        agent_registry.clone(),
+        lock_manager.clone(),
+        provider_config,
+    )
+    .await;
+
+    let mut executor = AgentExecutor::new(
+        provider,
+        tool_registry,
+        session_store.clone(),
+        agent_registry,
+        lock_manager,
+    );
+
+    let mut current_session_id = session.id.clone();
+
+    // REPL loop
+    loop {
+        let prompt = format!("{}", "crow> ".green().bold());
+
+        match rl.readline(&prompt) {
+            Ok(line) => {
+                let line = line.trim();
+
+                if line.is_empty() {
+                    continue;
+                }
+
+                // Add to history
+                let _ = rl.add_history_entry(line);
+
+                // Handle commands
+                if line.starts_with('/') {
+                    match line {
+                        "/exit" | "/quit" | "/q" => {
+                            println!("{}", "Goodbye! 👋".cyan());
+                            break;
+                        }
+                        "/new" => {
+                            // Create new session
+                            match session_store.create(
+                                working_dir.to_string_lossy().to_string(),
+                                None,
+                                Some("REPL Session".to_string()),
+                            ) {
+                                Ok(new_session) => {
+                                    current_session_id = new_session.id.clone();
+                                    println!(
+                                        "{} {}",
+                                        "New session:".green(),
+                                        current_session_id.yellow()
+                                    );
+                                }
+                                Err(e) => {
+                                    eprintln!(
+                                        "{}",
+                                        format!("Failed to create session: {}", e).red()
+                                    );
+                                }
+                            }
+                            continue;
+                        }
+                        "/session" => {
+                            println!(
+                                "{} {}",
+                                "Current session:".dimmed(),
+                                current_session_id.yellow()
+                            );
+                            continue;
+                        }
+                        "/help" | "/?" => {
+                            println!("{}", "Commands:".yellow());
+                            println!("  {} - Exit REPL", "/exit".cyan());
+                            println!("  {} - Create new session", "/new".cyan());
+                            println!("  {} - Show current session ID", "/session".cyan());
+                            println!("  {} - Show this help", "/help".cyan());
+                            println!();
+                            println!("{}", "During execution:".yellow());
+                            println!(
+                                "  {} - Interrupt and send new message",
+                                "Type + Enter".cyan()
+                            );
+                            println!("  {} - Abort execution", "Ctrl+C".cyan());
+                            println!("  {} - Exit (at prompt)", "Ctrl+D".cyan());
+                            continue;
+                        }
+                        _ => {
+                            println!("{}", format!("Unknown command: {}", line).yellow());
+                            continue;
+                        }
+                    }
+                }
+
+                // Execute the message
+                let start_time = Instant::now();
+
+                // Create user message
+                let user_msg_id = format!("msg-user-{}", uuid::Uuid::new_v4());
+                let user_parts = vec![Part::Text {
+                    id: format!("part-{}", uuid::Uuid::new_v4()),
+                    session_id: current_session_id.clone(),
+                    message_id: user_msg_id.clone(),
+                    text: line.to_string(),
+                }];
+
+                let now = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap()
+                    .as_millis() as u64;
+
+                let user_message = MessageWithParts {
+                    info: Message::User {
+                        id: user_msg_id,
+                        session_id: current_session_id.clone(),
+                        time: MessageTime {
+                            created: now,
+                            completed: Some(now),
+                        },
+                        summary: None,
+                        metadata: None,
+                    },
+                    parts: user_parts.clone(),
+                };
+
+                if let Err(e) = session_store.add_message(&current_session_id, user_message) {
+                    eprintln!("{}", format!("Failed to add user message: {}", e).red());
+                    continue;
+                }
+
+                // Create streaming channel
+                let (tx, mut rx) = mpsc::unbounded_channel::<ExecutionEvent>();
+
+                // Reset cancellation token for this turn (in case previous was cancelled)
+                executor.set_cancellation_token(tokio_util::sync::CancellationToken::new());
+                let cancel_token = executor.cancellation_token();
+
+                // Spawn the execution in background
+                let session_id_clone = current_session_id.clone();
+                let working_dir_clone = working_dir.clone();
+                let exec_handle = tokio::spawn({
+                    let executor = executor.clone();
+                    async move {
+                        executor
+                            .execute_turn_streaming(
+                                &session_id_clone,
+                                "build",
+                                &working_dir_clone,
+                                user_parts,
+                                tx,
+                            )
+                            .await
+                    }
+                });
+
+                // Stream renderer
+                let mut renderer = StreamRenderer::new(OutputMode::Verbose);
+
+                // Process streaming events with interrupt handling
+                // User can type during execution - pressing Enter interrupts and sends that message
+                let mut interrupt_message: Option<String> = None;
+
+                // Spawn a task to read stdin lines during execution
+                let (stdin_tx, mut stdin_rx) = mpsc::unbounded_channel::<String>();
+                let stdin_handle = tokio::spawn(async move {
+                    use tokio::io::{AsyncBufReadExt, BufReader};
+                    let stdin = tokio::io::stdin();
+                    let mut reader = BufReader::new(stdin);
+                    let mut line_buf = String::new();
+                    if reader.read_line(&mut line_buf).await.is_ok() && !line_buf.is_empty() {
+                        let _ = stdin_tx.send(line_buf.trim().to_string());
+                    }
+                });
+
+                loop {
+                    tokio::select! {
+                        // Handle incoming events
+                        event = rx.recv() => {
+                            match event {
+                                Some(ev) => renderer.handle_event(ev),
+                                None => break, // Channel closed, execution done
+                            }
+                        }
+                        // Handle user typing during execution - Enter sends interrupt
+                        Some(user_input) = stdin_rx.recv() => {
+                            if !user_input.is_empty() {
+                                eprintln!();
+                                eprintln!("{} {}", "⚡ Interrupting with:".yellow().bold(), user_input.cyan());
+                                cancel_token.cancel();
+                                interrupt_message = Some(user_input);
+                                // Drain remaining events quickly
+                                while let Ok(ev) = rx.try_recv() {
+                                    renderer.handle_event(ev);
+                                }
+                                break;
+                            }
+                        }
+                        // Handle Ctrl+C - just abort without follow-up
+                        _ = tokio::signal::ctrl_c() => {
+                            eprintln!();
+                            eprintln!("{}", "^C - Aborting...".yellow().bold());
+                            cancel_token.cancel();
+                            while let Ok(ev) = rx.try_recv() {
+                                renderer.handle_event(ev);
+                            }
+                            break;
+                        }
+                    }
+                }
+
+                // Clean up stdin reader
+                stdin_handle.abort();
+
+                // Wait for execution to complete
+                let exec_result = exec_handle.await;
+
+                // If user typed an interrupt message, execute it as a follow-up
+                if let Some(follow_up) = interrupt_message {
+                    let interrupt_msg_id = format!("msg-user-{}", uuid::Uuid::new_v4());
+                    let interrupt_text = format!("[INTERRUPTED] {}", follow_up);
+                    let interrupt_parts = vec![Part::Text {
+                        id: format!("part-{}", uuid::Uuid::new_v4()),
+                        session_id: current_session_id.clone(),
+                        message_id: interrupt_msg_id.clone(),
+                        text: interrupt_text,
+                    }];
+
+                    let now = std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .unwrap()
+                        .as_millis() as u64;
+
+                    let interrupt_msg = MessageWithParts {
+                        info: Message::User {
+                            id: interrupt_msg_id,
+                            session_id: current_session_id.clone(),
+                            time: MessageTime {
+                                created: now,
+                                completed: Some(now),
+                            },
+                            summary: None,
+                            metadata: None,
+                        },
+                        parts: interrupt_parts.clone(),
+                    };
+
+                    if let Err(e) = session_store.add_message(&current_session_id, interrupt_msg) {
+                        eprintln!(
+                            "{}",
+                            format!("Failed to add interrupt message: {}", e).red()
+                        );
+                    } else {
+                        // Execute follow-up turn
+                        let (tx2, mut rx2) = mpsc::unbounded_channel::<ExecutionEvent>();
+                        executor.set_cancellation_token(tokio_util::sync::CancellationToken::new());
+
+                        let session_id_clone2 = current_session_id.clone();
+                        let working_dir_clone2 = working_dir.clone();
+                        let exec_handle2 = tokio::spawn({
+                            let executor = executor.clone();
+                            async move {
+                                executor
+                                    .execute_turn_streaming(
+                                        &session_id_clone2,
+                                        "build",
+                                        &working_dir_clone2,
+                                        interrupt_parts,
+                                        tx2,
+                                    )
+                                    .await
+                            }
+                        });
+
+                        let mut renderer2 = StreamRenderer::new(OutputMode::Verbose);
+                        while let Some(event) = rx2.recv().await {
+                            renderer2.handle_event(event);
+                        }
+
+                        match exec_handle2.await {
+                            Ok(Ok(response)) => {
+                                renderer2.finish(
+                                    start_time.elapsed(),
+                                    &current_session_id,
+                                    &response,
+                                );
+                            }
+                            Ok(Err(e)) => {
+                                eprintln!("{} {}", "🟥 ERROR:".red().bold(), e.red());
+                            }
+                            Err(e) => {
+                                eprintln!(
+                                    "{} {}",
+                                    "🟥 TASK ERROR:".red().bold(),
+                                    e.to_string().red()
+                                );
+                            }
+                        }
+                    }
+                } else {
+                    // Normal completion - show final stats
+                    match exec_result {
+                        Ok(Ok(response)) => {
+                            renderer.finish(start_time.elapsed(), &current_session_id, &response);
+                        }
+                        Ok(Err(e)) => {
+                            eprintln!();
+                            eprintln!("{} {}", "🟥 ERROR:".red().bold(), e.red());
+                        }
+                        Err(e) => {
+                            eprintln!();
+                            eprintln!("{} {}", "🟥 TASK ERROR:".red().bold(), e.to_string().red());
+                        }
+                    }
+                }
+
+                println!(); // Blank line between interactions
+            }
+            Err(ReadlineError::Interrupted) => {
+                println!("{}", "^C - Use /exit to quit".yellow());
+            }
+            Err(ReadlineError::Eof) => {
+                println!("{}", "Goodbye! 👋".cyan());
+                break;
+            }
+            Err(e) => {
+                eprintln!("{}", format!("Error: {}", e).red());
+                break;
+            }
+        }
+    }
+
+    // Save history
+    let _ = rl.save_history(&history_path);
 }
 
 /// Streaming chat with full observability
@@ -863,11 +1321,21 @@ async fn get_messages(session_id: &str) {
     }
 }
 
-fn dump_prompt(agent_name: &str) {
-    use crow_core::agent::{AgentInfo, SystemPromptBuilder};
+async fn dump_prompt(agent_name: &str) {
+    use crow_core::agent::{AgentInfo, AgentRegistry, SystemPromptBuilder};
 
     let working_dir = env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
-    let agent = AgentInfo::new(agent_name);
+
+    // Load agent from registry (includes config files from XDG paths)
+    let registry = AgentRegistry::new_with_config(&working_dir).await;
+
+    let agent = registry.get(agent_name).await.unwrap_or_else(|| {
+        eprintln!(
+            "{}",
+            format!("Agent '{}' not found, using default", agent_name).yellow()
+        );
+        AgentInfo::new(agent_name)
+    });
 
     let provider_name = if env::var("ANTHROPIC_API_KEY").is_ok() {
         "anthropic"
@@ -877,13 +1345,32 @@ fn dump_prompt(agent_name: &str) {
         "moonshot"
     };
 
-    let builder = SystemPromptBuilder::new(agent, working_dir.clone(), provider_name.to_string());
+    let builder = SystemPromptBuilder::new(
+        agent.clone(),
+        working_dir.clone(),
+        provider_name.to_string(),
+    );
 
     let model_id = match provider_name {
         "anthropic" => "claude-sonnet-4-20250514",
         "openai" => "gpt-4",
         _ => "moonshot-v1-auto",
     };
+
+    // Show agent config info
+    eprintln!(
+        "{}",
+        format!(
+            "Agent config: mode={:?}, prompt={}",
+            agent.mode,
+            if agent.prompt.is_some() {
+                "CUSTOM"
+            } else {
+                "default"
+            }
+        )
+        .dimmed()
+    );
 
     let prompts = builder.build(model_id);
 

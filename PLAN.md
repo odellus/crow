@@ -151,6 +151,58 @@ crow-tauri/
 
 ---
 
+## Phase 3.5: Config & Storage Verification ⏳ IN PROGRESS
+
+Before proceeding to Tauri, we need HIGH confidence that:
+1. XDG directories are created and used correctly
+2. Agent configs load from `~/.config/crow/agent/*.md`
+3. Custom prompts in agent configs are actually applied
+4. Sessions persist and restore correctly
+5. Snapshots track file changes properly
+6. Logging captures all executions
+
+### 3.5.1 XDG Directory Verification
+- [ ] `crow-cli paths` shows correct XDG paths
+- [ ] All 4 directories created on first run (config, data, state, cache)
+- [ ] Sessions stored in `~/.local/share/crow/sessions/`
+- [ ] Snapshots stored in `~/.local/share/crow/snapshots/{project_id}/`
+- [ ] Logs written to `~/.local/state/crow/logs/`
+
+### 3.5.2 Agent Config Loading
+- [ ] Built-in agents load (build, plan, general)
+- [ ] Custom agents load from `~/.config/crow/agent/*.md`
+- [ ] Custom agents load from `.crow/agent/*.md` (project-level)
+- [ ] Project-level configs override global configs
+- [ ] YAML frontmatter parsed correctly (description, mode, tools)
+- [ ] Custom prompt (markdown body) applied to agent
+- [ ] `crow-cli prompt <agent>` shows custom prompt when configured
+
+### 3.5.3 Session Persistence
+- [ ] New sessions created with `crow-cli new`
+- [ ] `crow-cli sessions` lists all sessions
+- [ ] `crow-cli chat --session <id>` continues existing session
+- [ ] Messages persist across CLI invocations
+- [ ] Agent remembers context from previous messages in session
+- [ ] `crow-cli messages <id>` shows full history with tool calls
+
+### 3.5.4 Snapshot System
+- [ ] Snapshot manager auto-initializes from working directory
+- [ ] Shadow git created in `~/.local/share/crow/snapshots/{project_id}/`
+- [ ] File modifications tracked during agent execution
+- [ ] Patch parts created for edit/write/bash tools
+- [ ] Can verify file state before/after agent modification
+
+### 3.5.5 Logging & Observability  
+- [ ] Agent executions logged to `~/.local/state/crow/logs/agent.log`
+- [ ] Log entries include: timestamp, session_id, agent, model, tokens, cost
+- [ ] RUST_LOG=debug shows internal decisions (model selection, config loading)
+- [ ] Tool calls visible in verbose CLI output
+
+### Verification Commands
+See AGENTS.md "Verifying XDG Storage" section for detailed test scripts.
+
+---
+
 ## Phase 4: Tauri Commands Layer ⏳ TODO
 
 ### 4.1 Create command modules
@@ -212,7 +264,7 @@ crow-tauri/
 
 ## Current Status
 
-**Active:** Phase 4 - Tauri Commands
+**Active:** Phase 3.5 - Config & Storage Verification
 
 **Completed:**
 - Phase 1: Crate structure set up
@@ -223,12 +275,21 @@ crow-tauri/
   - JSON and quiet modes
   - Agent execution confirmed working (Moonshot provider)
   - Tool response history bug fixed
+  - Config-driven agents (load from `~/.config/crow/agent/*.md`)
+  - TaskTool for subagent spawning
+  - Agents match OpenCode: build (primary), plan (primary), general (subagent)
+
+**In Progress:**
+- Phase 3.5: Verifying all configs and storage work correctly
+  - Need to confirm agent config prompts are actually applied
+  - Need to test snapshot system thoroughly
+  - Need to verify session continuity
 
 **Next Steps:**
-1. Create Tauri command modules
-2. Implement session/message commands
-3. Test each via CLI before frontend
-4. Then wire up frontend
+1. Run verification scripts from AGENTS.md
+2. Fix any issues found with config loading
+3. Then proceed to Phase 4 (Tauri commands) OR
+4. Consider CLI hardening (--repl, interrupt handling) first
 
 ---
 

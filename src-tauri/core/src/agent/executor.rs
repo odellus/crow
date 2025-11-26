@@ -39,6 +39,7 @@ pub enum ExecutionEvent {
     Error(String),
 }
 
+#[derive(Clone)]
 pub struct AgentExecutor {
     provider: ProviderClient,
     tools: Arc<ToolRegistry>,

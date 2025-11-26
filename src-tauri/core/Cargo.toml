@@ -55,6 +55,9 @@ getrandom = "0.2"
 # CLI colors
 colored = "2"
 
+# REPL readline
+rustyline = "14"
+
 [dev-dependencies]
 tempfile = "3"
 

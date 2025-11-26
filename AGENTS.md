@@ -89,17 +89,51 @@ LLM provider abstraction:
 
 ```bash
 # Build
-cd crow-tauri/src-tauri/core
+cd crow-tauri/src-tauri
 cargo build --release --bin crow-cli
 
-# Run
+# The binary is at:
+./target/release/crow-cli
+
+# Or add to PATH for convenience:
+export PATH="$PATH:/home/thomas/src/projects/opencode-project/crow-tauri/src-tauri/target/release"
+```
+
+### Basic Commands
+```bash
 crow-cli chat "your message"           # Full verbose streaming
-crow-cli chat --quiet "message"        # Just response
+crow-cli chat --quiet "message"        # Just response  
 crow-cli chat --json "message"         # JSON output for scripting
+crow-cli chat --session <id> "msg"     # Continue existing session
 crow-cli sessions                      # List sessions
-crow-cli messages <session-id>         # View history
-crow-cli paths                         # Show storage paths
-crow-cli prompt [agent]                # Dump system prompt
+crow-cli new "Session Title"           # Create new session
+crow-cli messages <session-id>         # View full history with parts
+crow-cli paths                         # Show XDG storage paths
+crow-cli logs [count]                  # Show recent agent execution logs
+crow-cli prompt [agent]                # Dump full system prompt for agent
+```
+
+### Debugging & Verification
+```bash
+# Show XDG paths and verify storage locations
+crow-cli paths
+
+# Enable debug logging (shows model selection, config loading)
+RUST_LOG=debug crow-cli chat "test"
+
+# Dump system prompt to verify agent config is loaded
+crow-cli prompt build      # Default build agent
+crow-cli prompt general    # General subagent (should show custom prompt if configured)
+crow-cli prompt plan       # Plan agent with restricted permissions
+
+# JSON output for machine analysis
+crow-cli chat --json "list files" | jq '.tools'
+
+# Test specific session continuity
+crow-cli new "Test Session"           # Note the session ID
+crow-cli chat --session ses_xxx "hello"
+crow-cli chat --session ses_xxx "what did I just say?"
+crow-cli messages ses_xxx             # Verify history persisted
 ```
 
 ## Development Preferences
@@ -127,9 +161,118 @@ crow-cli prompt [agent]                # Dump system prompt
 All data persists across projects/sessions:
 ```
 ~/.local/share/crow/     # Data (sessions, snapshots)
-~/.config/crow/          # Configuration
+~/.config/crow/          # Configuration (agents, providers)
 ~/.cache/crow/           # Cache
 ~/.local/state/crow/     # Logs
+```
+
+## Verifying XDG Storage
+
+### Check Directory Structure
+```bash
+# Show all crow directories
+crow-cli paths
+
+# Verify directories exist
+ls -la ~/.local/share/crow/
+ls -la ~/.config/crow/
+ls -la ~/.local/state/crow/
+
+# Expected structure:
+tree ~/.local/share/crow/
+# ~/.local/share/crow/
+# ├── sessions/           # Session JSON files
+# │   └── ses_xxx.json
+# └── snapshots/          # Shadow git per project
+#     └── {project_id}/
+#         └── .git/
+
+tree ~/.config/crow/
+# ~/.config/crow/
+# ├── config.json         # User config (optional)
+# └── agent/              # Custom agent definitions
+#     └── general.md      # Override general agent
+
+tree ~/.local/state/crow/
+# ~/.local/state/crow/
+# └── logs/
+#     └── agent.log       # Execution logs
+```
+
+### Verify Agent Config Loading
+```bash
+# Create a custom agent config
+mkdir -p ~/.config/crow/agent
+cat > ~/.config/crow/agent/general.md << 'EOF'
+---
+description: Custom general agent for research
+mode: subagent
+tools:
+  todoread: false
+  todowrite: false
+---
+
+You are a custom research agent with special instructions.
+This prompt should appear in the system prompt dump.
+EOF
+
+# Verify it loads (look for "Custom general agent" or custom prompt text)
+crow-cli prompt general
+
+# The custom prompt should appear in System Message 2
+# If you only see the default qwen.txt/anthropic.txt content, config loading is broken
+```
+
+### Verify Session Persistence
+```bash
+# Create a session and send a message
+SESSION=$(crow-cli new "Persistence Test" 2>&1 | head -1)
+echo "Created session: $SESSION"
+
+crow-cli chat --session "$SESSION" "Remember the code word is BANANA"
+
+# Check session file exists
+ls -la ~/.local/share/crow/sessions/
+
+# Verify message persisted (should show BANANA in history)  
+crow-cli messages "$SESSION"
+
+# Test continuity - agent should remember BANANA
+crow-cli chat --session "$SESSION" "What was the code word?"
+```
+
+### Verify Snapshot System
+```bash
+# Go to a test directory with git
+cd /tmp
+mkdir snapshot-test && cd snapshot-test
+git init
+echo "original" > test.txt
+git add . && git commit -m "initial"
+
+# Run agent that modifies a file
+crow-cli chat "Write 'modified by agent' to test.txt"
+
+# Check snapshot was created
+PROJECT_ID=$(git rev-list --max-parents=0 HEAD | head -c 8)
+ls -la ~/.local/share/crow/snapshots/
+
+# The snapshot dir should exist and contain .git
+ls -la ~/.local/share/crow/snapshots/${PROJECT_ID}*/
+
+# Verify the file was actually modified
+cat test.txt
+```
+
+### Verify Logging
+```bash
+# Run a chat and check logs
+crow-cli chat "list files"
+
+# Check agent log
+cat ~/.local/state/crow/logs/agent.log | tail -20
+
+# Log should show: timestamp, session_id, agent, model, tokens, cost
 ```
 
 ## Testing
