@@ -154,9 +154,17 @@ impl PrimaryDualRuntime {
         // Share todo state between sessions
         tool_registry.share_todo_sessions(&planner_session.id, &architect_session.id);
 
-        // Send initial prompt to BOTH sessions
+        // Send initial prompt to PLANNER
         let initial_user_msg = self.add_user_message(&planner_session.id, initial_prompt)?;
-        self.add_user_message(&architect_session.id, initial_prompt)?;
+
+        // Set up architect session
+        // FROM ARCHITECT'S PERSPECTIVE:
+        //   USER (planner): "How can I help you?"
+        //   ASSISTANT (architect): (initial request)
+        //   USER (planner): (planner's work)
+        //   ASSISTANT (architect): (verification)
+        self.add_user_message(&architect_session.id, "How can I help you?")?;
+        self.add_assistant_message(&architect_session.id, initial_prompt)?;
 
         // Track costs
         let mut total_cost = 0.0f64;
@@ -235,7 +243,8 @@ impl PrimaryDualRuntime {
                 _ = tokio::time::sleep(tokio::time::Duration::from_millis(100)) => None,
             };
 
-            // Send planner's work to architect session as user message
+            // Send planner's work to architect session as USER message
+            // Architect sees planner as the "user" asking for verification
             self.add_user_message(&architect_session.id, &planner_turn_markdown)?;
 
             if let Some(user_feedback) = architect_input {
@@ -474,6 +483,58 @@ impl PrimaryDualRuntime {
                     created: now,
                     completed: Some(now),
                 },
+                summary: None,
+                metadata: None,
+            },
+            parts: vec![Part::Text {
+                id: format!("part-{}", uuid::Uuid::new_v4()),
+                session_id: session_id.to_string(),
+                message_id: msg_id,
+                text: text.to_string(),
+            }],
+        };
+
+        self.session_store
+            .add_message(session_id, message.clone())?;
+        Ok(message)
+    }
+
+    /// Add an assistant message to a session (for prefilling architect context)
+    fn add_assistant_message(
+        &self,
+        session_id: &str,
+        text: &str,
+    ) -> Result<MessageWithParts, String> {
+        let msg_id = format!("msg-assistant-{}", uuid::Uuid::new_v4());
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_millis() as u64;
+
+        let message = MessageWithParts {
+            info: Message::Assistant {
+                id: msg_id.clone(),
+                session_id: session_id.to_string(),
+                parent_id: String::new(),
+                model_id: String::new(),
+                provider_id: String::new(),
+                mode: "prefill".to_string(),
+                time: MessageTime {
+                    created: now,
+                    completed: Some(now),
+                },
+                path: crate::types::MessagePath {
+                    cwd: String::new(),
+                    root: String::new(),
+                },
+                cost: 0.0,
+                tokens: crate::types::TokenUsage {
+                    input: 0,
+                    output: 0,
+                    reasoning: 0,
+                    cache: crate::types::CacheTokens { read: 0, write: 0 },
+                },
+                error: None,
                 summary: None,
                 metadata: None,
             },
