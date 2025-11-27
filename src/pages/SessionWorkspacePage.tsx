@@ -1,11 +1,12 @@
 import { useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
-import type { Session, FileEntry, SimpleMessage } from "../types";
+import type { Session, FileEntry, SimpleMessage, Part } from "../types";
 
 type Message = SimpleMessage;
 import { ChatView } from "../components/ChatView";
 import { FileTree } from "../components/FileTree";
 import { EditorPane } from "../components/EditorPane";
+import { Terminal } from "../components/Terminal";
 
 interface Props {
   sessions: Session[];
@@ -16,6 +17,7 @@ interface Props {
   onRevert: (messageId: string) => void;
   isStreaming?: boolean;
   streamingText?: string;
+  streamingParts?: Part[];
 }
 
 export function SessionWorkspacePage({
@@ -27,6 +29,7 @@ export function SessionWorkspacePage({
   onRevert,
   isStreaming = false,
   streamingText = "",
+  streamingParts = [],
 }: Props) {
   void files; // Suppress unused warning - FileTree loads its own files
   const { id } = useParams<{ id: string }>();
@@ -139,22 +142,20 @@ export function SessionWorkspacePage({
         </button>
       </div>
 
-      {/* Main Content */}
+      {/* Main Content - 3-column layout: FileTree | Chat | Editor+Terminal */}
       <div
         style={{
           flex: 1,
           display: "grid",
-          gridTemplateColumns: "240px 1fr",
-          gridTemplateRows: "1fr 1fr",
+          gridTemplateColumns: "200px 1fr 1fr",
           overflow: "hidden",
         }}
       >
         {/* Left Panel - File Tree */}
         <div
           style={{
-            gridRow: "1 / 3",
             backgroundColor: "#1e293b",
-            borderRight: "2px solid #334155",
+            borderRight: "1px solid #334155",
             display: "flex",
             flexDirection: "column",
             overflow: "hidden",
@@ -162,15 +163,16 @@ export function SessionWorkspacePage({
         >
           <div
             style={{
-              padding: "12px",
+              padding: "10px 12px",
               borderBottom: "1px solid #334155",
-              fontSize: "12px",
+              fontSize: "11px",
               fontWeight: "600",
-              color: "#94a3b8",
+              color: "#64748b",
               textTransform: "uppercase",
+              letterSpacing: "0.05em",
             }}
           >
-            Files
+            Explorer
           </div>
           <div style={{ flex: 1, overflow: "auto" }}>
             <FileTree
@@ -213,12 +215,14 @@ export function SessionWorkspacePage({
           )}
         </div>
 
-        {/* Top Right - Chat */}
+        {/* Center Panel - Chat */}
         <div
           style={{
             backgroundColor: "#0f172a",
-            borderBottom: "2px solid #334155",
             overflow: "hidden",
+            display: "flex",
+            flexDirection: "column",
+            borderRight: "1px solid #334155",
           }}
         >
           <ChatView
@@ -227,17 +231,58 @@ export function SessionWorkspacePage({
             onToolClick={(filePath) => setSelectedFile(filePath)}
             isStreaming={isStreaming}
             streamingText={streamingText}
+            streamingParts={streamingParts}
           />
         </div>
 
-        {/* Bottom Right - Editor */}
+        {/* Right Panel - Editor (top) + Terminal (bottom) */}
         <div
           style={{
-            backgroundColor: "#0f172a",
+            display: "flex",
+            flexDirection: "column",
             overflow: "hidden",
           }}
         >
-          <EditorPane filePath={selectedFile} />
+          {/* Editor */}
+          <div
+            style={{
+              flex: 1,
+              minHeight: 0,
+              overflow: "hidden",
+              borderBottom: "1px solid #334155",
+            }}
+          >
+            <EditorPane filePath={selectedFile} />
+          </div>
+
+          {/* Terminal */}
+          <div
+            style={{
+              height: "200px",
+              minHeight: "150px",
+              overflow: "hidden",
+              display: "flex",
+              flexDirection: "column",
+            }}
+          >
+            <div
+              style={{
+                padding: "6px 12px",
+                backgroundColor: "#1e293b",
+                borderBottom: "1px solid #334155",
+                fontSize: "11px",
+                fontWeight: "600",
+                color: "#64748b",
+                textTransform: "uppercase",
+                letterSpacing: "0.05em",
+              }}
+            >
+              Terminal
+            </div>
+            <div style={{ flex: 1, overflow: "hidden" }}>
+              <Terminal workingDir={session.directory || "."} />
+            </div>
+          </div>
         </div>
       </div>
     </div>

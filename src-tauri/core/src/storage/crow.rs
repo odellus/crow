@@ -28,6 +28,14 @@ fn message_session_id(msg: &Message) -> &str {
     }
 }
 
+/// Helper to get time from Message enum
+fn message_time(msg: &Message) -> &crate::types::MessageTime {
+    match msg {
+        Message::User { time, .. } => time,
+        Message::Assistant { time, .. } => time,
+    }
+}
+
 /// Helper to get ID from Part enum
 fn part_id(part: &Part) -> &str {
     match part {
@@ -194,7 +202,7 @@ impl CrowStorage {
         }
 
         if let Ok(entries) = std::fs::read_dir(&message_dir) {
-            let mut message_files: Vec<_> = entries
+            let message_files: Vec<_> = entries
                 .flatten()
                 .filter(|e| {
                     e.file_name()
@@ -202,8 +210,6 @@ impl CrowStorage {
                         .map_or(false, |s| s.ends_with(".json"))
                 })
                 .collect();
-
-            message_files.sort_by_key(|e| e.file_name());
 
             for entry in message_files {
                 let path = entry.path();
@@ -220,6 +226,9 @@ impl CrowStorage {
                 }
             }
         }
+
+        // Sort by created time (oldest first)
+        messages.sort_by_key(|m| message_time(&m.info).created);
 
         Ok(messages)
     }

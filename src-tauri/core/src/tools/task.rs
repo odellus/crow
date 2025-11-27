@@ -163,8 +163,8 @@ impl TaskTool {
                 &task_input.prompt,
                 Some(&ctx.session_id), // Parent session
                 &working_dir,
-                "build",   // executor agent
-                "arbiter", // arbiter agent
+                "executor", // executor agent (like build but no Task tool)
+                "arbiter",  // arbiter agent (has task_complete)
                 task_input.max_steps,
             )
             .await

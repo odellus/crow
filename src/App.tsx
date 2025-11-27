@@ -36,6 +36,7 @@ function AppContent() {
   const [currentSessionId, setCurrentSessionId] = useState<string | null>(null);
   const [isStreaming, setIsStreaming] = useState(false);
   const [streamingText, setStreamingText] = useState("");
+  const [streamingParts, setStreamingParts] = useState<Part[]>([]);
   const navigate = useNavigate();
 
   // Load sessions on mount
@@ -104,7 +105,7 @@ function AppContent() {
       // Load files
       fetchFiles(".")
         .then((response) => {
-          setFiles(response.files || []);
+          setFiles(response.entries || []);
         })
         .catch(console.error);
     } else {
@@ -157,18 +158,20 @@ function AppContent() {
     // Start streaming
     setIsStreaming(true);
     setStreamingText("");
+    setStreamingParts([]);
 
     sendMessageStream(currentSessionId, text, {
       onTextDelta: (_id, delta) => {
         setStreamingText((prev) => prev + delta);
       },
       onPart: (part) => {
-        // Could update UI with tool calls here
-        console.log("Part:", part);
+        // Add part to streaming parts for real-time display
+        setStreamingParts((prev) => [...prev, part]);
       },
       onComplete: (_message) => {
         setIsStreaming(false);
         setStreamingText("");
+        setStreamingParts([]);
         // Refresh messages to get final state
         fetchMessages(currentSessionId!)
           .then((msgs) => {
@@ -214,7 +217,7 @@ function AppContent() {
         .catch(console.error);
       fetchFiles(".")
         .then((response) => {
-          setFiles(response.files || []);
+          setFiles(response.entries || []);
         })
         .catch(console.error);
     } catch (err) {
@@ -247,6 +250,7 @@ function AppContent() {
             setCurrentSessionId={setCurrentSessionId}
             isStreaming={isStreaming}
             streamingText={streamingText}
+            streamingParts={streamingParts}
           />
         }
       />
@@ -265,6 +269,7 @@ function SessionWorkspaceWrapper(props: {
   setCurrentSessionId: (id: string | null) => void;
   isStreaming: boolean;
   streamingText: string;
+  streamingParts: Part[];
 }) {
   const { id } = useParams<{ id: string }>();
 
@@ -283,6 +288,7 @@ function SessionWorkspaceWrapper(props: {
       onRevert={props.onRevert}
       isStreaming={props.isStreaming}
       streamingText={props.streamingText}
+      streamingParts={props.streamingParts}
     />
   );
 }

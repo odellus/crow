@@ -76,38 +76,69 @@ export function EditorPane({ filePath }: Props) {
     loadFile();
   }, [filePath]);
 
+  const centerStyle: React.CSSProperties = {
+    height: "100%",
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "#0f172a",
+    fontSize: "13px",
+  };
+
   if (!filePath) {
     return (
-      <div className="h-full flex items-center justify-center text-slate-500 bg-slate-900 text-sm">
+      <div style={{ ...centerStyle, color: "#64748b" }}>
         Select a file to view
       </div>
     );
   }
 
   if (loading) {
-    return (
-      <div className="h-full flex items-center justify-center text-slate-500 bg-slate-900 text-sm">
-        Loading...
-      </div>
-    );
+    return <div style={{ ...centerStyle, color: "#64748b" }}>Loading...</div>;
   }
 
   if (error) {
     return (
-      <div className="h-full flex items-center justify-center text-red-400 bg-slate-900 text-sm p-4 text-center">
+      <div
+        style={{
+          ...centerStyle,
+          color: "#f87171",
+          padding: "16px",
+          textAlign: "center",
+        }}
+      >
         {error}
       </div>
     );
   }
 
   return (
-    <div className="h-full flex flex-col bg-slate-900">
-      <div className="px-3 py-2 border-b border-slate-700 text-xs text-slate-400 truncate bg-slate-800">
+    <div
+      style={{
+        height: "100%",
+        display: "flex",
+        flexDirection: "column",
+        backgroundColor: "#0f172a",
+      }}
+    >
+      <div
+        style={{
+          padding: "6px 12px",
+          borderBottom: "1px solid #334155",
+          fontSize: "12px",
+          color: "#94a3b8",
+          backgroundColor: "#1e293b",
+          overflow: "hidden",
+          textOverflow: "ellipsis",
+          whiteSpace: "nowrap",
+        }}
+      >
         {filePath}
       </div>
-      <div className="flex-1 overflow-hidden">
+      <div style={{ flex: 1, minHeight: 0 }}>
         <Editor
           height="100%"
+          width="100%"
           language={getLanguage(filePath)}
           value={content}
           theme="vs-dark"

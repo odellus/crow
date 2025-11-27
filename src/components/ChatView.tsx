@@ -9,6 +9,7 @@ interface Props {
   onToolClick?: (filePath: string) => void;
   isStreaming?: boolean;
   streamingText?: string;
+  streamingParts?: Part[];
 }
 
 export function ChatView({
@@ -17,6 +18,7 @@ export function ChatView({
   onToolClick,
   isStreaming = false,
   streamingText = "",
+  streamingParts = [],
 }: Props) {
   const [input, setInput] = useState("");
   const messagesEndRef = useRef<HTMLDivElement>(null);
@@ -52,8 +54,8 @@ export function ChatView({
           <MessageBubble key={msg.id} message={msg} onToolClick={onToolClick} />
         ))}
 
-        {/* Streaming indicator */}
-        {isStreaming && streamingText && (
+        {/* Streaming indicator - show when streaming with text OR parts */}
+        {isStreaming && (streamingText || streamingParts.length > 0) && (
           <div
             style={{
               marginBottom: "16px",
@@ -72,14 +74,25 @@ export function ChatView({
             >
               🦅 Assistant
             </div>
-            <div style={{ whiteSpace: "pre-wrap", lineHeight: "1.6" }}>
-              {streamingText}
-              <span style={{ animation: "blink 1s infinite" }}>▊</span>
-            </div>
+            {/* Render streaming parts (tool calls, etc.) */}
+            {streamingParts.map((part) => (
+              <PartRenderer
+                key={part.id}
+                part={part}
+                onToolClick={onToolClick}
+              />
+            ))}
+            {/* Render streaming text */}
+            {streamingText && (
+              <div style={{ whiteSpace: "pre-wrap", lineHeight: "1.6" }}>
+                {streamingText}
+                <span style={{ animation: "blink 1s infinite" }}>▊</span>
+              </div>
+            )}
           </div>
         )}
 
-        {isStreaming && !streamingText && (
+        {isStreaming && !streamingText && streamingParts.length === 0 && (
           <div
             style={{
               marginBottom: "16px",
@@ -220,21 +233,25 @@ function PartRenderer({
     );
   }
 
-  // Tool call part
-  if (partAny.name !== undefined) {
-    const toolName = partAny.name;
-    const input = partAny.input || {};
-    void partAny.output; // Available for future use
-    const state = partAny.state || "completed";
+  // Tool call part - check for 'tool' field (our ToolPart structure)
+  if (partAny.type === "tool" && partAny.tool !== undefined) {
+    const toolName = partAny.tool;
+    const state = partAny.state || {};
+    // state can be: { status: "pending"|"running"|"completed"|"error", input, output, ... }
+    const stateStatus = state.status || state.type || "completed";
+    const input = state.input || {};
+    const output = state.output || "";
 
     const getStatusInfo = () => {
-      switch (state) {
+      switch (stateStatus) {
         case "pending":
           return { bg: "#854d0e", border: "#a16207", label: "⏳ Pending" };
         case "running":
           return { bg: "#1e3a8a", border: "#3b82f6", label: "▶ Running" };
         case "completed":
           return { bg: "#14532d", border: "#22c55e", label: "✓ Done" };
+        case "error":
+          return { bg: "#7f1d1d", border: "#ef4444", label: "✗ Error" };
         default:
           return { bg: "#14532d", border: "#22c55e", label: "✓ Done" };
       }
@@ -242,7 +259,14 @@ function PartRenderer({
 
     const { bg, border, label } = getStatusInfo();
     const filePath =
-      input?.file_path || input?.path || input?.command || input?.pattern;
+      input?.file_path ||
+      input?.filePath ||
+      input?.path ||
+      input?.command ||
+      input?.pattern;
+
+    // Format input as JSON for display
+    const inputJson = JSON.stringify(input, null, 2);
 
     return (
       <div
@@ -266,6 +290,58 @@ function PartRenderer({
           <span style={{ fontSize: "12px" }}>{label}</span>
         </div>
 
+        {/* Full input */}
+        <details style={{ marginTop: "8px" }}>
+          <summary
+            style={{ cursor: "pointer", fontSize: "11px", color: "#94a3b8" }}
+          >
+            Input
+          </summary>
+          <pre
+            style={{
+              fontSize: "11px",
+              color: "#e2e8f0",
+              marginTop: "4px",
+              padding: "8px",
+              backgroundColor: "rgba(0,0,0,0.3)",
+              borderRadius: "4px",
+              overflow: "auto",
+              maxHeight: "300px",
+              whiteSpace: "pre-wrap",
+              wordBreak: "break-all",
+            }}
+          >
+            {inputJson}
+          </pre>
+        </details>
+
+        {/* Full output */}
+        {output && (
+          <details style={{ marginTop: "8px" }}>
+            <summary
+              style={{ cursor: "pointer", fontSize: "11px", color: "#94a3b8" }}
+            >
+              Output
+            </summary>
+            <pre
+              style={{
+                fontSize: "11px",
+                color: "#e2e8f0",
+                marginTop: "4px",
+                padding: "8px",
+                backgroundColor: "rgba(0,0,0,0.3)",
+                borderRadius: "4px",
+                overflow: "auto",
+                maxHeight: "300px",
+                whiteSpace: "pre-wrap",
+                wordBreak: "break-all",
+              }}
+            >
+              {output}
+            </pre>
+          </details>
+        )}
+
         {filePath && (
           <div
             style={{
@@ -273,10 +349,10 @@ function PartRenderer({
               color: "#94a3b8",
               marginTop: "4px",
               fontFamily: "monospace",
+              wordBreak: "break-all",
             }}
           >
-            {String(filePath).slice(0, 60)}
-            {String(filePath).length > 60 ? "..." : ""}
+            {String(filePath)}
           </div>
         )}
       </div>

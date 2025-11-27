@@ -131,7 +131,12 @@ pub fn get_builtin_agents() -> HashMap<String, AgentInfo> {
         permission: default_permissions(),
         model: None,
         prompt: None,
-        tools: HashMap::new(), // All tools enabled by default
+        tools: {
+            let mut tools = HashMap::new();
+            // Disable task_complete - only arbiter should use this
+            tools.insert("task_complete".to_string(), false);
+            tools
+        },
         options: HashMap::new(),
     };
     agents.insert("build".to_string(), build);
@@ -153,6 +158,35 @@ pub fn get_builtin_agents() -> HashMap<String, AgentInfo> {
     };
     agents.insert("plan".to_string(), plan);
 
+    // Executor agent - implementation agent for dual-agent system
+    // Like build, but no Task tool (prevent nesting) and uses shared todos
+    let executor = AgentInfo {
+        name: "executor".to_string(),
+        description: Some(
+            "Executor agent for dual-agent verified tasks. Does the implementation work."
+                .to_string(),
+        ),
+        mode: AgentMode::Subagent, // Only used internally by DualAgentRuntime
+        built_in: true,
+        temperature: None,
+        top_p: None,
+        color: Some("#3B82F6".to_string()), // Blue color for executor
+        permission: default_permissions(),
+        model: None,
+        prompt: None, // Uses default build-like behavior
+        tools: {
+            let mut tools = HashMap::new();
+            // Disable task - prevent infinite subagent nesting
+            tools.insert("task".to_string(), false);
+            // Disable task_complete - only arbiter can complete
+            tools.insert("task_complete".to_string(), false);
+            // Note: todoread/todowrite enabled - shared with arbiter via ToolRegistry
+            tools
+        },
+        options: HashMap::new(),
+    };
+    agents.insert("executor".to_string(), executor);
+
     // Arbiter agent - verification agent for dual-agent system
     let arbiter = AgentInfo {
         name: "arbiter".to_string(),
@@ -160,7 +194,7 @@ pub fn get_builtin_agents() -> HashMap<String, AgentInfo> {
             "Verification agent that reviews work and calls task_complete when satisfied."
                 .to_string(),
         ),
-        mode: AgentMode::Primary, // Internal use only - NOT available as a subtask
+        mode: AgentMode::Subagent, // Only used internally by DualAgentRuntime
         built_in: true,
         temperature: Some(0.3), // Lower temperature for more deterministic verification
         top_p: None,
@@ -170,11 +204,11 @@ pub fn get_builtin_agents() -> HashMap<String, AgentInfo> {
         prompt: Some(ARBITER_PROMPT.to_string()),
         tools: {
             let mut tools = HashMap::new();
-            // Enable task_complete (disabled by default for other agents)
+            // Disable task - prevent infinite subagent nesting
+            tools.insert("task".to_string(), false);
+            // Enable task_complete - only arbiter can complete the task
             tools.insert("task_complete".to_string(), true);
-            // Disable todoread/todowrite like general agent
-            tools.insert("todoread".to_string(), false);
-            tools.insert("todowrite".to_string(), false);
+            // Note: todoread/todowrite enabled - shared with executor via ToolRegistry
             tools
         },
         options: HashMap::new(),
@@ -226,7 +260,7 @@ mod tests {
     #[test]
     fn test_builtin_agents_count() {
         let agents = get_builtin_agents();
-        assert_eq!(agents.len(), 4); // general, build, plan, arbiter
+        assert_eq!(agents.len(), 5); // general, build, plan, executor, arbiter
     }
 
     #[test]
@@ -260,15 +294,33 @@ mod tests {
     }
 
     #[test]
+    fn test_executor_agent() {
+        let agents = get_builtin_agents();
+        let executor = agents.get("executor").unwrap();
+
+        assert!(executor.built_in);
+        assert_eq!(executor.mode, AgentMode::Subagent);
+        // Executor cannot spawn subagents or complete tasks
+        assert!(!executor.is_tool_enabled("task"));
+        assert!(!executor.is_tool_enabled("task_complete"));
+        // But can use todos (shared with arbiter)
+        assert!(executor.is_tool_enabled("todowrite"));
+        assert!(executor.is_tool_enabled("todoread"));
+    }
+
+    #[test]
     fn test_arbiter_agent() {
         let agents = get_builtin_agents();
         let arbiter = agents.get("arbiter").unwrap();
 
         assert!(arbiter.built_in);
-        assert_eq!(arbiter.mode, AgentMode::Primary); // Internal use only, not a subtask
+        assert_eq!(arbiter.mode, AgentMode::Subagent);
+        // Arbiter cannot spawn subagents but CAN complete tasks
+        assert!(!arbiter.is_tool_enabled("task"));
         assert!(arbiter.is_tool_enabled("task_complete"));
-        assert!(!arbiter.is_tool_enabled("todowrite"));
-        assert!(!arbiter.is_tool_enabled("todoread"));
+        // Can use todos (shared with executor)
+        assert!(arbiter.is_tool_enabled("todowrite"));
+        assert!(arbiter.is_tool_enabled("todoread"));
         assert!(arbiter.prompt.is_some());
         assert_eq!(arbiter.temperature, Some(0.3));
     }

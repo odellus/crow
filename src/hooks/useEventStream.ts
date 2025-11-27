@@ -49,7 +49,7 @@ export async function fetchMessages(
   return invoke<MessageWithParts[]>("get_messages", { sessionId });
 }
 
-export async function deleteSession(sessionId: string): Promise<void> {
+export async function deleteSession(_sessionId: string): Promise<void> {
   // TODO: Implement delete_session command in backend
   console.warn("deleteSession not yet implemented");
 }
@@ -66,8 +66,17 @@ export interface StreamCallbacks {
 }
 
 interface StreamEvent {
-  type: "part" | "thinking" | "tool_start" | "tool_end" | "complete" | "error";
+  type:
+    | "part"
+    | "text_delta"
+    | "thinking"
+    | "tool_start"
+    | "tool_end"
+    | "complete"
+    | "error";
   part?: Part;
+  part_id?: string;
+  delta?: string;
   text?: string;
   tool_name?: string;
   tool_id?: string;
@@ -80,7 +89,7 @@ interface StreamEvent {
 export async function sendMessage(
   sessionId: string,
   text: string,
-  agent: string = "build",
+  _agent: string = "build",
 ): Promise<void> {
   // Create a channel to receive streaming events
   const channel = new Channel<StreamEvent>();
@@ -97,7 +106,7 @@ export function sendMessageStream(
   sessionId: string,
   text: string,
   callbacks: StreamCallbacks,
-  agent: string = "build",
+  _agent: string = "build",
 ): () => void {
   let cancelled = false;
 
@@ -109,13 +118,15 @@ export function sendMessageStream(
     if (cancelled) return;
 
     switch (event.type) {
+      case "text_delta":
+        if (event.part_id && event.delta) {
+          callbacks.onTextDelta?.(event.part_id, event.delta);
+        }
+        break;
+
       case "part":
         if (event.part) {
           callbacks.onPart?.(event.part);
-          // Extract text delta if this is a text part
-          if ("text" in event.part) {
-            callbacks.onTextDelta?.(event.part.id, event.part.text);
-          }
         }
         break;
 
@@ -179,16 +190,12 @@ export function sendMessageStream(
 // File API - Uses Tauri invoke
 // ============================================================================
 
-export interface FileListResponse {
-  files: string[];
-  path: string;
-}
+import type { FileListResponse } from "../types";
 
 export async function fetchFiles(
   path: string = ".",
 ): Promise<FileListResponse> {
-  const files = await invoke<string[]>("list_directory", { path });
-  return { files, path };
+  return invoke<FileListResponse>("list_directory", { path });
 }
 
 export async function fetchFileContent(path: string): Promise<string> {
@@ -200,16 +207,16 @@ export async function fetchFileContent(path: string): Promise<string> {
 // ============================================================================
 
 export async function revertSession(
-  sessionId: string,
-  messageId: string,
-  partId: string,
+  _sessionId: string,
+  _messageId: string,
+  _partId: string,
 ): Promise<Session> {
   // TODO: Implement revert_session command in backend
   console.warn("revertSession not yet implemented");
   throw new Error("Not implemented");
 }
 
-export async function unrevertSession(sessionId: string): Promise<Session> {
+export async function unrevertSession(_sessionId: string): Promise<Session> {
   // TODO: Implement unrevert_session command in backend
   console.warn("unrevertSession not yet implemented");
   throw new Error("Not implemented");
