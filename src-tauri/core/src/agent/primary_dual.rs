@@ -245,12 +245,7 @@ impl PrimaryDualRuntime {
                     is_human: true,
                 });
 
-                // User's feedback goes back to planner as "architect feedback"
-                let feedback_formatted = format!(
-                    "# Architect Feedback (Human - Step {})\n\n{}\n",
-                    step, user_feedback
-                );
-                self.add_user_message(&planner_session.id, &feedback_formatted)?;
+                self.add_user_message(&planner_session.id, &user_feedback)?;
 
                 let _ = event_tx.send(PrimaryDualEvent::ArchitectTurnComplete {
                     step,
@@ -351,11 +346,7 @@ impl PrimaryDualRuntime {
             // Not complete - send architect's feedback to planner
             let architect_turn_markdown =
                 render_turn_to_markdown(&architect_user_msg, &architect_result);
-            let planner_feedback = format!(
-                "# Architect Feedback (Step {})\n\n{}\n",
-                step, architect_turn_markdown
-            );
-            self.add_user_message(&planner_session.id, &planner_feedback)?;
+            self.add_user_message(&planner_session.id, &architect_turn_markdown)?;
         }
 
         // Max steps reached without completion
