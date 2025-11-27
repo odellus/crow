@@ -115,6 +115,7 @@ async fn main() {
                     chat_args.session_id.as_deref(),
                     &chat_args.message,
                     chat_args.mode,
+                    chat_args.new_session,
                 )
                 .await;
             }
@@ -219,7 +220,7 @@ async fn main() {
         _ => {
             // Treat unknown command as chat message
             let message = args[1..].join(" ");
-            chat_streaming(None, &message, OutputMode::Verbose).await;
+            chat_streaming(None, &message, OutputMode::Verbose, false).await;
         }
     }
 }
@@ -258,6 +259,7 @@ fn print_usage() {
     println!("{}", "USAGE:".yellow());
     println!("  crow-cli repl [session-id]           Interactive REPL mode");
     println!("  crow-cli chat \"message\"              Full verbose streaming (default)");
+    println!("  crow-cli chat --new \"msg\"           Force new session (don't resume)");
     println!("  crow-cli chat --quiet \"msg\"         Just the final response");
     println!("  crow-cli chat --json \"msg\"          JSON output, no streaming");
     println!("  crow-cli chat --session ID \"msg\"    Send to specific session");
@@ -309,13 +311,15 @@ struct ChatArgs {
     session_id: Option<String>,
     message: String,
     mode: OutputMode,
-    auto: bool, // Enable dual-agent (planner ↔ architect) mode
+    auto: bool,        // Enable dual-agent (planner ↔ architect) mode
+    new_session: bool, // Force creation of a new session
 }
 
 fn parse_chat_args(args: &[String]) -> ChatArgs {
     let mut session_id = None;
     let mut mode = OutputMode::Verbose;
     let mut auto = false;
+    let mut new_session = false;
     let mut message_parts = Vec::new();
     let mut i = 0;
 
@@ -343,6 +347,11 @@ fn parse_chat_args(args: &[String]) -> ChatArgs {
                 i += 1;
                 continue;
             }
+            "--new" | "-n" => {
+                new_session = true;
+                i += 1;
+                continue;
+            }
             _ => {
                 message_parts.push(args[i].clone());
             }
@@ -355,6 +364,7 @@ fn parse_chat_args(args: &[String]) -> ChatArgs {
         message: message_parts.join(" "),
         mode,
         auto,
+        new_session,
     }
 }
 
@@ -1336,8 +1346,14 @@ async fn run_repl(session_id: Option<&str>) {
 }
 
 /// Streaming chat with full observability
-async fn chat_streaming(session_id: Option<&str>, message: &str, mode: OutputMode) {
+async fn chat_streaming(
+    session_id: Option<&str>,
+    message: &str,
+    mode: OutputMode,
+    new_session: bool,
+) {
     let working_dir = env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+    let working_dir_str = working_dir.to_string_lossy().to_string();
     let start_time = Instant::now();
 
     // Initialize store
@@ -1357,21 +1373,24 @@ async fn chat_streaming(session_id: Option<&str>, message: &str, mode: OutputMod
             }
         },
         None => {
-            // Use most recent TOP-LEVEL session (no parent) or create new one
-            // Filter out subagent sessions which have parent_id set
-            match store
-                .list(None)
-                .ok()
-                .and_then(|sessions| sessions.into_iter().find(|s| s.parent_id.is_none()))
-            {
-                Some(s) => s,
-                None => store
-                    .create(
-                        working_dir.to_string_lossy().to_string(),
-                        None,
-                        Some("CLI Chat".to_string()),
-                    )
-                    .expect("Failed to create session"),
+            // If --new flag, always create a new session
+            if new_session {
+                store
+                    .create(working_dir_str.clone(), None, Some("CLI Chat".to_string()))
+                    .expect("Failed to create session")
+            } else {
+                // Use most recent TOP-LEVEL session IN THIS DIRECTORY or create new one
+                // Filter by: no parent (not a subagent) AND same working directory
+                match store.list(None).ok().and_then(|sessions| {
+                    sessions
+                        .into_iter()
+                        .find(|s| s.parent_id.is_none() && s.directory == working_dir_str)
+                }) {
+                    Some(s) => s,
+                    None => store
+                        .create(working_dir_str.clone(), None, Some("CLI Chat".to_string()))
+                        .expect("Failed to create session"),
+                }
             }
         }
     };
