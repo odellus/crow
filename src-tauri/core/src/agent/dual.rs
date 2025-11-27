@@ -262,15 +262,8 @@ impl DualAgentRuntime {
             // Not complete - render arbiter's LATEST TURN and send to executor
             let arbiter_turn_markdown = render_turn_to_markdown(&arbiter_user_msg, &arbiter_result);
 
-            let executor_feedback = format!(
-                "# Arbiter Feedback (Step {})\n\n\
-                 The arbiter reviewed your work and has feedback. Address the issues below.\n\n\
-                 ---\n\n{}",
-                step, arbiter_turn_markdown
-            );
-
             // Add arbiter's feedback as a user message to executor's session
-            self.add_user_message(&executor_session.id, &executor_feedback)?;
+            self.add_user_message(&executor_session.id, &arbiter_turn_markdown)?;
         }
 
         // Max steps reached without completion
