@@ -121,10 +121,13 @@ Session: ses_Vdh2gwl6PAsSbthwhpzGQo
 
 ## XDG Storage Paths
 
+**See [VISIBILITY.md](./VISIBILITY.md) for detailed storage structure and JSON schemas.**
+
 | Component | Path |
 |-----------|------|
 | Sessions | `~/.local/share/crow/storage/session/{projectID}/{sessionID}.json` |
 | Messages | `~/.local/share/crow/storage/message/{sessionID}/{messageID}.json` |
+| Parts | `~/.local/share/crow/storage/part/{messageID}/part-*.json` |
 | Todos | `~/.local/share/crow/storage/todo/{sessionID}.json` |
 | Snapshots | `~/.local/share/crow/snapshots/{project_id}/` |
 | Agent Log | `~/.local/state/crow/logs/agent.log` |
@@ -382,7 +385,12 @@ One turn = full ReACT loop until agent responds with just text (no tools).
 
 ### Dual-Agent Architecture (subagent_type: "verified")
 
-The dual-agent system pairs an **Executor** (build agent) with an **Arbiter** (verification agent).
+The dual-agent system pairs an **Executor** with an **Arbiter** (verification agent).
+
+**Agents (defined in `agent/builtins.rs`):**
+- `executor` - Like build but NO Task tool (prevents nesting), NO task_complete
+- `arbiter` - Verification agent with task_complete, NO Task tool
+- Both share todo state via ToolRegistry
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
@@ -390,7 +398,7 @@ The dual-agent system pairs an **Executor** (build agent) with an **Arbiter** (v
 │                                                             │
 │  ┌─────────────────┐         ┌─────────────────┐           │
 │  │ EXECUTOR        │         │ ARBITER         │           │
-│  │ (build agent)   │         │ (arbiter agent) │           │
+│  │ (executor agent)│         │ (arbiter agent) │           │
 │  │                 │         │                 │           │
 │  │ Own session     │ ──────► │ Own session     │           │
 │  │ Full ReACT loop │  turn   │ Full ReACT loop │           │
