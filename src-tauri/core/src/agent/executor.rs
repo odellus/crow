@@ -551,6 +551,7 @@ impl AgentExecutor {
         let mut total_input_tokens = 0u64;
         let mut total_output_tokens = 0u64;
         let tool_defs = self.get_agent_tools(&agent);
+        let mut task_completed = false; // Flag to break ReACT loop when task_complete is called
 
         let max_iterations = 10;
         for _iteration in 0..max_iterations {
@@ -815,11 +816,25 @@ impl AgentExecutor {
                     // Add tool result to context
                     llm_messages.push(ChatCompletionRequestMessage::Tool(
                         async_openai::types::ChatCompletionRequestToolMessageArgs::default()
-                            .content(tool_result.output)
+                            .content(tool_result.output.clone())
                             .tool_call_id(tool_id)
                             .build()
                             .map_err(|e| format!("Failed to build tool message: {}", e))?,
                     ));
+
+                    // CRITICAL: If task_complete was called, break out of the ReACT loop immediately
+                    // This prevents the model from generating more content after completing a task
+                    if tool_name == "task_complete" && tool_result.output.contains("Task complete")
+                    {
+                        tracing::info!("task_complete called - breaking ReACT loop");
+                        task_completed = true;
+                        break;
+                    }
+                }
+
+                // Break outer loop if task_complete was called
+                if task_completed {
+                    break;
                 }
 
                 continue;

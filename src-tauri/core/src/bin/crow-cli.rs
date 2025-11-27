@@ -45,7 +45,7 @@ fn thinking_purple(s: &str) -> ColoredString {
 }
 
 use crow_core::{
-    agent::{AgentExecutor, ExecutionEvent},
+    agent::{AgentExecutor, ExecutionEvent, PrimaryDualEvent, PrimaryDualRuntime},
     global::GlobalPaths,
     session::{MessageWithParts, SessionLockManager, SessionStore},
     storage::CrowStorage,
@@ -98,16 +98,26 @@ async fn main() {
             if chat_args.message.is_empty() {
                 eprintln!(
                     "{}",
-                    "Usage: crow-cli chat [--json|--quiet] [--session <id>] \"message\"".yellow()
+                    "Usage: crow-cli chat [--json|--quiet|--auto] [--session <id>] \"message\""
+                        .yellow()
                 );
                 return;
             }
-            chat_streaming(
-                chat_args.session_id.as_deref(),
-                &chat_args.message,
-                chat_args.mode,
-            )
-            .await;
+            if chat_args.auto {
+                chat_dual_agent(
+                    chat_args.session_id.as_deref(),
+                    &chat_args.message,
+                    chat_args.mode,
+                )
+                .await;
+            } else {
+                chat_streaming(
+                    chat_args.session_id.as_deref(),
+                    &chat_args.message,
+                    chat_args.mode,
+                )
+                .await;
+            }
         }
         "sessions" | "list" => {
             list_sessions().await;
@@ -251,6 +261,7 @@ fn print_usage() {
     println!("  crow-cli chat --quiet \"msg\"         Just the final response");
     println!("  crow-cli chat --json \"msg\"          JSON output, no streaming");
     println!("  crow-cli chat --session ID \"msg\"    Send to specific session");
+    println!("  crow-cli chat --auto \"msg\"          Dual-agent mode (Planner ↔ Architect)");
     println!();
     println!("{}", "SESSION COMMANDS:".yellow());
     println!("  crow-cli new [title]                 Create new session");
@@ -298,11 +309,13 @@ struct ChatArgs {
     session_id: Option<String>,
     message: String,
     mode: OutputMode,
+    auto: bool, // Enable dual-agent (planner ↔ architect) mode
 }
 
 fn parse_chat_args(args: &[String]) -> ChatArgs {
     let mut session_id = None;
     let mut mode = OutputMode::Verbose;
+    let mut auto = false;
     let mut message_parts = Vec::new();
     let mut i = 0;
 
@@ -325,6 +338,11 @@ fn parse_chat_args(args: &[String]) -> ChatArgs {
                 i += 1;
                 continue;
             }
+            "--auto" | "-a" => {
+                auto = true;
+                i += 1;
+                continue;
+            }
             _ => {
                 message_parts.push(args[i].clone());
             }
@@ -336,6 +354,7 @@ fn parse_chat_args(args: &[String]) -> ChatArgs {
         session_id,
         message: message_parts.join(" "),
         mode,
+        auto,
     }
 }
 
@@ -1564,6 +1583,321 @@ async fn chat_streaming(session_id: Option<&str>, message: &str, mode: OutputMod
                 );
             }
             std::process::exit(1);
+        }
+    }
+}
+
+/// Dual-agent chat mode (Planner ↔ Architect)
+///
+/// In this mode:
+/// - Planner does the work (like build agent) in its OWN session
+/// - Architect reviews in its OWN session and can call task_complete
+/// - User can interrupt and "be" the Architect by typing during execution
+async fn chat_dual_agent(_session_id: Option<&str>, message: &str, mode: OutputMode) {
+    let working_dir = env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+    let start_time = Instant::now();
+
+    // Initialize store
+    let store = SessionStore::new();
+    if let Err(e) = store.init_sync() {
+        eprintln!("{}", format!("Failed to init storage: {}", e).red());
+        return;
+    }
+
+    // Create provider
+    let (provider_name, provider_config) = if env::var("ANTHROPIC_API_KEY").is_ok() {
+        (
+            "anthropic",
+            ProviderConfig::custom(
+                "anthropic".to_string(),
+                "https://api.anthropic.com/v1".to_string(),
+                "ANTHROPIC_API_KEY".to_string(),
+                "claude-sonnet-4-20250514".to_string(),
+            ),
+        )
+    } else if env::var("OPENAI_API_KEY").is_ok() {
+        ("openai", ProviderConfig::openai())
+    } else {
+        ("moonshot", ProviderConfig::moonshot())
+    };
+
+    // Print header
+    if mode == OutputMode::Verbose {
+        eprintln!();
+        eprintln!(
+            "{}",
+            "═══════════════════════════════════════════════════════════════".dimmed()
+        );
+        eprintln!(
+            "{} {}",
+            "🔄 DUAL-AGENT MODE".cyan().bold(),
+            "(Planner ↔ Architect)".dimmed()
+        );
+        eprintln!(
+            "{} {} {}",
+            "Provider:".dimmed(),
+            provider_name.cyan(),
+            format!("({})", provider_config.default_model).dimmed()
+        );
+        eprintln!(
+            "{} {}",
+            "Working dir:".dimmed(),
+            working_dir.display().to_string().dimmed()
+        );
+        eprintln!(
+            "{}",
+            "Press Ctrl+C to abort. Interrupt-as-Architect available in REPL mode.".yellow()
+        );
+        eprintln!(
+            "{}",
+            "═══════════════════════════════════════════════════════════════".dimmed()
+        );
+        eprintln!();
+
+        // Show user message
+        eprintln!("{}", "▶ USER REQUEST".white().bold());
+        eprintln!("{}", message.white());
+        eprintln!();
+    }
+
+    // Create shared resources
+    let session_store = Arc::new(store);
+    let lock_manager = Arc::new(SessionLockManager::new());
+    let agent_registry = Arc::new(AgentRegistry::new_with_config(&working_dir).await);
+
+    // Create primary dual runtime
+    let runtime = PrimaryDualRuntime::new(
+        session_store.clone(),
+        agent_registry,
+        lock_manager,
+        provider_config,
+    );
+
+    // Create channels for events and interrupts
+    let (event_tx, mut event_rx) = mpsc::unbounded_channel::<PrimaryDualEvent>();
+    // No custom interrupt - Ctrl+C works fine for CLI
+    let (_interrupt_tx, interrupt_rx) = mpsc::unbounded_channel::<String>();
+
+    // Spawn the dual-agent runtime
+    let message_clone = message.to_string();
+    let working_dir_clone = working_dir.clone();
+    let runtime_handle = tokio::spawn(async move {
+        runtime
+            .run_streaming(
+                &message_clone,
+                &working_dir_clone,
+                5, // max_steps
+                event_tx,
+                interrupt_rx,
+            )
+            .await
+    });
+
+    // Create renderer for dual-agent events
+    let mut dual_renderer = DualAgentRenderer::new(mode);
+
+    // Process events
+    while let Some(event) = event_rx.recv().await {
+        dual_renderer.handle_event(event.clone());
+
+        // Check if complete
+        if let PrimaryDualEvent::Complete(_) = event {
+            break;
+        }
+        if let PrimaryDualEvent::Error(_) = event {
+            break;
+        }
+    }
+
+    // Wait for runtime to complete
+    match runtime_handle.await {
+        Ok(Ok(result)) => {
+            dual_renderer.finish(start_time.elapsed(), &result);
+        }
+        Ok(Err(e)) => {
+            if mode != OutputMode::Json {
+                eprintln!();
+                eprintln!("{} {}", "🟥 ERROR:".red().bold(), e.red());
+            }
+            std::process::exit(1);
+        }
+        Err(e) => {
+            if mode != OutputMode::Json {
+                eprintln!();
+                eprintln!("{} {}", "🟥 TASK ERROR:".red().bold(), e.to_string().red());
+            }
+            std::process::exit(1);
+        }
+    }
+}
+
+/// Renderer for dual-agent events
+struct DualAgentRenderer {
+    mode: OutputMode,
+    current_agent: Option<String>, // "planner" or "architect"
+    inner_renderer: StreamRenderer,
+    step: u32,
+}
+
+impl DualAgentRenderer {
+    fn new(mode: OutputMode) -> Self {
+        Self {
+            mode,
+            current_agent: None,
+            inner_renderer: StreamRenderer::new(mode),
+            step: 0,
+        }
+    }
+
+    fn handle_event(&mut self, event: PrimaryDualEvent) {
+        match event {
+            PrimaryDualEvent::PlannerTurnStart { step } => {
+                self.step = step;
+                self.current_agent = Some("planner".to_string());
+                if self.mode == OutputMode::Verbose {
+                    eprintln!();
+                    eprintln!(
+                        "{} {}",
+                        "🔵 PLANNER".truecolor(59, 130, 246).bold(), // Blue
+                        format!("(Step {})", step).dimmed()
+                    );
+                }
+            }
+            PrimaryDualEvent::PlannerEvent(exec_event) => {
+                self.inner_renderer.handle_event(exec_event);
+            }
+            PrimaryDualEvent::PlannerTurnComplete { step: _ } => {
+                self.inner_renderer.end_current_output();
+                if self.mode == OutputMode::Verbose {
+                    eprintln!();
+                }
+            }
+            PrimaryDualEvent::WaitingForArchitect { step: _ } => {
+                if self.mode == OutputMode::Verbose {
+                    eprintln!(
+                        "{}",
+                        "⏳ Waiting for Architect (type to interrupt, or wait for AI)..."
+                            .yellow()
+                            .dimmed()
+                    );
+                }
+            }
+            PrimaryDualEvent::ArchitectTurnStart { step, is_human } => {
+                self.step = step;
+                self.current_agent = Some("architect".to_string());
+                if self.mode == OutputMode::Verbose {
+                    let label = if is_human {
+                        "🟢 ARCHITECT (Human)".truecolor(16, 185, 129).bold()
+                    } else {
+                        "🟢 ARCHITECT (AI)".truecolor(16, 185, 129).bold()
+                    };
+                    eprintln!();
+                    eprintln!("{} {}", label, format!("(Step {})", step).dimmed());
+                }
+            }
+            PrimaryDualEvent::ArchitectEvent(exec_event) => {
+                self.inner_renderer.handle_event(exec_event);
+            }
+            PrimaryDualEvent::ArchitectTurnComplete {
+                step: _,
+                is_human: _,
+                task_complete,
+            } => {
+                self.inner_renderer.end_current_output();
+                if self.mode == OutputMode::Verbose && task_complete {
+                    eprintln!();
+                    eprintln!("{}", "✅ TASK COMPLETE".green().bold());
+                }
+            }
+            PrimaryDualEvent::Complete(_result) => {
+                // Handled in finish()
+            }
+            PrimaryDualEvent::Error(e) => {
+                if self.mode != OutputMode::Json {
+                    eprintln!();
+                    eprintln!("{} {}", "🟥 ERROR:".red().bold(), e.red());
+                }
+            }
+        }
+    }
+
+    fn finish(
+        &mut self,
+        elapsed: std::time::Duration,
+        result: &crow_core::agent::PrimaryDualResult,
+    ) {
+        if self.mode == OutputMode::Json {
+            let output = serde_json::json!({
+                "mode": "dual-agent",
+                "planner_session_id": result.planner_session_id,
+                "architect_session_id": result.architect_session_id,
+                "completed": result.completed,
+                "steps": result.steps,
+                "summary": result.summary,
+                "verification": result.verification,
+                "interrupted": result.interrupted,
+                "usage": {
+                    "cost": result.total_cost,
+                    "tokens_in": result.total_input_tokens,
+                    "tokens_out": result.total_output_tokens,
+                },
+                "duration_ms": elapsed.as_millis(),
+            });
+            println!("{}", serde_json::to_string_pretty(&output).unwrap());
+        } else if self.mode == OutputMode::Verbose {
+            eprintln!();
+            eprintln!(
+                "{}",
+                "═══════════════════════════════════════════════════════════════".dimmed()
+            );
+
+            let status = if result.completed {
+                mint_green("✓ COMPLETED").bold()
+            } else if result.interrupted {
+                "⚡ INTERRUPTED".yellow().bold()
+            } else {
+                "⚠ MAX STEPS".yellow().bold()
+            };
+
+            eprintln!(
+                "{} in {} steps | {:.1}s",
+                status,
+                result.steps,
+                elapsed.as_secs_f64()
+            );
+
+            if let Some(summary) = &result.summary {
+                eprintln!("{} {}", "Summary:".dimmed(), summary);
+            }
+            if let Some(verification) = &result.verification {
+                eprintln!("{} {}", "Verification:".dimmed(), verification);
+            }
+
+            let cost_str = if result.total_cost < 0.01 {
+                format!("${:.4}", result.total_cost)
+            } else {
+                format!("${:.2}", result.total_cost)
+            };
+
+            eprintln!(
+                "{} {} | {} {}k in, {}k out",
+                "Cost:".dimmed(),
+                cost_str.green(),
+                "Tokens:".dimmed(),
+                result.total_input_tokens / 1000,
+                result.total_output_tokens / 1000,
+            );
+            eprintln!(
+                "{} {} | {} {}",
+                "Planner:".dimmed(),
+                result.planner_session_id.yellow(),
+                "Architect:".dimmed(),
+                result.architect_session_id.yellow()
+            );
+            eprintln!(
+                "{}",
+                "═══════════════════════════════════════════════════════════════".dimmed()
+            );
         }
     }
 }

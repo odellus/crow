@@ -215,10 +215,112 @@ pub fn get_builtin_agents() -> HashMap<String, AgentInfo> {
     };
     agents.insert("arbiter".to_string(), arbiter);
 
+    // Planner agent - primary agent for dual-agent mode (the "executor" role at primary level)
+    // Does the actual work, responds to architect feedback
+    let planner = AgentInfo {
+        name: "planner".to_string(),
+        description: Some(
+            "Primary planning agent that executes tasks. Works with Architect in dual-agent mode."
+                .to_string(),
+        ),
+        mode: AgentMode::Primary,
+        built_in: true,
+        temperature: None,
+        top_p: None,
+        color: Some("#3B82F6".to_string()), // Blue color
+        permission: default_permissions(),
+        model: None,
+        prompt: None, // Uses default build-like behavior
+        tools: {
+            let mut tools = HashMap::new();
+            // Disable task - no subagents for primary dual mode (for now)
+            tools.insert("task".to_string(), false);
+            // Disable task_complete - only architect can complete
+            tools.insert("task_complete".to_string(), false);
+            tools
+        },
+        options: HashMap::new(),
+    };
+    agents.insert("planner".to_string(), planner);
+
+    // Architect agent - verifier for primary dual-agent mode
+    // Reviews planner's work, can call task_complete to end the loop
+    // User can also "be" the architect by interrupting
+    let architect = AgentInfo {
+        name: "architect".to_string(),
+        description: Some(
+            "Verification agent that reviews Planner's work. Calls task_complete when satisfied."
+                .to_string(),
+        ),
+        mode: AgentMode::Primary, // Primary because it's used at the top level
+        built_in: true,
+        temperature: Some(0.3), // Lower temperature for more deterministic verification
+        top_p: None,
+        color: Some("#10B981".to_string()), // Green color
+        permission: default_permissions(),
+        model: None,
+        prompt: Some(ARCHITECT_PROMPT.to_string()),
+        tools: {
+            let mut tools = HashMap::new();
+            // Disable task - no subagents for primary dual mode
+            tools.insert("task".to_string(), false);
+            // Enable task_complete - only architect can complete!
+            tools.insert("task_complete".to_string(), true);
+            tools
+        },
+        options: HashMap::new(),
+    };
+    agents.insert("architect".to_string(), architect);
+
     agents
 }
 
-/// System prompt for the arbiter agent in dual-agent mode
+/// System prompt for the architect agent in primary dual-agent mode
+/// Used when user runs `crow-cli chat --auto`
+const ARCHITECT_PROMPT: &str = r#"You are the Architect agent in a dual-agent system.
+
+You review the Planner's work. Either call task_complete OR provide feedback. Nothing else.
+
+## CRITICAL RULES
+
+1. When you call `task_complete`, STOP IMMEDIATELY. Do not generate any more text or tool calls after it.
+2. You get ONE response per turn. Make your decision and execute it.
+3. Do NOT explain what you're going to do. Just do it.
+
+## Your job
+
+Verify the Planner's work:
+- Read the code/files if needed
+- Run tests if applicable (cargo test, npm test, etc.)
+- Check if requirements are met
+
+## Decision
+
+**If work is complete and correct:** Call `task_complete` with summary and verification. STOP.
+
+**If work has issues:** Provide brief, specific feedback. The Planner will fix it.
+
+## Example good responses
+
+GOOD (complete):
+```
+<calls task_complete with summary>
+```
+
+GOOD (needs work):
+```
+Tests fail: `cargo test` shows 2 failures in auth module. Fix the token validation.
+```
+
+BAD:
+```
+Let me verify the work... I'll check the files... Now I'll run tests... The task is complete, let me call task_complete... <calls task_complete> Great, I've verified everything!
+```
+
+Be terse. One action per turn.
+"#;
+
+/// System prompt for the arbiter agent in subagent dual-agent mode
 const ARBITER_PROMPT: &str = r#"You are the Arbiter agent in a dual-agent verification system.
 
 You receive the Executor's full session showing everything it did - all thinking, tool calls, and outputs.
@@ -260,7 +362,7 @@ mod tests {
     #[test]
     fn test_builtin_agents_count() {
         let agents = get_builtin_agents();
-        assert_eq!(agents.len(), 5); // general, build, plan, executor, arbiter
+        assert_eq!(agents.len(), 7); // general, build, plan, executor, arbiter, planner, architect
     }
 
     #[test]
@@ -323,5 +425,37 @@ mod tests {
         assert!(arbiter.is_tool_enabled("todoread"));
         assert!(arbiter.prompt.is_some());
         assert_eq!(arbiter.temperature, Some(0.3));
+    }
+
+    #[test]
+    fn test_planner_agent() {
+        let agents = get_builtin_agents();
+        let planner = agents.get("planner").unwrap();
+
+        assert!(planner.built_in);
+        assert_eq!(planner.mode, AgentMode::Primary);
+        // Planner cannot spawn subagents or complete tasks
+        assert!(!planner.is_tool_enabled("task"));
+        assert!(!planner.is_tool_enabled("task_complete"));
+        // Can use todos
+        assert!(planner.is_tool_enabled("todowrite"));
+        assert!(planner.is_tool_enabled("todoread"));
+    }
+
+    #[test]
+    fn test_architect_agent() {
+        let agents = get_builtin_agents();
+        let architect = agents.get("architect").unwrap();
+
+        assert!(architect.built_in);
+        assert_eq!(architect.mode, AgentMode::Primary);
+        // Architect cannot spawn subagents but CAN complete tasks
+        assert!(!architect.is_tool_enabled("task"));
+        assert!(architect.is_tool_enabled("task_complete"));
+        // Can use todos
+        assert!(architect.is_tool_enabled("todowrite"));
+        assert!(architect.is_tool_enabled("todoread"));
+        assert!(architect.prompt.is_some());
+        assert_eq!(architect.temperature, Some(0.3));
     }
 }
