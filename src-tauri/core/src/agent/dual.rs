@@ -23,7 +23,7 @@ use crate::providers::{ProviderClient, ProviderConfig};
 use crate::session::export::render_turn_to_markdown;
 use crate::session::{MessageWithParts, SessionLockManager, SessionStore};
 use crate::tools::ToolRegistry;
-use crate::types::{Message, MessageTime, Part};
+use crate::types::{CacheTokens, Message, MessagePath, MessageTime, Part, TokenUsage};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::path::Path;
@@ -152,10 +152,17 @@ impl DualAgentRuntime {
         // Share todo state between executor and arbiter sessions
         tool_registry.share_todo_sessions(&executor_session.id, &arbiter_session.id);
 
-        // Step 0: Send initial prompt to BOTH sessions
-        // Both executor and arbiter need to know what the task is
+        // Step 0: Send initial prompt to executor session
         let initial_user_msg = self.add_user_message(&executor_session.id, initial_prompt)?;
-        self.add_user_message(&arbiter_session.id, initial_prompt)?;
+
+        // Set up arbiter session with correct message flow
+        // FROM ARBITER'S PERSPECTIVE:
+        //   USER (executor): "How can I help you?"
+        //   ASSISTANT (arbiter): (initial request - the task to verify)
+        //   USER (executor): (executor's work)
+        //   ASSISTANT (arbiter): (verification/feedback)
+        self.add_user_message(&arbiter_session.id, "How can I help you?")?;
+        self.add_assistant_message(&arbiter_session.id, initial_prompt)?;
 
         // Track tool calls and costs - both for agent visibility AND CLI streaming
         let mut all_tool_calls: Vec<AgentToolCall> = vec![];
@@ -348,6 +355,58 @@ impl DualAgentRuntime {
                     created: now,
                     completed: Some(now),
                 },
+                summary: None,
+                metadata: None,
+            },
+            parts: vec![Part::Text {
+                id: format!("part-{}", uuid::Uuid::new_v4()),
+                session_id: session_id.to_string(),
+                message_id: msg_id,
+                text: text.to_string(),
+            }],
+        };
+
+        self.session_store
+            .add_message(session_id, message.clone())?;
+        Ok(message)
+    }
+
+    /// Add an assistant message to a session (for prefilling arbiter context)
+    fn add_assistant_message(
+        &self,
+        session_id: &str,
+        text: &str,
+    ) -> Result<MessageWithParts, String> {
+        let msg_id = format!("msg-assistant-{}", uuid::Uuid::new_v4());
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_millis() as u64;
+
+        let message = MessageWithParts {
+            info: Message::Assistant {
+                id: msg_id.clone(),
+                session_id: session_id.to_string(),
+                parent_id: String::new(),
+                model_id: String::new(),
+                provider_id: String::new(),
+                mode: "prefill".to_string(),
+                time: MessageTime {
+                    created: now,
+                    completed: Some(now),
+                },
+                path: MessagePath {
+                    cwd: String::new(),
+                    root: String::new(),
+                },
+                cost: 0.0,
+                tokens: TokenUsage {
+                    input: 0,
+                    output: 0,
+                    reasoning: 0,
+                    cache: CacheTokens { read: 0, write: 0 },
+                },
+                error: None,
                 summary: None,
                 metadata: None,
             },
