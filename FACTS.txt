@@ -1,0 +1,8 @@
+CROW PROJECT FACTS
+==================
+
+1. PROJECT PURPOSE: Crow is an AI agent implementation project that uses OpenHands SDK to build an automated iterative refinement workflow, integrating OpenHands as the default ACP (Agent Communication Protocol) agent into crow_ide.
+
+2. ARCHITECTURE: The project implements a three-agent workflow - Planning Agent creates task lists from CROW_AGENT_PLAN.md, Implementation Agent executes tasks with tools (file_editor, terminal, task_tracker), and Critic Agent tests and scores quality using playwright-mcp for browser automation and zai-vision-server for visual analysis.
+
+3. TECHNOLOGY STACK: Built with Python 3.12+ and uv package management, uses local OpenHands SDK and OpenHands Tools dependencies, integrates with ZAI API (LLM model: anthropic/glm-4.7), and implements MCP (Model Context Protocol) servers for advanced testing capabilities with configurable quality thresholds (default 90%) and iteration limits (default 5).

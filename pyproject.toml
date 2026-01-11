@@ -1,0 +1,17 @@
+[project]
+name = "crow"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "ipython>=9.9.0",
+    "openai>=2.14.0",
+    "openhands-sdk",
+    "openhands-tools",
+    "python-dotenv>=1.2.1",
+]
+
+[tool.uv.sources]
+openhands-sdk = { path = "../software-agent-sdk/openhands-sdk", editable = true }
+openhands-tools = { path = "../software-agent-sdk/openhands-tools", editable = true }
