@@ -9,7 +9,8 @@ async def test_crow_acp():
     """Test the ACP server with a simple prompt."""
     proc = await asyncio.create_subprocess_exec(
         ".venv/bin/python",
-        "src/crow/agent/acp_server.py",
+        "-m",
+        "crow.agent.acp_server",
         stdin=asyncio.subprocess.PIPE,
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,

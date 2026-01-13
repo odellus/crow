@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """
 Minimal ACP Server wrapping OpenHands SDK with proper streaming.
 
@@ -36,7 +35,7 @@ from openhands.sdk.llm.streaming import ModelResponseStream
 from openhands.tools.file_editor import FileEditorTool
 from openhands.tools.terminal import TerminalTool
 
-from .config import LLMConfig, ServerConfig
+from crow.agent.config import LLMConfig, ServerConfig
 
 # Streaming state for boundary detection
 StreamingState = Literal["thinking", "content", "tool_name", "tool_args"]
