@@ -32,6 +32,7 @@ from acp.schema import (
 from openhands.sdk import LLM, Conversation, Tool
 from openhands.sdk import Agent as OpenHandsAgent
 from openhands.sdk.llm.streaming import ModelResponseStream
+from openhands.sdk.utils.async_utils import AsyncCallbackWrapper
 from openhands.tools.file_editor import FileEditorTool
 from openhands.tools.terminal import TerminalTool
 
@@ -236,14 +237,17 @@ class CrowAcpAgent(Agent):
             agent=session["agent"],
             token_callbacks=[on_token],
             workspace=session["cwd"],
+            visualizer=None,  # Disable UI output to stdout
         )
 
         # Run in thread pool to avoid blocking event loop
+        loop = asyncio.get_running_loop()
+
         def run_conversation():
             conversation.send_message(user_message)
             conversation.run()
 
-        await asyncio.to_thread(run_conversation)
+        await loop.run_in_executor(None, run_conversation)
 
         # Signal done and wait for sender
         await update_queue.put(("done", None))
