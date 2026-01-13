@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """
 Universal Iterative Refinement: Generalized Planning-Execution-Critique Workflow
 
@@ -49,7 +48,6 @@ from openhands.sdk.tool import Tool
 from openhands.tools.file_editor import FileEditorTool
 from openhands.tools.task_tracker import TaskTrackerTool
 from openhands.tools.terminal import TerminalTool
-
 
 # Default prompts (can be overridden via CLI or config files)
 
@@ -396,7 +394,7 @@ Execute the tasks now. Report back when complete.
 
         crit_prompt_template = critic_prompt or DEFAULT_CRITIC_PROMPT
         previous_critique = critique_file if iteration > 1 else None
-        
+
         # Add previous critique context if exists
         if previous_critique and previous_critique.exists():
             crit_prompt_template += f"""
@@ -480,79 +478,79 @@ def main():
     parser = argparse.ArgumentParser(
         description="Universal Iterative Refinement - Generalized planning-execution-critique workflow"
     )
-    
+
     parser.add_argument(
         "--plan-file",
         type=Path,
         default=Path("CROW_AGENT_PLAN.md"),
         help="Path to plan file (default: CROW_AGENT_PLAN.md)",
     )
-    
+
     parser.add_argument(
         "--workspace-dir",
         type=Path,
         default=Path.cwd(),
         help="Workspace directory (default: current directory)",
     )
-    
+
     parser.add_argument(
         "--quality-threshold",
         type=float,
         default=90.0,
         help="Quality threshold percentage (default: 90.0)",
     )
-    
+
     parser.add_argument(
         "--max-iterations",
         type=int,
         default=5,
         help="Maximum refinement iterations (default: 5)",
     )
-    
+
     parser.add_argument(
         "--planning-prompt",
         type=str,
         help="Custom planning prompt (overrides default)",
     )
-    
+
     parser.add_argument(
         "--implementation-prompt",
         type=str,
         help="Custom implementation prompt (overrides default)",
     )
-    
+
     parser.add_argument(
         "--critic-prompt",
         type=str,
         help="Custom critic prompt (overrides default)",
     )
-    
+
     parser.add_argument(
         "--documentation-prompt",
         type=str,
         help="Custom documentation prompt (overrides default)",
     )
-    
+
     parser.add_argument(
         "--no-documentation",
         action="store_true",
         help="Skip documentation phase",
     )
-    
+
     args = parser.parse_args()
-    
+
     # Validate plan file exists
     if not args.plan_file.exists():
         print(f"ERROR: Plan file not found: {args.plan_file}")
         print(f"Current directory: {Path.cwd()}")
         print(f"Please provide a valid plan file with --plan-file")
         return 1
-    
+
     # Validate workspace directory
     if not args.workspace_dir.exists():
         print(f"ERROR: Workspace directory not found: {args.workspace_dir}")
         return 1
-    
+
     # Run the refinement workflow
     run_universal_refinement(
         plan_file=args.plan_file,
@@ -565,7 +563,7 @@ def main():
         documentation_prompt=args.documentation_prompt,
         skip_documentation=args.no_documentation,
     )
-    
+
     return 0
 
 
