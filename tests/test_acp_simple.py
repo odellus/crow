@@ -2,8 +2,10 @@
 
 import asyncio
 import json
+import pytest
 
 
+@pytest.mark.asyncio
 async def test_acp_server():
     """Test the ACP server by spawning it as a subprocess."""
 
@@ -17,6 +19,19 @@ async def test_acp_server():
         stderr=asyncio.subprocess.PIPE,
     )
 
+    async def read_stderr():
+        """Read stderr to see any errors."""
+        while True:
+            line = await proc.stderr.readline()
+            if not line:
+                break
+            print(f"[STDERR] {line.decode().rstrip()}")
+
+    stderr_task = asyncio.create_task(read_stderr())
+    
+    # Wait for server to start
+    await asyncio.sleep(2)
+
     async def send(msg):
         line = json.dumps(msg) + "\n"
         proc.stdin.write(line.encode())
@@ -24,27 +39,33 @@ async def test_acp_server():
 
     responses_seen = []
 
-    async def read_all():
-        """Read all responses until process ends."""
+    async def read_until_id(target_id, timeout=30):
+        """Read until we get a response with the target ID."""
         while True:
             try:
-                line = await asyncio.wait_for(proc.stdout.readline(), timeout=10)
+                line = await asyncio.wait_for(proc.stdout.readline(), timeout=timeout)
                 if not line:
-                    break
+                    print("[EOF]")
+                    return None
                 line_str = line.decode().strip()
                 if not line_str:
                     continue
                 try:
                     resp = json.loads(line)
                     responses_seen.append(resp)
-                    print(f"[JSON] {resp.get('method', resp.get('id', 'unknown'))}")
-                except json.JSONDecodeError:
-                    # Skip non-JSON lines (OpenHands UI output)
+                    if resp.get("id") == target_id:
+                        return resp
+                    if "method" in resp:
+                        print(f"[NOTIFICATION] {resp.get('method')}")
+                except json.JSONDecodeError as e:
+                    print(f"[JSON ERROR] {e}")
                     pass
             except asyncio.TimeoutError:
-                break
+                print(f"[TIMEOUT] waiting for id {target_id}")
+                return None
 
-    reader_task = asyncio.create_task(read_all())
+    # Track session ID
+    session_id = None
 
     try:
         # Initialize
@@ -61,6 +82,11 @@ async def test_acp_server():
                 },
             }
         )
+        init_resp = await read_until_id(1)
+        if not init_resp:
+            print("ERROR: No initialize response")
+            return
+        print(f"✓ Got initialize response")
 
         # New session
         print("Sending new_session...")
@@ -72,6 +98,13 @@ async def test_acp_server():
                 "params": {"cwd": "/tmp", "mcpServers": []},
             }
         )
+        session_resp = await read_until_id(2, timeout=60)
+        if not session_resp or "result" not in session_resp:
+            print(f"ERROR: Could not get session response")
+            return
+        session_id = session_resp["result"]["sessionId"]
+        print(f"✓ Got session/new response")
+        print(f"  Session ID: {session_id}")
 
         # Send prompt
         print("Sending prompt...")
@@ -81,42 +114,19 @@ async def test_acp_server():
                 "id": 3,
                 "method": "session/prompt",
                 "params": {
-                    "sessionId": "session_1",
+                    "sessionId": session_id,
                     "prompt": [{"type": "text", "text": "say hello"}],
                 },
             }
         )
-
-        # Wait a bit for responses
-        await asyncio.sleep(30)
-
-        # Verify we got the expected responses
-        print(f"\nTotal JSON responses seen: {len(responses_seen)}")
-
-        # Check for initialize response
-        init_responses = [r for r in responses_seen if r.get("id") == 1]
-        if init_responses:
-            print(f"✓ Got initialize response")
-        else:
-            print("✗ Missing initialize response")
-
-        # Check for session/new response
-        session_responses = [r for r in responses_seen if r.get("id") == 2]
-        if session_responses:
-            print(f"✓ Got session/new response")
-            session_id = session_responses[0]["result"]["sessionId"]
-            print(f"  Session ID: {session_id}")
-        else:
-            print("✗ Missing session/new response")
-
-        # Check for session/prompt response
-        prompt_responses = [r for r in responses_seen if r.get("id") == 3]
-        if prompt_responses:
-            print(f"✓ Got session/prompt response")
-            stop_reason = prompt_responses[0]["result"]["stopReason"]
+        prompt_resp = await read_until_id(3, timeout=120)
+        if not prompt_resp:
+            print("ERROR: No prompt response")
+            return
+        print(f"✓ Got session/prompt response")
+        if "result" in prompt_resp:
+            stop_reason = prompt_resp["result"].get("stopReason")
             print(f"  Stop reason: {stop_reason}")
-        else:
-            print("✗ Missing session/prompt response")
 
         # Check for streaming updates
         updates = [r for r in responses_seen if r.get("method") == "session/update"]
@@ -130,7 +140,7 @@ async def test_acp_server():
     finally:
         proc.terminate()
         await proc.wait()
-        reader_task.cancel()
+        stderr_task.cancel()
 
 
 if __name__ == "__main__":

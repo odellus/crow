@@ -225,9 +225,24 @@ def create_llm(usage_id: str) -> LLM:
 
 
 def create_mcp_config() -> dict[str, Any]:
-    """Create MCP configuration with playwright and zai-vision."""
+    """Create MCP configuration with fetch, web search, playwright and zai-vision."""
     return {
         "mcpServers": {
+            "fetch": {
+                "command": "uvx",
+                "args": ["mcp-server-fetch"],
+                "env": {},
+            },
+            "web_search": {
+                "command": "uv",
+                "args": [
+                    "run",
+                    "--project",
+                    "/home/thomas/src/smolagents-example",
+                    "/home/thomas/src/smolagents-example/search.py",
+                ],
+                "env": {},
+            },
             "playwright-mcp": {
                 "command": "npx",
                 "args": ["@playwright/mcp@0.0.47"],
@@ -361,7 +376,7 @@ def run_universal_refinement(
         )
 
         impl_prompt = implementation_prompt or DEFAULT_IMPLEMENTATION_PROMPT
-        impl_conversation.send_message(
+        implementation_conversation.send_message(
             f"""You are the IMPLEMENTATION AGENT for iteration {iteration}.
 
 **Previous Critique** (if iteration > 1):

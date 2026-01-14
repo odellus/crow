@@ -27,3 +27,8 @@ packages = ["src/crow"]
 openhands-sdk = { path = "../software-agent-sdk/openhands-sdk", editable = true }
 openhands-tools = { path = "../software-agent-sdk/openhands-tools", editable = true }
 agent-client-protocol = { path = "../acp-python-sdk" }
+
+[dependency-groups]
+dev = [
+    "pytest>=9.0.2",
+]

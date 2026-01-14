@@ -25,30 +25,30 @@ This script automates the iterative refinement process:
 
 ```bash
 # Use default plan (CROW_AGENT_PLAN.md)
-python universal_refinement.py
+cd crow && .venv/bin/python universal_refinement.py
 
 # Specify custom plan
-python universal_refinement.py --plan-file GRAND_ORCHESTRATOR_VISION.md
+cd crow && .venv/bin/python universal_refinement.py --plan-file GRAND_ORCHESTRATOR_VISION.md
 
 # Custom workspace
-python universal_refinement.py --plan-file MY_PLAN.md --workspace-dir /path/to/project
+cd crow && .venv/bin/python universal_refinement.py --plan-file MY_PLAN.md --workspace-dir /path/to/project
 ```
 
 ### Advanced Options
 
 ```bash
 # Override quality threshold
-python universal_refinement.py --quality-threshold 85
+cd crow && .venv/bin/python universal_refinement.py --quality-threshold 85
 
 # Limit iterations
-python universal_refinement.py --max-iterations 3
+cd crow && .venv/bin/python universal_refinement.py --max-iterations 3
 
 # Skip documentation phase
-python universal_refinement.py --no-documentation
+cd crow && .venv/bin/python universal_refinement.py --no-documentation
 
 # Custom prompts
-python universal_refinement.py --planning-prompt "Be extra thorough in planning."
-python universal_refinement.py --critic-prompt "Focus on code quality over speed."
+cd crow && .venv/bin/python universal_refinement.py --planning-prompt "Be extra thorough in planning."
+cd crow && .venv/bin/python universal_refinement.py --critic-prompt "Focus on code quality over speed."
 ```
 
 ### All Options
