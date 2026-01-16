@@ -14,14 +14,14 @@ echo -e "${GREEN}========================================${NC}"
 echo ""
 
 # Check if we're in the right directory
-if [ ! -f "ACP_PROMPTS.md" ]; then
-    echo "Error: ACP_PROMPTS.md not found"
+if [ ! -f "REFACTOR_PLAN.md" ]; then
+    echo "Error: REFACTOR_PLAN.md not found"
     echo "Please run this script from the crow/ directory"
     exit 1
 fi
 
 # Default values
-PLAN_FILE="${PLAN_FILE:-ACP_PROMPTS.md}"
+PLAN_FILE="${PLAN_FILE:-REFACTOR_PLAN.md}"
 WORKSPACE_DIR="$(pwd)"
 QUALITY_THRESHOLD="${QUALITY_THRESHOLD:-90}"
 MAX_ITERATIONS="${MAX_ITERATIONS:-5}"

@@ -10,6 +10,10 @@ A minimal [Agent Client Protocol (ACP)](https://agentclientprotocol.com/) server
 - ✅ **MCP Integration**: Support for Model Context Protocol (MCP) servers
 - ✅ **Cancellation**: Support for cancelling ongoing operations
 - ✅ **Session Management**: Multiple concurrent sessions with unique IDs
+- ✅ **Session Modes**: Different operational modes (default, code, chat)
+- ✅ **Slash Commands**: Built-in commands for common operations (/help, /clear, /status)
+- ✅ **Session Persistence**: Save and restore sessions with conversation history
+- ✅ **Content Types**: Support for text, images, and embedded resources
 - ✅ **OpenHands SDK**: Leverages the power of OpenHands for AI agent capabilities
 
 ## Installation
@@ -215,6 +219,258 @@ The server supports MCP (Model Context Protocol) servers for extending tool capa
 }
 ```
 
+## Session Modes
+
+The server supports different operational modes that can be set per session:
+
+### Available Modes
+
+- **`default`**: Standard agent behavior with full tool access
+- **`code`**: Focused on code generation and editing tasks
+- **`chat`**: Conversational mode with minimal tool usage
+
+### Setting a Mode
+
+Use the `session/setMode` method to change the session mode:
+
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 4,
+  "method": "session/setMode",
+  "params": {
+    "sessionId": "<session-id>",
+    "modeId": "code"
+  }
+}
+```
+
+The server will send a `current_mode_update` notification when the mode changes successfully.
+
+## Slash Commands
+
+The server supports built-in slash commands for common operations:
+
+### `/help`
+
+Display help information and available commands.
+
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 5,
+  "method": "session/prompt",
+  "params": {
+    "sessionId": "<session-id>",
+    "prompt": [
+      {
+        "type": "text",
+        "text": "/help"
+      }
+    ]
+  }
+}
+```
+
+### `/clear`
+
+Clear the current conversation context for the session.
+
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 6,
+  "method": "session/prompt",
+  "params": {
+    "sessionId": "<session-id>",
+    "prompt": [
+      {
+        "type": "text",
+        "text": "/clear"
+      }
+    ]
+  }
+}
+```
+
+### `/status`
+
+Show current session status and configuration.
+
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 7,
+  "method": "session/prompt",
+  "params": {
+    "sessionId": "<session-id>",
+    "prompt": [
+      {
+        "type": "text",
+        "text": "/status"
+      }
+    ]
+  }
+}
+```
+
+## Session Persistence
+
+The server supports saving and loading sessions with full conversation history.
+
+### Session Storage
+
+Sessions are automatically saved to disk in the `~/.crow/sessions/` directory. Each session is stored as a JSON file named `<session-id>.json`.
+
+### Loading a Session
+
+Use the `session/load` method to restore a previously saved session:
+
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 8,
+  "method": "session/load",
+  "params": {
+    "sessionId": "<saved-session-id>",
+    "cwd": "/workspace",
+    "mcpServers": []
+  }
+}
+```
+
+When a session is loaded, the server will:
+1. Restore session metadata (cwd, mode)
+2. Replay the entire conversation history via `session/update` notifications
+3. Restore the conversation context for continued interaction
+
+**Note**: According to the ACP specification, the agent MUST replay the entire conversation to the client when loading a session. This ensures the client can reconstruct the full conversation context.
+
+### Session File Format
+
+Session files are stored in JSON format:
+
+```json
+{
+  "session_id": "uuid-string",
+  "cwd": "/workspace",
+  "mode": "default",
+  "conversation_history": [
+    {
+      "role": "user",
+      "content": "User's message"
+    },
+    {
+      "role": "assistant",
+      "parts": [
+        {
+          "type": "thought",
+          "text": "Agent's thinking"
+        },
+        {
+          "type": "text",
+          "text": "Agent's response"
+        },
+        {
+          "type": "tool_call",
+          "id": "call-id",
+          "name": "tool_name",
+          "arguments": "{...}"
+        }
+      ]
+    }
+  ]
+}
+```
+
+## Content Types
+
+The server supports multiple content types in prompts, enabling rich interactions.
+
+### Text Content
+
+Standard text messages:
+
+```json
+{
+  "type": "text",
+  "text": "Hello, agent!"
+}
+```
+
+### Image Content
+
+Image content (placeholder for future vision support):
+
+```json
+{
+  "type": "image",
+  "data": "base64-encoded-image-data",
+  "mime_type": "image/png"
+}
+```
+
+**Note**: Image content is currently noted but not processed. Vision capabilities will be added in a future update.
+
+### Embedded Resources
+
+Embed external resources directly in prompts:
+
+**Text Resource:**
+```json
+{
+  "type": "resource",
+  "resource": {
+    "type": "text",
+    "text": "Embedded text content",
+    "uri": "file:///example.txt"
+  }
+}
+```
+
+**Blob Resource:**
+```json
+{
+  "type": "resource",
+  "resource": {
+    "type": "blob",
+    "blob": "base64-encoded-binary-data",
+    "uri": "file:///example.bin",
+    "mime_type": "application/octet-stream"
+  }
+}
+```
+
+### Mixed Content
+
+You can combine multiple content types in a single prompt:
+
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 9,
+  "method": "session/prompt",
+  "params": {
+    "sessionId": "<session-id>",
+    "prompt": [
+      {
+        "type": "text",
+        "text": "Analyze this image: "
+      },
+      {
+        "type": "image",
+        "data": "base64-data",
+        "mime_type": "image/jpeg"
+      },
+      {
+        "type": "text",
+        "text": " What do you see?"
+      }
+    ]
+  }
+}
+```
+
 ## Tool Call Reporting
 
 The server reports tool execution to the client following the ACP specification:
@@ -252,6 +508,11 @@ python -m pytest tests/ -v
 - `test_acp_simple.py`: Basic ACP flow test
 - `test_acp_cancellation.py`: Cancellation functionality test
 - `test_acp_server.py`: Server integration test
+- `test_session_modes.py`: Session modes functionality tests
+- `test_slash_commands.py`: Slash commands functionality tests
+- `test_session_persistence.py`: Session persistence and conversation replay tests
+- `test_content_types.py`: Content type handling tests
+- `test_utils.py`: Utility function tests
 
 ## Troubleshooting
 

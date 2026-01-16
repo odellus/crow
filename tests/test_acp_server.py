@@ -3,7 +3,10 @@
 import asyncio
 import json
 
+import pytest
 
+
+@pytest.mark.asyncio
 async def test_acp_server():
     """Test the ACP server by spawning it as a subprocess."""
 

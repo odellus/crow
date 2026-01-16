@@ -1,0 +1,38 @@
+# Task Pipeline Configuration
+#
+# This configures the prompts and settings for the task pipeline.
+# The actual tasks come from splitting a PLAN.md file.
+
+# LLM Configuration
+llm:
+  model: "anthropic/claude-sonnet-4-5-20250929"
+  api_key_env: "ZAI_API_KEY"
+  base_url_env: "ZAI_BASE_URL"
+  stream: true
+
+# Prompt Files
+prompts:
+  splitter: "prompts/task_splitter_prompt.txt"
+  planning: "prompts/acp_planning_prompt.txt"
+  implementation: "prompts/acp_implementation_prompt.txt"
+  critic: "prompts/acp_critic_prompt.txt"
+  documentation: "prompts/acp_documentation_prompt.txt"
+
+# Default Task Settings
+defaults:
+  max_iterations: 3
+  quality_threshold: 90.0
+  priority: "medium"
+
+# Pipeline Settings
+pipeline:
+  tasks_dir: "tasks"
+  workspace_dir: "."
+  results_file: "task_pipeline_results.json"
+  
+# Task Splitter Settings
+splitter:
+  min_tasks: 5
+  max_tasks: 15
+  target_task_duration_hours: 2
+  dependencies: "minimal"  # minimal, sequential, none

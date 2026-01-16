@@ -49,6 +49,34 @@ from openhands.tools.file_editor import FileEditorTool
 from openhands.tools.task_tracker import TaskTrackerTool
 from openhands.tools.terminal import TerminalTool
 
+
+def safe_format(template: str, **kwargs) -> str:
+    """
+    Safely format a template string by only replacing known keys.
+    
+    This prevents KeyError when the template contains braces that shouldn't
+    be formatted (like code examples in critique reports).
+    
+    Args:
+        template: The template string with {key} placeholders
+        **kwargs: Known keys to replace (e.g., phase, workspace_dir, etc.)
+    
+    Returns:
+        Formatted string with only known keys replaced
+    """
+    import string
+    
+    # Create a custom formatter that only replaces known keys
+    class SafeFormatter(string.Formatter):
+        def get_value(self, key, args, kwargs):
+            if key in kwargs:
+                return kwargs[key]
+            # Return the original placeholder if key not known
+            return f"{{{key}}}"
+    
+    formatter = SafeFormatter()
+    return formatter.format(template, **kwargs)
+
 # Default prompts (can be overridden via CLI or config files)
 
 DEFAULT_PLANNING_PROMPT = """You are a PLANNING AGENT. Your job is to read the plan at {plan_file} and create a structured task list.
@@ -309,7 +337,7 @@ def parse_critique_score(critique_file: Path) -> float:
     return 0.0
 
 
-def run_universal_refinement(
+def run_iterative_refinement(
     plan_file: Path,
     workspace_dir: Path,
     quality_threshold: float = 90.0,
@@ -319,8 +347,29 @@ def run_universal_refinement(
     critic_prompt: str | None = None,
     documentation_prompt: str | None = None,
     skip_documentation: bool = False,
-) -> None:
-    """Run the universal iterative refinement workflow."""
+) -> dict[str, Any]:
+    """
+    Run the universal iterative refinement workflow.
+    
+    Args:
+        plan_file: Path to plan file
+        workspace_dir: Path to workspace directory
+        quality_threshold: Quality threshold (0-100)
+        max_iterations: Maximum iterations to run
+        planning_prompt: Optional custom planning prompt
+        implementation_prompt: Optional custom implementation prompt
+        critic_prompt: Optional custom critic prompt
+        documentation_prompt: Optional custom documentation prompt
+        skip_documentation: Skip documentation phase
+        
+    Returns:
+        Results dictionary with keys:
+        - success (bool): Whether quality threshold was met
+        - final_score (float): Final score achieved
+        - iterations (int): Number of iterations run
+        - workspace_dir (Path): Workspace directory
+        - error (str | None): Error message if failed
+    """
 
     critique_file = workspace_dir / "critique_report.md"
 
@@ -347,7 +396,19 @@ def run_universal_refinement(
     )
 
     prompt = planning_prompt or DEFAULT_PLANNING_PROMPT
-    planning_conversation.send_message(prompt.format(plan_file=plan_file))
+    planning_conversation.send_message(
+        safe_format(
+            prompt,
+            plan_file=str(plan_file),
+            workspace_dir=str(workspace_dir),
+            phase="Planning",
+            quality_threshold=quality_threshold,
+            task_number=0,
+            total_tasks=0,
+            current_task_title="",
+            current_task_notes="",
+        )
+    )
     planning_conversation.run()
 
     print("\nPlanning phase complete.")
@@ -408,9 +469,9 @@ Execute the tasks now. Report back when complete.
         )
 
         crit_prompt_template = critic_prompt or DEFAULT_CRITIC_PROMPT
-        previous_critique = critique_file if iteration > 1 else None
-
+        
         # Add previous critique context if exists
+        previous_critique = critique_file if iteration > 1 else None
         if previous_critique and previous_critique.exists():
             crit_prompt_template += f"""
 
@@ -419,14 +480,21 @@ Execute the tasks now. Report back when complete.
 
 Focus your evaluation on whether the issues from the previous critique were addressed.
 """
-
-        critic_conversation.send_message(
-            crit_prompt_template.format(
-                phase=f"Iteration {iteration}",
-                workspace_dir=workspace_dir,
-                quality_threshold=quality_threshold,
-            )
+        
+        # Safe format with all known keys
+        formatted_prompt = safe_format(
+            crit_prompt_template,
+            phase=f"Iteration {iteration}",
+            workspace_dir=str(workspace_dir),
+            quality_threshold=quality_threshold,
+            plan_file=str(plan_file),
+            task_number=0,  # Not used in critic but safe to provide
+            total_tasks=0,  # Not used in critic but safe to provide
+            current_task_title="",  # Not used in critic but safe to provide
+            current_task_notes="",  # Not used in critic but safe to provide
         )
+
+        critic_conversation.send_message(formatted_prompt)
         critic_conversation.run()
 
         print("\nCritic phase complete.")
@@ -459,8 +527,16 @@ Focus your evaluation on whether the issues from the previous critique were addr
 
         doc_prompt = documentation_prompt or DEFAULT_DOCUMENTATION_PROMPT
         documentation_conversation.send_message(
-            doc_prompt.format(
-                workspace_dir=workspace_dir,
+            safe_format(
+                doc_prompt,
+                workspace_dir=str(workspace_dir),
+                phase=f"Iteration {iteration}",
+                quality_threshold=quality_threshold,
+                plan_file=str(plan_file),
+                task_number=0,
+                total_tasks=0,
+                current_task_title="",
+                current_task_notes="",
             )
         )
         documentation_conversation.run()
@@ -480,12 +556,22 @@ Focus your evaluation on whether the issues from the previous critique were addr
     cost = planning_llm.metrics.accumulated_cost
     print(f"\nTotal Cost: ${cost:.4f}")
 
-    if current_score >= quality_threshold:
+    success = current_score >= quality_threshold
+    
+    if success:
         print("\n✓ SUCCESS: Quality threshold met!")
     else:
         print(
             f"\n✗ MAX ITERATIONS REACHED: Final score {current_score:.1f}% below threshold {quality_threshold}%"
         )
+    
+    return {
+        "success": success,
+        "final_score": current_score,
+        "iterations": iteration,
+        "workspace_dir": workspace_dir,
+        "error": None,
+    }
 
 
 def main():
@@ -567,7 +653,7 @@ def main():
         return 1
 
     # Run the refinement workflow
-    run_universal_refinement(
+    run_iterative_refinement(
         plan_file=args.plan_file,
         workspace_dir=args.workspace_dir,
         quality_threshold=args.quality_threshold,

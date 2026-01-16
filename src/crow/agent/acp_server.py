@@ -35,6 +35,7 @@ from acp.schema import (
     Diff,
     EmbeddedResource,
     ImageContent,
+    Implementation,
     InitializeResponse,
     LoadSessionResponse,
     McpCapabilities,
@@ -42,7 +43,9 @@ from acp.schema import (
     NewSessionResponse,
     PermissionOption,
     PlanEntry,
+    PromptCapabilities,
     PromptResponse,
+    SessionCapabilities,
     SessionMode,
     SetSessionModeResponse,
     StopReason,
@@ -159,31 +162,20 @@ class CrowAcpAgent(Agent):
         """Initialize the ACP server."""
         return InitializeResponse(
             protocol_version=protocol_version,
-            capabilities=AgentCapabilities(
+            agent_capabilities=AgentCapabilities(
                 prompt_capabilities={
                     "text": True,
                     "image": True,  # Support for image content
                     "resource": True,  # Support for embedded resources
                 },
                 mcp_capabilities=McpCapabilities(http=False, sse=False),
-                session_capabilities={
-                    "availableModes": self._available_modes,
-                    "currentModeId": "default",
-                },
                 load_session=True,  # Enable session persistence
             ),
-            server_info={
+            agent_info={
                 "name": self._server_config.name,
                 "version": self._server_config.version,
                 "title": self._server_config.title,
             },
-            available_models=[
-                ModelInfo(
-                    model_id=self._llm_config.model,
-                    name=self._llm_config.model,
-                )
-            ],
-            available_commands=self._available_commands,
         )
 
     async def new_session(
@@ -254,6 +246,10 @@ class CrowAcpAgent(Agent):
 
         session = self._sessions[session_id]
 
+        # Initialize conversation history if not present
+        if "conversation_history" not in session:
+            session["conversation_history"] = []
+
         # Extract content from prompt (support multiple content types)
         user_message = ""
         has_content = False
@@ -295,6 +291,12 @@ class CrowAcpAgent(Agent):
         if user_message.strip().startswith("/"):
             return await self._handle_slash_command(session_id, user_message.strip())
 
+        # Record user message in conversation history
+        session["conversation_history"].append({
+            "role": "user",
+            "content": user_message,
+        })
+
         # Create initial plan based on user prompt
         # NOTE: This implementation creates plan entries for each step of execution
         initial_plan_entries = [
@@ -329,6 +331,9 @@ class CrowAcpAgent(Agent):
         
         # Tool call tracking
         current_tool_call = {"id": None, "name": None, "args": ""}
+        
+        # Track assistant response for conversation history
+        assistant_parts = []
 
         def on_token(chunk: ModelResponseStream) -> None:
             """
@@ -417,17 +422,27 @@ class CrowAcpAgent(Agent):
                             )
                         break
                     elif update_type == "thought":
+                        assistant_parts.append({"type": "thought", "text": data})
                         await self._conn.session_update(
                             session_id=session_id,
                             update=update_agent_thought_text(data),
                         )
                     elif update_type == "content":
+                        assistant_parts.append({"type": "text", "text": data})
                         await self._conn.session_update(
                             session_id=session_id,
                             update=update_agent_message_text(data),
                         )
                     elif update_type == "tool_start":
                         tool_call_id, tool_name, tool_args = data
+                        
+                        # Track tool call for conversation history
+                        assistant_parts.append({
+                            "type": "tool_call",
+                            "id": tool_call_id,
+                            "name": tool_name,
+                            "arguments": tool_args,
+                        })
                         
                         # Request permission before executing tool
                         permission_granted = await self._request_tool_permission(
@@ -579,6 +594,16 @@ class CrowAcpAgent(Agent):
 
         # Return appropriate stop reason
         stop_reason = "cancelled" if cancelled_flag["cancelled"] else "end_turn"
+        
+        # Save assistant response to conversation history
+        if assistant_parts:
+            session["conversation_history"].append({
+                "role": "assistant",
+                "parts": assistant_parts,
+            })
+            
+            # Save session to disk with updated conversation history
+            self._save_session(session_id)
 
         return PromptResponse(
             stop_reason=stop_reason,
@@ -654,6 +679,7 @@ class CrowAcpAgent(Agent):
             "session_id": session_id,
             "cwd": session.get("cwd", ""),
             "mode": session.get("mode", "default"),
+            "conversation_history": session.get("conversation_history", []),
             # Note: We can't serialize the agent or conversation objects,
             # so we'll recreate them on load
         }
@@ -716,11 +742,64 @@ class CrowAcpAgent(Agent):
         oh_agent = OpenHandsAgent(**agent_kwargs)
 
         # Restore session
+        conversation_history = session_data.get("conversation_history", [])
         self._sessions[session_id] = {
             "agent": oh_agent,
             "cwd": session_data.get("cwd", cwd),
             "mode": session_data.get("mode", "default"),
+            "conversation_history": conversation_history,
         }
+
+        # Replay conversation history via session/update notifications
+        # This is required by ACP spec: "The Agent MUST replay the entire conversation 
+        # to the Client in the form of `session/update` notifications"
+        for msg in conversation_history:
+            try:
+                if msg["role"] == "user":
+                    # Replay user message
+                    await self._conn.session_update(
+                        session_id=session_id,
+                        update={
+                            "type": "user_message",
+                            "content": msg.get("content", ""),
+                        },
+                    )
+                elif msg["role"] == "assistant":
+                    # Replay assistant message (may have multiple parts)
+                    for part in msg.get("parts", []):
+                        if part["type"] == "text":
+                            await self._conn.session_update(
+                                session_id=session_id,
+                                update=update_agent_message_text(
+                                    text=part.get("text", ""),
+                                ),
+                            )
+                        elif part["type"] == "thought":
+                            await self._conn.session_update(
+                                session_id=session_id,
+                                update=update_agent_thought_text(
+                                    text=part.get("text", ""),
+                                ),
+                            )
+                        elif part["type"] == "tool_call":
+                            await self._conn.session_update(
+                                session_id=session_id,
+                                update=start_tool_call(
+                                    tool_call_id=part.get("id", ""),
+                                    title=part.get("name", ""),
+                                ),
+                            )
+                            # Mark tool as completed
+                            await self._conn.session_update(
+                                session_id=session_id,
+                                update=update_tool_call(
+                                    tool_call_id=part.get("id", ""),
+                                    status="completed",
+                                ),
+                            )
+            except Exception as e:
+                # Don't fail the entire load if one message fails to replay
+                print(f"Warning: Failed to replay message: {e}")
 
         return LoadSessionResponse()
 
@@ -762,6 +841,8 @@ Use session/set_mode to change modes."""
                     agent=session["agent"],
                     llm=self._llm,
                 )
+            # Also clear conversation history
+            session["conversation_history"] = []
             response_text = "Conversation context cleared."
         
         elif cmd == "/status":

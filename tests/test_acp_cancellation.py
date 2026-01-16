@@ -3,7 +3,10 @@
 import asyncio
 import json
 
+import pytest
 
+
+@pytest.mark.asyncio
 async def test_acp_cancellation():
     """Test the ACP server cancellation by spawning it as a subprocess."""
 
@@ -150,6 +153,7 @@ async def test_acp_cancellation():
         stderr_task.cancel()
 
 
+@pytest.mark.asyncio
 async def test_acp_normal_completion():
     """Test that normal completion still works (stopReason: end_turn)."""
 

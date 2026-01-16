@@ -1,0 +1,140 @@
+# ACP Server Task Pipeline
+# 
+# This config defines all tasks needed to build the ACP server with clear
+# acceptance criteria for each task.
+#
+# Usage:
+#   python task_pipeline.py --config tasks/acp_server_tasks.yaml
+
+tasks:
+  - id: "001_initialize_method"
+    title: "Fix initialize() method to use correct ACP schema fields"
+    description: |
+      The initialize() method is using incorrect field names (capabilities, server_info)
+      instead of the correct ACP schema fields (agent_capabilities, agent_info).
+      This needs to be fixed for the ACP server to work correctly.
+    acceptance_criteria:
+      - "initialize() returns InitializeResponse with agent_capabilities field (not capabilities)"
+      - "initialize() returns InitializeResponse with agent_info field (not server_info)"
+      - "agent_capabilities uses PromptCapabilities object (not dict)"
+      - "agent_capabilities uses SessionCapabilities object (not dict)"
+      - "All required imports added (PromptCapabilities, SessionCapabilities, Implementation)"
+      - "Code compiles without errors"
+      - "Can instantiate CrowAcpAgent and call initialize() successfully"
+    dependencies: []
+    priority: "critical"
+    prompts_file: "prompts/acp_implementation_prompt.txt"
+    max_iterations: 3
+    quality_threshold: 95.0
+
+  - id: "002_session_modes"
+    title: "Implement session modes feature"
+    description: |
+      Add session mode support to allow different agent behaviors (default, code, chat).
+      Modes should be advertised in initialize() and changeable via set_session_mode().
+    acceptance_criteria:
+      - "Three session modes defined: default, code, chat"
+      - "Modes advertised in initialize() response via agent_capabilities.session_capabilities"
+      - "set_session_mode() method implemented"
+      - "set_session_mode() validates mode_id before changing"
+      - "set_session_mode() sends mode update via session/update notification"
+      - "Session state tracks current mode"
+      - "Unit tests for session modes added"
+    dependencies: ["001_initialize_method"]
+    priority: "high"
+    prompts_file: "prompts/acp_implementation_prompt.txt"
+    max_iterations: 3
+    quality_threshold: 90.0
+
+  - id: "003_slash_commands"
+    title: "Implement slash commands feature"
+    description: |
+      Add slash command support for quick actions like /help, /clear, /status.
+      Commands should be advertised in initialize() and executable via prompt().
+    acceptance_criteria:
+      - "Three slash commands defined: /help, /clear, /status"
+      - "Commands advertised in initialize() response"
+      - "prompt() detects and handles slash commands"
+      - "/help command sends help text via session/update"
+      - "/clear command clears conversation context"
+      - "/status command sends session status via session/update"
+      - "Unit tests for slash commands added"
+    dependencies: ["001_initialize_method"]
+    priority: "high"
+    prompts_file: "prompts/acp_implementation_prompt.txt"
+    max_iterations: 3
+    quality_threshold: 90.0
+
+  - id: "004_session_persistence"
+    title: "Implement session persistence feature"
+    description: |
+      Add session save/load functionality to persist sessions to disk.
+      Sessions should be saved to ~/.crow/sessions/ and loadable via load_session().
+    acceptance_criteria:
+      - "load_session() method implemented"
+      - "_save_session() helper method implemented"
+      - "Sessions saved to ~/.crow/sessions/{session_id}.json"
+      - "Session files contain: session_id, cwd, mode"
+      - "load_session() restores session from file"
+      - "Sessions auto-saved on creation and mode changes"
+      - "Unit tests for session persistence added"
+    dependencies: ["001_initialize_method", "002_session_modes"]
+    priority: "high"
+    prompts_file: "prompts/acp_implementation_prompt.txt"
+    max_iterations: 3
+    quality_threshold: 90.0
+
+  - id: "005_content_types"
+    title: "Implement advanced content types support"
+    description: |
+      Add support for images and embedded resources in prompt content.
+      Update prompt_capabilities to advertise these content types.
+    acceptance_criteria:
+      - "prompt_capabilities advertises image support"
+      - "prompt_capabilities advertises embedded_context support"
+      - "prompt() extracts text content from text blocks"
+      - "prompt() extracts image content from image blocks"
+      - "prompt() extracts resource content from embedded resource blocks"
+      - "Image content noted in user message (placeholder for future vision support)"
+      - "Unit tests for content type handling added"
+    dependencies: ["001_initialize_method"]
+    priority: "medium"
+    prompts_file: "prompts/acp_implementation_prompt.txt"
+    max_iterations: 3
+    quality_threshold: 90.0
+
+  - id: "006_integration_tests"
+    title: "Fix and add integration tests"
+    description: |
+      Fix async test decorators and add comprehensive integration tests
+      for all ACP server functionality.
+    acceptance_criteria:
+      - "All async tests have @pytest.mark.asyncio decorator"
+      - "test_acp_cancellation.py tests pass"
+      - "test_acp_server.py tests pass"
+      - "Integration test for session modes added"
+      - "Integration test for slash commands added"
+      - "Integration test for session persistence added"
+      - "All tests pass (100% pass rate)"
+    dependencies: ["002_session_modes", "003_slash_commands", "004_session_persistence", "005_content_types"]
+    priority: "critical"
+    prompts_file: "prompts/acp_implementation_prompt.txt"
+    max_iterations: 3
+    quality_threshold: 95.0
+
+  - id: "007_documentation"
+    title: "Update documentation for new features"
+    description: |
+      Update README.md and ACP_INTEGRATION_STATUS.md to document all new features.
+    acceptance_criteria:
+      - "README.md has Session Modes section with usage examples"
+      - "README.md has Slash Commands section with command reference"
+      - "README.md has Session Persistence section with save/load examples"
+      - "README.md has Content Types section with supported types"
+      - "ACP_INTEGRATION_STATUS.md updated with completed features"
+      - "All features documented with clear examples"
+    dependencies: ["002_session_modes", "003_slash_commands", "004_session_persistence", "005_content_types", "006_integration_tests"]
+    priority: "medium"
+    prompts_file: "prompts/acp_implementation_prompt.txt"
+    max_iterations: 2
+    quality_threshold: 90.0
