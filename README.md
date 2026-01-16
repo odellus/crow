@@ -1,4 +1,7 @@
 # Crow ACP Server
+<p align="center">
+    <img src="assets/crow-logo.png" width=500/>
+</p>
 
 A minimal [Agent Client Protocol (ACP)](https://agentclientprotocol.com/) server that wraps the OpenHands SDK with streaming support, MCP tool integration, and proper ACP protocol compliance.
 
