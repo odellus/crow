@@ -14,7 +14,7 @@ dependencies = [
 ]
 
 [project.scripts]
-crow = "crow.agent.acp_server:sync_main"
+crow = "crow.agent.cli:main"
 
 [build-system]
 requires = ["hatchling"]

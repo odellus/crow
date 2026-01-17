@@ -38,7 +38,7 @@ def main():
 
     # Start the server process using the installed crow-acp executable
     proc = subprocess.Popen(
-        ["crow"],
+        ["crow", "acp"],
         stdin=subprocess.PIPE,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,

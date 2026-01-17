@@ -65,6 +65,7 @@ from acp.schema import (
 )
 from openhands.sdk import LLM, Conversation, Tool
 from openhands.sdk import Agent as OpenHandsAgent
+from openhands.sdk.conversation.base import BaseConversation
 from openhands.sdk.llm.streaming import ModelResponseStream
 from openhands.tools.file_editor import FileEditorTool
 from openhands.tools.terminal import TerminalTool
@@ -239,6 +240,7 @@ class CrowAcpAgent(Agent):
                 "agent": oh_agent,
                 "cwd": cwd,
                 "mode": "default",  # Default mode
+                "conversation_history": [],  # Track history for ACP replay
             }
 
             # Save session to disk
@@ -572,16 +574,34 @@ class CrowAcpAgent(Agent):
 
         sender = asyncio.create_task(sender_task())
 
-        # Create conversation for this prompt
-        conversation = Conversation(
-            agent=session["agent"],
-            token_callbacks=[on_token],
-            workspace=session["cwd"],
-            visualizer=None,  # Disable UI output to stdout
-        )
+        # Create or reuse conversation for this session
+        # The Conversation object MUST be created once and reused for all prompts
+        # to maintain conversation state across multiple messages
+        if "conversation" not in session:
+            # First prompt in this session - create the Conversation
+            # Note: token_callbacks will be attached per-prompt below
+            logger.info(f"Creating NEW Conversation for session {session_id[:8]}...")
+            conversation = Conversation(
+                agent=session["agent"],
+                workspace=session["cwd"],
+                visualizer=None,  # Disable UI output to stdout
+            )
+            session["conversation"] = conversation
+            logger.info(f"Conversation created: {id(conversation)}")
+        else:
+            # Reuse existing conversation
+            conversation = session["conversation"]
+            logger.info(f"Reusing existing Conversation: {id(conversation)} for session {session_id[:8]}")
+        
+        # Get the conversation (created once per session)
+        conversation = session["conversation"]
+        
+        # Attach token callbacks for THIS prompt only
+        # The callbacks have access to the per-prompt update_queue
+        # We need to replace the token_callbacks for each prompt
+        conversation._on_token = BaseConversation.compose_callbacks([on_token])
 
         # Store conversation in session for cancellation
-        session["conversation"] = conversation
         session["cancelled_flag"] = cancelled_flag
 
         # Run in thread pool to avoid blocking event loop
@@ -612,8 +632,7 @@ class CrowAcpAgent(Agent):
                 stop_reason="error",
             )
 
-        # Clean up conversation reference
-        session.pop("conversation", None)
+        # Clean up cancelled_flag only - keep the conversation for reuse!
         session.pop("cancelled_flag", None)
 
         # Signal done and wait for sender
