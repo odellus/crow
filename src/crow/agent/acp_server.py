@@ -48,6 +48,7 @@ from acp.schema import (
     InitializeResponse,
     LoadSessionResponse,
     McpCapabilities,
+    McpServerStdio,
     ModelInfo,
     NewSessionResponse,
     PermissionOption,
@@ -198,7 +199,6 @@ class CrowAcpAgent(Agent):
         **kwargs: Any,
     ) -> NewSessionResponse:
         """Create a new OpenHands conversation session."""
-        from acp.schema import McpServerStdio
 
         try:
             # Validate cwd
@@ -223,7 +223,10 @@ class CrowAcpAgent(Agent):
             agent_kwargs = {
                 "llm": self._llm,
                 "tools": tools,
-                "security_policy_filename": "",  # Disable security checks
+                "system_prompt_kwargs": {
+                    "llm_security_analyzer": False,  # Disable security analyzer
+                    "add_security_risk_prediction": False,
+                },
             }
             if mcp_config:
                 agent_kwargs["mcp_config"] = mcp_config
@@ -584,15 +587,30 @@ class CrowAcpAgent(Agent):
         # Run in thread pool to avoid blocking event loop
         loop = asyncio.get_running_loop()
 
+        conversation_error = None
+
         def run_conversation():
+            nonlocal conversation_error
             try:
                 conversation.send_message(user_message)
                 conversation.run()
             except Exception as e:
-                logger.error(f"Error running conversation: {e}")
+                logger.error(f"Error running conversation: {e}", exc_info=True)
+                conversation_error = str(e)
                 update_queue.put_nowait(("error", str(e)))
 
         await loop.run_in_executor(None, run_conversation)
+
+        # Check if conversation failed
+        if conversation_error:
+            # Signal done and wait for sender
+            await update_queue.put(("done", None))
+            await sender
+
+            # Return error response
+            return PromptResponse(
+                stop_reason="error",
+            )
 
         # Clean up conversation reference
         session.pop("conversation", None)
@@ -772,7 +790,7 @@ class CrowAcpAgent(Agent):
         agent_kwargs = {
             "llm": self._llm,
             "tools": tools,
-            "security_policy_filename": "",  # Disable security checks
+            # "security_policy_filename": None,  # Disable security checks
         }
         if mcp_config:
             agent_kwargs["mcp_config"] = mcp_config

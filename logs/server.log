@@ -1,0 +1,37 @@
+<frozen abc>:106: DeprecationWarning: You should use `Logger` instead. Deprecated since version 1.39.0 and will be removed in a future release.
+<frozen abc>:106: DeprecationWarning: You should use `LoggerProvider` instead. Deprecated since version 1.39.0 and will be removed in a future release.
+/home/thomas/src/projects/orchestrator-project/crow/.venv/lib/python3.12/site-packages/opentelemetry/_events/__init__.py:201: DeprecationWarning: You should use `ProxyLoggerProvider` instead. Deprecated since version 1.39.0 and will be removed in a future release.
+  _PROXY_EVENT_LOGGER_PROVIDER = ProxyEventLoggerProvider()
+<frozen runpy>:128: RuntimeWarning: 'crow.agent.acp_server' found in sys.modules after import of package 'crow.agent', but prior to execution of 'crow.agent.acp_server'; this may result in unpredictable behaviour
+Traceback (most recent call last):
+  File "<frozen runpy>", line 198, in _run_module_as_main
+  File "<frozen runpy>", line 88, in _run_code
+  File "/home/thomas/src/projects/orchestrator-project/crow/src/crow/agent/acp_server.py", line 1020, in <module>
+    asyncio.run(main())
+  File "/home/thomas/.local/share/uv/python/cpython-3.12.9-linux-x86_64-gnu/lib/python3.12/asyncio/runners.py", line 195, in run
+    return runner.run(main)
+           ^^^^^^^^^^^^^^^^
+  File "/home/thomas/.local/share/uv/python/cpython-3.12.9-linux-x86_64-gnu/lib/python3.12/asyncio/runners.py", line 118, in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/thomas/.local/share/uv/python/cpython-3.12.9-linux-x86_64-gnu/lib/python3.12/asyncio/base_events.py", line 691, in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+  File "/home/thomas/src/projects/orchestrator-project/crow/src/crow/agent/acp_server.py", line 1002, in main
+    reader, writer = await stdio_streams()
+                     ^^^^^^^^^^^^^^^^^^^^^
+  File "/home/thomas/src/projects/orchestrator-project/crow/.venv/lib/python3.12/site-packages/acp/stdio.py", line 139, in stdio_streams
+    return await _posix_stdio_streams(loop, limit=limit)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/thomas/src/projects/orchestrator-project/crow/.venv/lib/python3.12/site-packages/acp/stdio.py", line 125, in _posix_stdio_streams
+    transport, _ = await loop.connect_write_pipe(lambda: write_protocol, sys.stdout)
+                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/thomas/.local/share/uv/python/cpython-3.12.9-linux-x86_64-gnu/lib/python3.12/asyncio/base_events.py", line 1667, in connect_write_pipe
+    transport = self._make_write_pipe_transport(pipe, protocol, waiter)
+                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/thomas/.local/share/uv/python/cpython-3.12.9-linux-x86_64-gnu/lib/python3.12/asyncio/unix_events.py", line 193, in _make_write_pipe_transport
+    return _UnixWritePipeTransport(self, pipe, protocol, waiter, extra)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/thomas/.local/share/uv/python/cpython-3.12.9-linux-x86_64-gnu/lib/python3.12/asyncio/unix_events.py", line 625, in __init__
+    raise ValueError("Pipe transport is only for "
+ValueError: Pipe transport is only for pipes, sockets and character devices
