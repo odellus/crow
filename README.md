@@ -2,602 +2,135 @@
     <img src="assets/crow-logo.png" description="crow logo"width=500/>
 </p>
 
-A minimal [Agent Client Protocol (ACP)](https://agentclientprotocol.com/) server that wraps the OpenHands SDK with streaming support, MCP tool integration, and proper ACP protocol compliance.
+# Crow
 
-## Features
+**An Agent Development Environment (ADE) for building, running, and improving autonomous coding agents.**
 
-- ✅ **ACP Protocol Compliance**: Implements the ACP specification for agent-client communication
-- ✅ **Streaming Responses**: Real-time streaming of agent thoughts, content, and tool calls
-- ✅ **Tool Call Reporting**: Full visibility into tool execution with status updates
-- ✅ **MCP Integration**: Support for Model Context Protocol (MCP) servers
-- ✅ **Cancellation**: Support for cancelling ongoing operations
-- ✅ **Session Management**: Multiple concurrent sessions with unique IDs
-- ✅ **Session Modes**: Different operational modes (default, code, chat)
-- ✅ **Slash Commands**: Built-in commands for common operations (/help, /clear, /status)
-- ✅ **Session Persistence**: Save and restore sessions with conversation history
-- ✅ **Content Types**: Support for text, images, and embedded resources
-- ✅ **OpenHands SDK**: Leverages the power of OpenHands for AI agent capabilities
+> **Status**: In active development. Phase 0 complete (ACP server, iterative refinement, task pipeline). See [ROADMAP.md](ROADMAP.md) for what's next.
 
-## Installation
+## What is Crow?
 
-### Prerequisites
+Crow is NOT just an ACP server, NOT just an IDE. It's a complete environment where:
 
-- Python 3.12 or higher
-- uv (recommended) or pip for package management
-- An LLM API key (e.g., Anthropic, OpenAI, or compatible)
+- **Humans plan** in a journal (Logseq-inspired knowledge base)
+- **Humans + agents prime** the environment together (pair programming)
+- **Autonomous agents work** in the primed environment (read journal → write code → document decisions)
+- **Humans review** in the journal and provide feedback
+- **Knowledge accumulates** and agents get better over time
 
-### Setup
+## Quick Start
 
-1. **Clone the repository**:
-   ```bash
-   git clone <repository-url>
-   cd crow
-   ```
+### Installation
 
-2. **Install dependencies**:
-   ```bash
-   uv sync
-   # or
-   pip install -e .
-   ```
+```bash
+cd crow
+uv sync
+```
 
-3. **Configure environment variables**:
-   Create a `.env` file in the project root:
-   ```env
-   # LLM Configuration
-   LLM_MODEL=anthropic/claude-3.5-sonnet
-   ZAI_API_KEY=your-api-key-here
-   ZAI_BASE_URL=https://api.anthropic.com  # Optional
-   
-   # Server Configuration (optional)
-   SERVER_NAME=crow-acp-server
-   SERVER_VERSION=0.1.0
-   SERVER_TITLE="Crow ACP Server"
-   
-   # Agent Configuration (optional)
-   MAX_ITERATIONS=500
-   AGENT_TIMEOUT=300
-   ```
-
-## Usage
-
-### Starting the Server
-
-Run the ACP server using Python:
+### Run the ACP Server
 
 ```bash
 python -m crow.agent.acp_server
 ```
 
-The server will start listening for JSON-RPC messages on stdin and write responses to stdout, following the ACP protocol.
+The server will listen on stdin/stdout for JSON-RPC messages following the ACP protocol.
 
-### ACP Protocol Methods
-
-#### `initialize`
-
-Initialize the ACP server and negotiate protocol version.
-
-```json
-{
-  "jsonrpc": "2.0",
-  "id": 1,
-  "method": "initialize",
-  "params": {
-    "protocolVersion": 1,
-    "clientCapabilities": {},
-    "clientInfo": {
-      "name": "my-client",
-      "version": "1.0.0"
-    }
-  }
-}
-```
-
-#### `session/new`
-
-Create a new session for a conversation.
-
-```json
-{
-  "jsonrpc": "2.0",
-  "id": 2,
-  "method": "session/new",
-  "params": {
-    "cwd": "/path/to/workspace",
-    "mcpServers": []
-  }
-}
-```
-
-#### `session/prompt`
-
-Send a prompt to the agent with streaming responses.
-
-```json
-{
-  "jsonrpc": "2.0",
-  "id": 3,
-  "method": "session/prompt",
-  "params": {
-    "sessionId": "<session-id>",
-    "prompt": [
-      {
-        "type": "text",
-        "text": "Hello, how can you help me?"
-      }
-    ]
-  }
-}
-```
-
-#### `session/cancel`
-
-Cancel an ongoing prompt execution.
-
-```json
-{
-  "jsonrpc": "2.0",
-  "method": "session/cancel",
-  "params": {
-    "sessionId": "<session-id>"
-  }
-}
-```
-
-### Streaming Updates
-
-The server sends `session/update` notifications during prompt execution:
-
-- **`agent_thought_chunk`**: Agent's thinking/reasoning
-- **`agent_message_chunk`**: Agent's response content
-- **`tool_call`**: Tool execution starts
-- **`tool_call_update`**: Tool execution progress
-
-Example update notification:
-```json
-{
-  "jsonrpc": "2.0",
-  "method": "session/update",
-  "params": {
-    "sessionId": "<session-id>",
-    "update": {
-      "sessionUpdate": "agent_thought_chunk",
-      "content": {
-        "text": "Let me think about this..."
-      }
-    }
-  }
-}
-```
-
-## Configuration
-
-### LLM Configuration
-
-Configure the LLM provider using environment variables:
-
-| Variable | Description | Default |
-|----------|-------------|---------|
-| `LLM_MODEL` | Model identifier | `anthropic/glm-4.7` |
-| `ZAI_API_KEY` | API key for LLM provider | *required* |
-| `ZAI_BASE_URL` | Base URL for LLM API | *provider default* |
-| `LLM_TEMPERATURE` | Sampling temperature | `0.0` |
-| `LLM_MAX_TOKENS` | Maximum tokens per response | `4096` |
-
-### Server Configuration
-
-| Variable | Description | Default |
-|----------|-------------|---------|
-| `SERVER_NAME` | Server identifier | `crow-acp-server` |
-| `SERVER_VERSION` | Server version | `0.1.0` |
-| `SERVER_TITLE` | Human-readable title | `Crow ACP Server` |
-
-### Agent Configuration
-
-| Variable | Description | Default |
-|----------|-------------|---------|
-| `MAX_ITERATIONS` | Maximum agent iterations | `500` |
-| `AGENT_TIMEOUT` | Agent timeout in seconds | `300` |
-
-## MCP Integration
-
-The server supports MCP (Model Context Protocol) servers for extending tool capabilities. Configure MCP servers when creating a session:
-
-```json
-{
-  "jsonrpc": "2.0",
-  "id": 2,
-  "method": "session/new",
-  "params": {
-    "cwd": "/workspace",
-    "mcpServers": [
-      {
-        "name": "fetch",
-        "command": "uvx",
-        "args": ["mcp-server-fetch"]
-      }
-    ]
-  }
-}
-```
-
-## Session Modes
-
-The server supports different operational modes that can be set per session:
-
-### Available Modes
-
-- **`default`**: Standard agent behavior with full tool access
-- **`code`**: Focused on code generation and editing tasks
-- **`chat`**: Conversational mode with minimal tool usage
-
-### Setting a Mode
-
-Use the `session/setMode` method to change the session mode:
-
-```json
-{
-  "jsonrpc": "2.0",
-  "id": 4,
-  "method": "session/setMode",
-  "params": {
-    "sessionId": "<session-id>",
-    "modeId": "code"
-  }
-}
-```
-
-The server will send a `current_mode_update` notification when the mode changes successfully.
-
-## Slash Commands
-
-The server supports built-in slash commands for common operations:
-
-### `/help`
-
-Display help information and available commands.
-
-```json
-{
-  "jsonrpc": "2.0",
-  "id": 5,
-  "method": "session/prompt",
-  "params": {
-    "sessionId": "<session-id>",
-    "prompt": [
-      {
-        "type": "text",
-        "text": "/help"
-      }
-    ]
-  }
-}
-```
-
-### `/clear`
-
-Clear the current conversation context for the session.
-
-```json
-{
-  "jsonrpc": "2.0",
-  "id": 6,
-  "method": "session/prompt",
-  "params": {
-    "sessionId": "<session-id>",
-    "prompt": [
-      {
-        "type": "text",
-        "text": "/clear"
-      }
-    ]
-  }
-}
-```
-
-### `/status`
-
-Show current session status and configuration.
-
-```json
-{
-  "jsonrpc": "2.0",
-  "id": 7,
-  "method": "session/prompt",
-  "params": {
-    "sessionId": "<session-id>",
-    "prompt": [
-      {
-        "type": "text",
-        "text": "/status"
-      }
-    ]
-  }
-}
-```
-
-## Session Persistence
-
-The server supports saving and loading sessions with full conversation history.
-
-### Session Storage
-
-Sessions are automatically saved to disk in the `~/.crow/sessions/` directory. Each session is stored as a JSON file named `<session-id>.json`.
-
-### Loading a Session
-
-Use the `session/load` method to restore a previously saved session:
-
-```json
-{
-  "jsonrpc": "2.0",
-  "id": 8,
-  "method": "session/load",
-  "params": {
-    "sessionId": "<saved-session-id>",
-    "cwd": "/workspace",
-    "mcpServers": []
-  }
-}
-```
-
-When a session is loaded, the server will:
-1. Restore session metadata (cwd, mode)
-2. Replay the entire conversation history via `session/update` notifications
-3. Restore the conversation context for continued interaction
-
-**Note**: According to the ACP specification, the agent MUST replay the entire conversation to the client when loading a session. This ensures the client can reconstruct the full conversation context.
-
-### Session File Format
-
-Session files are stored in JSON format:
-
-```json
-{
-  "session_id": "uuid-string",
-  "cwd": "/workspace",
-  "mode": "default",
-  "conversation_history": [
-    {
-      "role": "user",
-      "content": "User's message"
-    },
-    {
-      "role": "assistant",
-      "parts": [
-        {
-          "type": "thought",
-          "text": "Agent's thinking"
-        },
-        {
-          "type": "text",
-          "text": "Agent's response"
-        },
-        {
-          "type": "tool_call",
-          "id": "call-id",
-          "name": "tool_name",
-          "arguments": "{...}"
-        }
-      ]
-    }
-  ]
-}
-```
-
-## Content Types
-
-The server supports multiple content types in prompts, enabling rich interactions.
-
-### Text Content
-
-Standard text messages:
-
-```json
-{
-  "type": "text",
-  "text": "Hello, agent!"
-}
-```
-
-### Image Content
-
-Image content (placeholder for future vision support):
-
-```json
-{
-  "type": "image",
-  "data": "base64-encoded-image-data",
-  "mime_type": "image/png"
-}
-```
-
-**Note**: Image content is currently noted but not processed. Vision capabilities will be added in a future update.
-
-### Embedded Resources
-
-Embed external resources directly in prompts:
-
-**Text Resource:**
-```json
-{
-  "type": "resource",
-  "resource": {
-    "type": "text",
-    "text": "Embedded text content",
-    "uri": "file:///example.txt"
-  }
-}
-```
-
-**Blob Resource:**
-```json
-{
-  "type": "resource",
-  "resource": {
-    "type": "blob",
-    "blob": "base64-encoded-binary-data",
-    "uri": "file:///example.bin",
-    "mime_type": "application/octet-stream"
-  }
-}
-```
-
-### Mixed Content
-
-You can combine multiple content types in a single prompt:
-
-```json
-{
-  "jsonrpc": "2.0",
-  "id": 9,
-  "method": "session/prompt",
-  "params": {
-    "sessionId": "<session-id>",
-    "prompt": [
-      {
-        "type": "text",
-        "text": "Analyze this image: "
-      },
-      {
-        "type": "image",
-        "data": "base64-data",
-        "mime_type": "image/jpeg"
-      },
-      {
-        "type": "text",
-        "text": " What do you see?"
-      }
-    ]
-  }
-}
-```
-
-## Tool Call Reporting
-
-The server reports tool execution to the client following the ACP specification:
-
-1. **Tool Start**: `tool_call` notification with status `in_progress`
-2. **Tool Progress**: `tool_call_update` notifications during execution
-3. **Tool Completion**: `tool_call_update` with status `completed` or `failed`
-
-Tool kinds are mapped as follows:
-- `execute`: Terminal, run, execute commands
-- `edit`: File editing operations
-- `read`: File reading operations
-- `search`: Search operations
-- `delete`: Delete operations
-- `move`: Move/rename operations
-- `other`: Other tool types
-
-## Testing
-
-Run the test suite:
+### Run Iterative Refinement
 
 ```bash
-# Run all tests
-python -m pytest tests/
-
-# Run specific test
-python -m pytest tests/test_acp_simple.py
-
-# Run with verbose output
-python -m pytest tests/ -v
+python task_pipeline.py --plan-file PLAN.md
 ```
 
-### Test Files
+This will:
+1. Split PLAN.md into tasks
+2. Run each task through iterative refinement (planning → implementation → critique)
+3. Track progress and results
 
-- `test_acp_simple.py`: Basic ACP flow test
-- `test_acp_cancellation.py`: Cancellation functionality test
-- `test_acp_server.py`: Server integration test
-- `test_session_modes.py`: Session modes functionality tests
-- `test_slash_commands.py`: Slash commands functionality tests
-- `test_session_persistence.py`: Session persistence and conversation replay tests
-- `test_content_types.py`: Content type handling tests
-- `test_utils.py`: Utility function tests
+## Documentation
 
-## Troubleshooting
+- **[DESIGN.md](DESIGN.md)** - Vision, architecture, and design decisions
+- **[CURRENT_STATE.md](CURRENT_STATE.md)** - Analysis of current code and what needs fixing
+- **[ROADMAP.md](ROADMAP.md)** - Development phases and timeline
+- **[AGENTS.md](AGENTS.md)** - Project-specific knowledge for agents
+- **[REFACTOR_PLAN.md](REFACTOR_PLAN.md)** - Original refactor plan (superseded by ROADMAP.md)
 
-### Issue: "Unknown session" error
+## Features
 
-**Cause**: Invalid session ID or session expired.
+### Current (Phase 0 - Complete)
 
-**Solution**: Ensure you're using the session ID returned by `session/new`. Session IDs are UUIDs and should not be modified.
+- ✅ **ACP Server** - Streaming ACP server wrapping OpenHands SDK
+- ✅ **Iterative Refinement** - Planning → Implementation → Critique → Documentation loop
+- ✅ **Task Pipeline** - Split PLAN.md into tasks, run sequentially
+- ✅ **MCP Integration** - playwright, zai-vision, fetch, web_search
+- ✅ **Session Management** - Multiple concurrent sessions with persistence
+- ✅ **Slash Commands** - /help, /clear, /status
 
-### Issue: Cancellation doesn't work immediately
+### In Progress (Phase 1-3)
 
-**Cause**: The current implementation uses "soft" cancellation that waits for the current LLM call to complete.
+- 🚧 **Restructure** - Moving files from root to `src/crow/`
+- 📋 **Jinja2 Templates** - Replace hardcoded prompts with templates
+- 📋 **Environment Priming** - Human + agent pair programming before autonomous phase
 
-**Solution**: This is a known limitation. Cancellation will take effect after the current LLM API call finishes (typically within a few seconds).
+### Planned (Phase 4-8)
 
-### Issue: Tool calls not visible
+- 📋 **Project Management** - `/projects/` directory, git repos, journals
+- 📋 **Journal Page** - Logseq-inspired knowledge base
+- 📋 **Web UI** - CodeBlitz/Monaco integration
+- 📋 **Feedback Loops** - Capture human feedback, feed to agents
+- 📋 **Telemetry** - Self-hosted Laminar/Langfuse
 
-**Cause**: Client may not be handling `tool_call` notifications.
-
-**Solution**: Ensure your client listens for `session/update` notifications with `tool_call` and `tool_call_update` types.
-
-### Issue: MCP servers not loading
-
-**Cause**: MCP server command not found or incorrect configuration.
-
-**Solution**: 
-- Verify MCP server is installed (e.g., `uvx mcp-server-fetch`)
-- Check the command and args in the `mcpServers` configuration
-- Ensure the MCP server is accessible from the system PATH
-
-### Issue: Streaming updates not received
-
-**Cause**: Connection issue or client not reading notifications.
-
-**Solution**:
-- Ensure stdout is not buffered
-- Check that client is reading line-by-line from stdout
-- Verify JSON-RPC messages are properly formatted
-
-## Development
-
-### Project Structure
+## Architecture
 
 ```
-crow/
-├── src/crow/
-│   ├── agent/
-│   │   ├── acp_server.py    # Main ACP server implementation
-│   │   └── config.py         # Configuration classes
-│   └── ...
-├── tests/
-│   ├── test_acp_simple.py
-│   ├── test_acp_cancellation.py
-│   └── test_acp_server.py
-├── README.md
-└── pyproject.toml
+Crow
+├── ACP Server (src/crow/agent/)
+│   └── Streaming ACP protocol implementation
+├── Orchestration (src/crow/orchestration/)
+│   ├── Environment priming
+│   ├── Task splitting
+│   ├── Iterative refinement
+│   └── Task pipeline
+├── Web UI (Future)
+│   ├── CodeBlitz/Monaco editor
+│   ├── Journal page
+│   ├── Project browser
+│   └── Terminal
+└── Projects (/projects/)
+    └── Each project = git repo + journal
 ```
 
-### Adding New Features
+## The Problem We're Solving
 
-1. Implement the feature in `src/crow/agent/acp_server.py`
-2. Add tests in `tests/`
-3. Update this README if user-facing changes are made
-4. Run the test suite to ensure compatibility
+Current AI coding tools:
+- ❌ Drop agents into empty workspaces (no context)
+- ❌ Lose agent decisions in markdown files ("lost like tears in rain")
+- ❌ No feedback loop (human review not captured)
+- ❌ No knowledge accumulation
 
-## License
-
-[Specify your license here]
+Our solution:
+- ✅ **Environment priming** - Human + agent set up context first
+- ✅ **Journal** - All decisions documented and linked
+- ✅ **Feedback loops** - Human review captured and fed back
+- ✅ **Knowledge accumulation** - Agents get better over time
 
 ## Contributing
 
-Contributions are welcome! Please:
-1. Fork the repository
-2. Create a feature branch
-3. Make your changes with tests
-4. Submit a pull request
+This is a personal project, but feedback and ideas are welcome!
 
-## Support
+## License
 
-For issues, questions, or contributions, please [open an issue](link-to-issues) on the repository.
+MIT
 
 ## Acknowledgments
 
-- [Agent Client Protocol (ACP)](https://agentclientprotocol.com/)
+- [Agent Client Protocol](https://agentclientprotocol.com/)
 - [OpenHands SDK](https://docs.openhands.dev/)
-- [Model Context Protocol (MCP)](https://modelcontextprotocol.io/)
+- [Model Context Protocol](https://modelcontextprotocol.io/)
+- [Trae Solo](https://traesolo.net/) - Autonomous development inspiration
+- [Google Antigravity](https://antigravity.google/) - Agent-first IDE inspiration
+- [Logseq](https://logseq.com/) - Knowledge management inspiration
+- [CodeBlitz](https://github.com/sugarforever/codeblitz) - Web IDE foundation
+
+---
+
+*"The agent is the primary developer, humans are the critics/product managers."*
