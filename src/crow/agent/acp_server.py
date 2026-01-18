@@ -45,6 +45,7 @@ from acp.schema import (
     ContentToolCallContent,
     Diff,
     EmbeddedResource,
+    FileEditToolCallContent,
     ImageContent,
     Implementation,
     InitializeResponse,
@@ -81,6 +82,46 @@ from crow.agent.config import LLMConfig, ServerConfig
 # Streaming state for boundary detection
 StreamingState = Literal["thinking", "content", "tool_name", "tool_args"]
 
+# Diff context window
+N_CONTEXT_LINES = 3
+
+
+def _build_diff_blocks(
+    path: str,
+    old_text: str,
+    new_text: str,
+) -> list[FileEditToolCallContent]:
+    """Build diff blocks grouped with small context windows.
+    
+    Uses SequenceMatcher to find actual changed regions and creates
+    multiple focused blocks with surrounding context, similar to kimi-cli's approach.
+    """
+    from difflib import SequenceMatcher
+    
+    old_lines = old_text.splitlines(keepends=True)
+    new_lines = new_text.splitlines(keepends=True)
+    matcher = SequenceMatcher(None, old_lines, new_lines, autojunk=False)
+    blocks: list[FileEditToolCallContent] = []
+    
+    for group in matcher.get_grouped_opcodes(n=N_CONTEXT_LINES):
+        if not group:
+            continue
+        
+        # Extract the changed region with context
+        i1, i2 = group[0][1], group[-1][2]
+        j1, j2 = group[0][3], group[-1][4]
+        
+        blocks.append(
+            FileEditToolCallContent(
+                type="diff",
+                path=path,
+                old_text="".join(old_lines[i1:i2]),
+                new_text="".join(new_lines[j1:j2]),
+            )
+        )
+    
+    return blocks
+
 
 async def _send_tool_result_to_acp(
     session_id: str,
@@ -94,7 +135,6 @@ async def _send_tool_result_to_acp(
     """
     try:
         from openhands.tools.file_editor import FileEditorObservation
-        from acp.schema import FileEditToolCallContent
         
         obs = event.observation
         content_blocks = None
@@ -104,15 +144,12 @@ async def _send_tool_result_to_acp(
             # Only use FileEditToolCallContent for actual edits (when we have content)
             if (hasattr(obs, 'path') and hasattr(obs, 'old_content') and hasattr(obs, 'new_content')
                 and (obs.old_content or obs.new_content)):
-                # Use FileEditToolCallContent for proper diff visualization
-                content_blocks = [
-                    FileEditToolCallContent(
-                        type="diff",
-                        path=obs.path,
-                        old_text=obs.old_content or "",
-                        new_text=obs.new_content or "",
-                    )
-                ]
+                # Build intelligent diff blocks with context windows
+                content_blocks = _build_diff_blocks(
+                    path=obs.path,
+                    old_text=obs.old_content or "",
+                    new_text=obs.new_content or "",
+                )
         
         # Fallback to plain text if no structured content
         if not content_blocks:
