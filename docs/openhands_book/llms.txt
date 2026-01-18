@@ -1,0 +1,273 @@
+# OpenHands Docs
+
+## Docs
+
+- [Add Event](https://docs.openhands.dev/api-reference/add-event.md)
+- [Alive](https://docs.openhands.dev/api-reference/alive.md)
+- [Create Custom Secret](https://docs.openhands.dev/api-reference/create-custom-secret.md)
+- [Delete Conversation](https://docs.openhands.dev/api-reference/delete-conversation.md)
+- [Delete Custom Secret](https://docs.openhands.dev/api-reference/delete-custom-secret.md)
+- [Download Workspace Archive](https://docs.openhands.dev/api-reference/download-workspace-archive.md): Return a ZIP archive of the current conversation workspace.
+- [Get Config](https://docs.openhands.dev/api-reference/get-config.md): Get current config.
+- [Get Conversation](https://docs.openhands.dev/api-reference/get-conversation.md)
+- [Get File Content](https://docs.openhands.dev/api-reference/get-file-content.md): Return the content of the given file from the conversation workspace.
+- [Get Microagents](https://docs.openhands.dev/api-reference/get-microagents.md): Get all microagents associated with the conversation.
+
+This endpoint returns all repository and knowledge microagents that are loaded for the conversation.
+- [Get Prompt](https://docs.openhands.dev/api-reference/get-prompt.md)
+- [Get Remote Runtime Config](https://docs.openhands.dev/api-reference/get-remote-runtime-config.md): Retrieve the runtime configuration.
+
+Currently, this is the session ID and runtime ID (if available).
+- [Get Repository Branches](https://docs.openhands.dev/api-reference/get-repository-branches.md): Get branches for a repository.
+- [Get Repository Microagent Content](https://docs.openhands.dev/api-reference/get-repository-microagent-content.md): Fetch the content of a specific microagent file from a repository.
+- [Get Repository Microagents](https://docs.openhands.dev/api-reference/get-repository-microagents.md): Scan the microagents directory of a repository and return the list of microagents.
+
+The microagents directory location depends on the git provider and actual repository name:
+- If git provider is not GitLab and actual repository name is ".openhands": scans "microagents" folder
+- If git provider is GitLab and actual repository name is "openhands-config": scans "microagents" folder
+- Otherwise: scans ".openhands/microagents" folder
+- [Get Suggested Tasks](https://docs.openhands.dev/api-reference/get-suggested-tasks.md): Get suggested tasks for the authenticated user across their most recently pushed repositories.
+- [Get Trajectory](https://docs.openhands.dev/api-reference/get-trajectory.md): Get trajectory.
+
+This function retrieves the current trajectory and returns it.
+- [Get User](https://docs.openhands.dev/api-reference/get-user.md)
+- [Get User Installations](https://docs.openhands.dev/api-reference/get-user-installations.md)
+- [Get User Repositories](https://docs.openhands.dev/api-reference/get-user-repositories.md)
+- [Git Changes](https://docs.openhands.dev/api-reference/git-changes.md)
+- [Git Diff](https://docs.openhands.dev/api-reference/git-diff.md)
+- [Health](https://docs.openhands.dev/api-reference/health.md)
+- [List Agents](https://docs.openhands.dev/api-reference/list-agents.md): List available agent types supported by this server.
+- [List Security Analyzers](https://docs.openhands.dev/api-reference/list-security-analyzers.md): List supported security analyzers.
+- [List Supported Models](https://docs.openhands.dev/api-reference/list-supported-models.md): List model identifiers available on this server based on configured providers.
+- [List Workspace Files](https://docs.openhands.dev/api-reference/list-workspace-files.md): List workspace files visible to the conversation runtime. Applies .gitignore and internal ignore rules.
+- [Load Custom Secrets Names](https://docs.openhands.dev/api-reference/load-custom-secrets-names.md)
+- [Load Settings](https://docs.openhands.dev/api-reference/load-settings.md)
+- [New Conversation](https://docs.openhands.dev/api-reference/new-conversation.md): Initialize a new session or join an existing one.
+
+After successful initialization, the client should connect to the WebSocket
+using the returned conversation ID.
+- [Reset Settings](https://docs.openhands.dev/api-reference/reset-settings.md): Resets user settings. (Deprecated)
+- [Search Conversations](https://docs.openhands.dev/api-reference/search-conversations.md)
+- [Search Events](https://docs.openhands.dev/api-reference/search-events.md): Search through the event stream with filtering and pagination.
+- [Search Repositories](https://docs.openhands.dev/api-reference/search-repositories.md)
+- [Start Conversation](https://docs.openhands.dev/api-reference/start-conversation.md): Start an agent loop for a conversation.
+
+This endpoint calls the conversation_manager's maybe_start_agent_loop method
+to start a conversation. If the conversation is already running, it will
+return the existing agent loop info.
+- [Stop Conversation](https://docs.openhands.dev/api-reference/stop-conversation.md): Stop an agent loop for a conversation.
+
+This endpoint calls the conversation_manager's close_session method
+to stop a conversation.
+- [Store Provider Tokens](https://docs.openhands.dev/api-reference/store-provider-tokens.md)
+- [Store Settings](https://docs.openhands.dev/api-reference/store-settings.md)
+- [Submit Feedback](https://docs.openhands.dev/api-reference/submit-feedback.md): Submit user feedback.
+
+This function stores the provided feedback data.
+
+To submit feedback:
+- [Unset Provider Tokens](https://docs.openhands.dev/api-reference/unset-provider-tokens.md)
+- [Update Conversation](https://docs.openhands.dev/api-reference/update-conversation.md): Update conversation metadata.
+
+This endpoint allows updating conversation details like title.
+Only the conversation owner can update the conversation.
+- [Update Custom Secret](https://docs.openhands.dev/api-reference/update-custom-secret.md)
+- [Upload Files](https://docs.openhands.dev/api-reference/upload-files.md)
+- [Configuration Options](https://docs.openhands.dev/openhands/usage/advanced/configuration-options.md): This page outlines all available configuration options for OpenHands, allowing you to customize its behavior and integrate it with other services.
+- [Custom Sandbox](https://docs.openhands.dev/openhands/usage/advanced/custom-sandbox-guide.md): This guide is for users that would like to use their own custom Docker image for the runtime. For example, with certain tools or programming languages pre-installed.
+- [Search Engine Setup](https://docs.openhands.dev/openhands/usage/advanced/search-engine-setup.md): Configure OpenHands to use Tavily as a search engine.
+- [OpenHands Cloud](https://docs.openhands.dev/openhands/usage/cli/cloud.md): Create and manage OpenHands Cloud conversations from the CLI
+- [Command Reference](https://docs.openhands.dev/openhands/usage/cli/command-reference.md): Complete reference for all OpenHands CLI commands and options
+- [GUI Server](https://docs.openhands.dev/openhands/usage/cli/gui-server.md): Launch the full OpenHands web GUI using Docker
+- [Headless Mode](https://docs.openhands.dev/openhands/usage/cli/headless.md): Run OpenHands without UI for scripting, automation, and CI/CD pipelines
+- [JetBrains IDEs](https://docs.openhands.dev/openhands/usage/cli/ide/jetbrains.md): Configure OpenHands with IntelliJ IDEA, PyCharm, WebStorm, and other JetBrains IDEs
+- [IDE Integration Overview](https://docs.openhands.dev/openhands/usage/cli/ide/overview.md): Use OpenHands directly in your favorite code editor through the Agent Client Protocol
+- [Toad Terminal](https://docs.openhands.dev/openhands/usage/cli/ide/toad.md): Use OpenHands with the Toad universal terminal interface for AI agents
+- [VS Code](https://docs.openhands.dev/openhands/usage/cli/ide/vscode.md): Use OpenHands in Visual Studio Code with the VSCode ACP community extension
+- [Zed IDE](https://docs.openhands.dev/openhands/usage/cli/ide/zed.md): Configure OpenHands with the Zed code editor through the Agent Client Protocol
+- [Installation](https://docs.openhands.dev/openhands/usage/cli/installation.md): Install the OpenHands CLI on your system
+- [MCP Servers](https://docs.openhands.dev/openhands/usage/cli/mcp-servers.md): Manage Model Context Protocol servers to extend OpenHands capabilities
+- [Quick Start](https://docs.openhands.dev/openhands/usage/cli/quick-start.md): Get started with OpenHands CLI in minutes
+- [Resume Conversations](https://docs.openhands.dev/openhands/usage/cli/resume.md): How to resume previous conversations in the OpenHands CLI
+- [Terminal (TUI)](https://docs.openhands.dev/openhands/usage/cli/terminal.md): Use OpenHands interactively in your terminal with the text-based user interface
+- [Web Interface](https://docs.openhands.dev/openhands/usage/cli/web-interface.md): Access the OpenHands CLI through your web browser
+- [Bitbucket Integration](https://docs.openhands.dev/openhands/usage/cloud/bitbucket-installation.md): This guide walks you through the process of installing OpenHands Cloud for your Bitbucket repositories. Once set up, it will allow OpenHands to work with your Bitbucket repository.
+- [Cloud API](https://docs.openhands.dev/openhands/usage/cloud/cloud-api.md): OpenHands Cloud provides a REST API that allows you to programmatically interact with OpenHands. This guide explains how to obtain an API key and use the API to start conversations and retrieve their status.
+- [Cloud UI](https://docs.openhands.dev/openhands/usage/cloud/cloud-ui.md): The Cloud UI provides a web interface for interacting with OpenHands. This page provides references on how to use the OpenHands Cloud UI.
+- [GitHub Integration](https://docs.openhands.dev/openhands/usage/cloud/github-installation.md): This guide walks you through the process of installing OpenHands Cloud for your GitHub repositories. Once set up, it will allow OpenHands to work with your GitHub repository through the Cloud UI or straight from GitHub!
+- [GitLab Integration](https://docs.openhands.dev/openhands/usage/cloud/gitlab-installation.md): This guide walks you through the process of installing OpenHands Cloud for your GitLab repositories. Once set up, it will allow OpenHands to work with your GitLab repository through the Cloud UI or straight from GitLab!.
+- [Getting Started](https://docs.openhands.dev/openhands/usage/cloud/openhands-cloud.md): Getting started with OpenHands Cloud.
+- [Jira Cloud Integration](https://docs.openhands.dev/openhands/usage/cloud/project-management/jira-integration.md): Complete guide for setting up Jira Cloud integration with OpenHands Cloud, including service account creation, API token generation, webhook configuration, and workspace integration setup.
+- [Slack Integration](https://docs.openhands.dev/openhands/usage/cloud/slack-installation.md): This guide walks you through installing the OpenHands Slack app.
+- [Repository Customization](https://docs.openhands.dev/openhands/usage/customization/repository.md): You can customize how OpenHands interacts with your repository by creating a `.openhands` directory at the root level.
+- [Key Features](https://docs.openhands.dev/openhands/usage/key-features.md)
+- [Azure](https://docs.openhands.dev/openhands/usage/llms/azure-llms.md): OpenHands uses LiteLLM to make calls to Azure's chat models. You can find their documentation on using Azure as a provider [here](https://docs.litellm.ai/docs/providers/azure).
+- [Google Gemini/Vertex](https://docs.openhands.dev/openhands/usage/llms/google-llms.md): OpenHands uses LiteLLM to make calls to Google's chat models. You can find their documentation on using Google as a provider -> [Gemini - Google AI Studio](https://docs.litellm.ai/docs/providers/gemini), [VertexAI - Google Cloud Platform](https://docs.litellm.ai/docs/providers/vertex)
+- [Groq](https://docs.openhands.dev/openhands/usage/llms/groq.md): OpenHands uses LiteLLM to make calls to chat models on Groq. You can find their documentation on using Groq as a provider [here](https://docs.litellm.ai/docs/providers/groq).
+- [LiteLLM Proxy](https://docs.openhands.dev/openhands/usage/llms/litellm-proxy.md): OpenHands supports using the [LiteLLM proxy](https://docs.litellm.ai/docs/proxy/quick_start) to access various LLM providers.
+- [Overview](https://docs.openhands.dev/openhands/usage/llms/llms.md): OpenHands can connect to any LLM supported by LiteLLM. However, it requires a powerful model to work.
+- [Local LLMs](https://docs.openhands.dev/openhands/usage/llms/local-llms.md): When using a Local LLM, OpenHands may have limited functionality. It is highly recommended that you use GPUs to serve local models for optimal experience.
+- [Moonshot AI](https://docs.openhands.dev/openhands/usage/llms/moonshot.md): How to use Moonshot AI models with OpenHands
+- [OpenAI](https://docs.openhands.dev/openhands/usage/llms/openai-llms.md): OpenHands uses LiteLLM to make calls to OpenAI's chat models. You can find their documentation on using OpenAI as a provider [here](https://docs.litellm.ai/docs/providers/openai).
+- [OpenHands](https://docs.openhands.dev/openhands/usage/llms/openhands-llms.md): OpenHands LLM provider with access to state-of-the-art (SOTA) agentic coding models.
+- [OpenRouter](https://docs.openhands.dev/openhands/usage/llms/openrouter.md): OpenHands uses LiteLLM to make calls to chat models on OpenRouter. You can find their documentation on using OpenRouter as a provider [here](https://docs.litellm.ai/docs/providers/openrouter).
+- [Configure](https://docs.openhands.dev/openhands/usage/run-openhands/gui-mode.md): High level overview of configuring the OpenHands Web interface.
+- [Setup](https://docs.openhands.dev/openhands/usage/run-openhands/local-setup.md): Getting started with running OpenHands on your own.
+- [Daytona Runtime](https://docs.openhands.dev/openhands/usage/runtimes/daytona.md): You can use [Daytona](https://www.daytona.io/) as a runtime provider.
+- [Docker Runtime](https://docs.openhands.dev/openhands/usage/runtimes/docker.md): This is the default Runtime that's used when you start OpenHands.
+- [E2B Runtime](https://docs.openhands.dev/openhands/usage/runtimes/e2b.md): E2B is an open-source secure cloud environment (sandbox) made for running AI-generated code and agents.
+- [Local Runtime](https://docs.openhands.dev/openhands/usage/runtimes/local.md): The Local Runtime allows the OpenHands agent to execute actions directly on your local machine without using Docker. This runtime is primarily intended for controlled environments like CI pipelines or testing scenarios where Docker is not available.
+- [Modal Runtime](https://docs.openhands.dev/openhands/usage/runtimes/modal.md)
+- [Overview](https://docs.openhands.dev/openhands/usage/runtimes/overview.md): This section is for users that would like to use a runtime other than Docker for OpenHands.
+- [Remote Runtime](https://docs.openhands.dev/openhands/usage/runtimes/remote.md): This runtime is specifically designed for agent evaluation purposes only through the [OpenHands evaluation harness](https://github.com/OpenHands/OpenHands/tree/main/evaluation). It should not be used to launch production OpenHands applications.
+- [Runloop Runtime](https://docs.openhands.dev/openhands/usage/runtimes/runloop.md): Runloop provides a fast, secure and scalable AI sandbox (Devbox). Check out the [runloop docs](https://docs.runloop.ai/overview/what-is-runloop) for more detail.
+- [API Keys Settings](https://docs.openhands.dev/openhands/usage/settings/api-keys-settings.md): View your OpenHands LLM key and create API keys to work with OpenHands programmatically.
+- [Application Settings](https://docs.openhands.dev/openhands/usage/settings/application-settings.md): Configure application-level settings for OpenHands.
+- [Integrations Settings](https://docs.openhands.dev/openhands/usage/settings/integrations-settings.md): How to setup and modify the various integrations in OpenHands.
+- [Language Model (LLM) Settings](https://docs.openhands.dev/openhands/usage/settings/llm-settings.md): This page goes over how to set the LLM to use in OpenHands. As well as some additional LLM settings.
+- [Model Context Protocol (MCP)](https://docs.openhands.dev/openhands/usage/settings/mcp-settings.md): This page outlines how to configure and use the Model Context Protocol (MCP) in OpenHands, allowing you to extend the agent's capabilities with custom tools.
+- [Secrets Management](https://docs.openhands.dev/openhands/usage/settings/secrets-settings.md): How to manage secrets in OpenHands.
+- [Prompting Best Practices](https://docs.openhands.dev/openhands/usage/tips/prompting-best-practices.md): When working with OpenHands AI software developer, providing clear and effective prompts is key to getting accurate and useful responses. This guide outlines best practices for crafting effective prompts.
+- [null](https://docs.openhands.dev/openhands/usage/troubleshooting/feedback.md)
+- [Troubleshooting](https://docs.openhands.dev/openhands/usage/troubleshooting/troubleshooting.md)
+- [Community](https://docs.openhands.dev/overview/community.md): Learn about the OpenHands community, mission, and values
+- [Contributing](https://docs.openhands.dev/overview/contributing.md): Join us in building OpenHands and the future of AI. Learn how to contribute to make a meaningful impact.
+- [FAQs](https://docs.openhands.dev/overview/faqs.md): Frequently asked questions about OpenHands.
+- [First Projects](https://docs.openhands.dev/overview/first-projects.md): So you've [run OpenHands](/overview/quickstart). Now what?
+- [Introduction](https://docs.openhands.dev/overview/introduction.md): Welcome to OpenHands, a community focused on AI-driven development
+- [Model Context Protocol (MCP)](https://docs.openhands.dev/overview/model-context-protocol.md): Model Context Protocol support across OpenHands platforms
+- [Quick Start](https://docs.openhands.dev/overview/quickstart.md): Running OpenHands Cloud or running on your own.
+- [Overview](https://docs.openhands.dev/overview/skills.md): Skills are specialized prompts that enhance OpenHands with domain-specific knowledge, expert guidance, and automated task handling.
+- [Keyword-Triggered Skills](https://docs.openhands.dev/overview/skills/keyword.md): Keyword-triggered skills provide OpenHands with specific instructions that are activated when certain keywords appear in the prompt. This is useful for tailoring behavior based on particular tools, languages, or frameworks.
+- [Organization and User Skills](https://docs.openhands.dev/overview/skills/org.md): Organizations and users can define skills that apply to all repositories belonging to the organization or user.
+- [Global Skills](https://docs.openhands.dev/overview/skills/public.md): Global skills are [keyword-triggered skills](/overview/skills/keyword) that apply to all OpenHands users. The official global skill registry is maintained at [github.com/OpenHands/skills](https://github.com/OpenHands/skills).
+- [General Skills](https://docs.openhands.dev/overview/skills/repo.md): General guidelines for OpenHands to work more effectively with the repository.
+- [openhands.sdk.agent](https://docs.openhands.dev/sdk/api-reference/openhands.sdk.agent.md): API reference for openhands.sdk.agent module
+- [openhands.sdk.conversation](https://docs.openhands.dev/sdk/api-reference/openhands.sdk.conversation.md): API reference for openhands.sdk.conversation module
+- [openhands.sdk.event](https://docs.openhands.dev/sdk/api-reference/openhands.sdk.event.md): API reference for openhands.sdk.event module
+- [openhands.sdk.llm](https://docs.openhands.dev/sdk/api-reference/openhands.sdk.llm.md): API reference for openhands.sdk.llm module
+- [openhands.sdk.security](https://docs.openhands.dev/sdk/api-reference/openhands.sdk.security.md): API reference for openhands.sdk.security module
+- [openhands.sdk.tool](https://docs.openhands.dev/sdk/api-reference/openhands.sdk.tool.md): API reference for openhands.sdk.tool module
+- [openhands.sdk.utils](https://docs.openhands.dev/sdk/api-reference/openhands.sdk.utils.md): API reference for openhands.sdk.utils module
+- [openhands.sdk.workspace](https://docs.openhands.dev/sdk/api-reference/openhands.sdk.workspace.md): API reference for openhands.sdk.workspace module
+- [Agent](https://docs.openhands.dev/sdk/arch/agent.md): High-level architecture of the reasoning-action loop
+- [Condenser](https://docs.openhands.dev/sdk/arch/condenser.md): High-level architecture of the conversation history compression system
+- [Conversation](https://docs.openhands.dev/sdk/arch/conversation.md): High-level architecture of the conversation orchestration system
+- [Design Principles](https://docs.openhands.dev/sdk/arch/design.md): Core architectural principles guiding the OpenHands Software Agent SDK's development.
+- [Events](https://docs.openhands.dev/sdk/arch/events.md): High-level architecture of the typed event framework
+- [LLM](https://docs.openhands.dev/sdk/arch/llm.md): High-level architecture of the provider-agnostic language model interface
+- [Overview](https://docs.openhands.dev/sdk/arch/overview.md): Understanding the OpenHands Software Agent SDK's package structure, component interactions, and execution models.
+- [Security](https://docs.openhands.dev/sdk/arch/security.md): High-level architecture of action security analysis and validation
+- [Skill](https://docs.openhands.dev/sdk/arch/skill.md): High-level architecture of the reusable prompt system
+- [Tool System & MCP](https://docs.openhands.dev/sdk/arch/tool-system.md): High-level architecture of the action-observation tool framework
+- [Workspace](https://docs.openhands.dev/sdk/arch/workspace.md): High-level architecture of the execution environment abstraction
+- [FAQ](https://docs.openhands.dev/sdk/faq.md): Frequently asked questions about the OpenHands SDK
+- [Getting Started](https://docs.openhands.dev/sdk/getting-started.md): Install the OpenHands SDK and build AI agents that write software.
+- [Browser Use](https://docs.openhands.dev/sdk/guides/agent-browser-use.md): Enable web browsing and interaction capabilities for your agent.
+- [Creating Custom Agent](https://docs.openhands.dev/sdk/guides/agent-custom.md): Learn how to design specialized agents with custom tool sets
+- [Sub-Agent Delegation](https://docs.openhands.dev/sdk/guides/agent-delegation.md): Enable parallel task execution by delegating work to multiple sub-agents that run independently and return consolidated results.
+- [Interactive Terminal](https://docs.openhands.dev/sdk/guides/agent-interactive-terminal.md): Enable agents to interact with terminal applications like ipython, python REPL, and other interactive CLI tools.
+- [Batch Get Bash Events](https://docs.openhands.dev/sdk/guides/agent-server/api-reference/bash/batch-get-bash-events.md): Get a batch of bash event events given their ids, returning null for any
+missing item.
+- [Clear All Bash Events](https://docs.openhands.dev/sdk/guides/agent-server/api-reference/bash/clear-all-bash-events.md): Clear all bash events from storage
+- [Execute Bash Command](https://docs.openhands.dev/sdk/guides/agent-server/api-reference/bash/execute-bash-command.md): Execute a bash command and wait for a result
+- [Get Bash Event](https://docs.openhands.dev/sdk/guides/agent-server/api-reference/bash/get-bash-event.md): Get a bash event event given an id
+- [Search Bash Events](https://docs.openhands.dev/sdk/guides/agent-server/api-reference/bash/search-bash-events.md): Search / List bash event events
+- [Start Bash Command](https://docs.openhands.dev/sdk/guides/agent-server/api-reference/bash/start-bash-command.md): Execute a bash command in the background
+- [Ask Agent](https://docs.openhands.dev/sdk/guides/agent-server/api-reference/conversations/ask-agent.md): Ask the agent a simple question without affecting conversation state.
+- [Batch Get Conversations](https://docs.openhands.dev/sdk/guides/agent-server/api-reference/conversations/batch-get-conversations.md): Get a batch of conversations given their ids, returning null for
+any missing item
+- [Condense Conversation](https://docs.openhands.dev/sdk/guides/agent-server/api-reference/conversations/condense-conversation.md): Force condensation of the conversation history.
+- [Count Conversations](https://docs.openhands.dev/sdk/guides/agent-server/api-reference/conversations/count-conversations.md): Count conversations matching the given filters
+- [Delete Conversation](https://docs.openhands.dev/sdk/guides/agent-server/api-reference/conversations/delete-conversation.md): Permanently delete a conversation.
+- [Generate Conversation Title](https://docs.openhands.dev/sdk/guides/agent-server/api-reference/conversations/generate-conversation-title.md): Generate a title for the conversation using LLM.
+- [Get Conversation](https://docs.openhands.dev/sdk/guides/agent-server/api-reference/conversations/get-conversation.md): Given an id, get a conversation
+- [Pause Conversation](https://docs.openhands.dev/sdk/guides/agent-server/api-reference/conversations/pause-conversation.md): Pause a conversation, allowing it to be resumed later.
+- [Run Conversation](https://docs.openhands.dev/sdk/guides/agent-server/api-reference/conversations/run-conversation.md): Start running the conversation in the background.
+- [Search Conversations](https://docs.openhands.dev/sdk/guides/agent-server/api-reference/conversations/search-conversations.md): Search / List conversations
+- [Set Conversation Confirmation Policy](https://docs.openhands.dev/sdk/guides/agent-server/api-reference/conversations/set-conversation-confirmation-policy.md): Set the confirmation policy for a conversation.
+- [Set Conversation Security Analyzer](https://docs.openhands.dev/sdk/guides/agent-server/api-reference/conversations/set-conversation-security-analyzer.md): Set the security analyzer for a conversation.
+- [Start Conversation](https://docs.openhands.dev/sdk/guides/agent-server/api-reference/conversations/start-conversation.md): Start a conversation in the local environment.
+- [Update Conversation](https://docs.openhands.dev/sdk/guides/agent-server/api-reference/conversations/update-conversation.md): Update conversation metadata.
+
+This endpoint allows updating conversation details like title.
+- [Update Conversation Secrets](https://docs.openhands.dev/sdk/guides/agent-server/api-reference/conversations/update-conversation-secrets.md): Update secrets for a conversation.
+- [Get Desktop Url](https://docs.openhands.dev/sdk/guides/agent-server/api-reference/desktop/get-desktop-url.md): Get the noVNC URL for desktop access.
+
+Args:
+    base_url: Base URL for the noVNC server (default: http://localhost:8002)
+
+Returns:
+    noVNC URL if available, None otherwise
+- [Batch Get Conversation Events](https://docs.openhands.dev/sdk/guides/agent-server/api-reference/events/batch-get-conversation-events.md): Get a batch of local events given their ids, returning null for any
+missing item.
+- [Count Conversation Events](https://docs.openhands.dev/sdk/guides/agent-server/api-reference/events/count-conversation-events.md): Count local events matching the given filters
+- [Get Conversation Event](https://docs.openhands.dev/sdk/guides/agent-server/api-reference/events/get-conversation-event.md): Get a local event given an id
+- [Respond To Confirmation](https://docs.openhands.dev/sdk/guides/agent-server/api-reference/events/respond-to-confirmation.md): Accept or reject a pending action in confirmation mode.
+- [Search Conversation Events](https://docs.openhands.dev/sdk/guides/agent-server/api-reference/events/search-conversation-events.md): Search / List local events
+- [Send Message](https://docs.openhands.dev/sdk/guides/agent-server/api-reference/events/send-message.md): Send a message to a conversation
+- [Download File](https://docs.openhands.dev/sdk/guides/agent-server/api-reference/files/download-file.md): Download a file from the workspace.
+- [Download Trajectory](https://docs.openhands.dev/sdk/guides/agent-server/api-reference/files/download-trajectory.md): Download a file from the workspace.
+- [Upload File](https://docs.openhands.dev/sdk/guides/agent-server/api-reference/files/upload-file.md): Upload a file to the workspace.
+- [Get Server Info](https://docs.openhands.dev/sdk/guides/agent-server/api-reference/get-server-info.md)
+- [Git Changes](https://docs.openhands.dev/sdk/guides/agent-server/api-reference/git/git-changes.md)
+- [Git Diff](https://docs.openhands.dev/sdk/guides/agent-server/api-reference/git/git-diff.md)
+- [Alive](https://docs.openhands.dev/sdk/guides/agent-server/api-reference/server-details/alive.md)
+- [Get Server Info](https://docs.openhands.dev/sdk/guides/agent-server/api-reference/server-details/get-server-info.md)
+- [Health](https://docs.openhands.dev/sdk/guides/agent-server/api-reference/server-details/health.md)
+- [List Available Tools](https://docs.openhands.dev/sdk/guides/agent-server/api-reference/tools/list-available-tools.md): List all available tools.
+- [Get Vscode Status](https://docs.openhands.dev/sdk/guides/agent-server/api-reference/vscode/get-vscode-status.md): Get the VSCode server status.
+
+Returns:
+    Dictionary with running status and enabled status
+- [Get Vscode Url](https://docs.openhands.dev/sdk/guides/agent-server/api-reference/vscode/get-vscode-url.md): Get the VSCode URL with authentication token.
+
+Args:
+    base_url: Base URL for the VSCode server (default: http://localhost:8001)
+    workspace_dir: Path to workspace directory
+
+Returns:
+    VSCode URL with token if available, None otherwise
+- [API-based Sandbox](https://docs.openhands.dev/sdk/guides/agent-server/api-sandbox.md): Connect to hosted API-based agent server for fully managed infrastructure.
+- [Apptainer Sandbox](https://docs.openhands.dev/sdk/guides/agent-server/apptainer-sandbox.md): Run agent server in rootless Apptainer containers for HPC and shared computing environments.
+- [OpenHands Cloud Workspace](https://docs.openhands.dev/sdk/guides/agent-server/cloud-workspace.md): Connect to OpenHands Cloud for fully managed sandbox environments.
+- [Custom Tools with Remote Agent Server](https://docs.openhands.dev/sdk/guides/agent-server/custom-tools.md): Learn how to use custom tools with a remote agent server by building a custom base image that includes your tool implementations.
+- [Docker Sandbox](https://docs.openhands.dev/sdk/guides/agent-server/docker-sandbox.md): Run agent server in isolated Docker containers for security and reproducibility.
+- [Local Agent Server](https://docs.openhands.dev/sdk/guides/agent-server/local-server.md): Run agents through a local HTTP server with RemoteConversation for client-server architecture.
+- [Overview](https://docs.openhands.dev/sdk/guides/agent-server/overview.md): Run agents on remote servers with isolated workspaces for production deployments.
+- [Stuck Detector](https://docs.openhands.dev/sdk/guides/agent-stuck-detector.md): Detect and handle stuck agents automatically with timeout mechanisms.
+- [Theory of Mind (TOM) Agent](https://docs.openhands.dev/sdk/guides/agent-tom-agent.md): Enable your agent to understand user intent and preferences through Theory of Mind capabilities, providing personalized guidance based on user modeling.
+- [Context Condenser](https://docs.openhands.dev/sdk/guides/context-condenser.md): Manage agent memory by condensing conversation history to save tokens.
+- [Ask Agent Questions](https://docs.openhands.dev/sdk/guides/convo-ask-agent.md): Get sidebar replies from the agent during conversation execution without interrupting the main flow.
+- [Conversation with Async](https://docs.openhands.dev/sdk/guides/convo-async.md): Use async/await for concurrent agent operations and non-blocking execution.
+- [Custom Visualizer](https://docs.openhands.dev/sdk/guides/convo-custom-visualizer.md): Customize conversation visualization by creating custom visualizers or configuring the default visualizer.
+- [Pause and Resume](https://docs.openhands.dev/sdk/guides/convo-pause-and-resume.md): Pause agent execution, perform operations, and resume without losing state.
+- [Persistence](https://docs.openhands.dev/sdk/guides/convo-persistence.md): Save and restore conversation state for multi-session workflows.
+- [Send Message While Running](https://docs.openhands.dev/sdk/guides/convo-send-message-while-running.md): Interrupt running agents to provide additional context or corrections.
+- [Custom Tools](https://docs.openhands.dev/sdk/guides/custom-tools.md): Tools define what agents can do. The SDK includes built-in tools for common operations and supports creating custom tools for specialized needs.
+- [Assign Reviews](https://docs.openhands.dev/sdk/guides/github-workflows/assign-reviews.md): Automate PR management with intelligent reviewer assignment and workflow notifications using OpenHands Agent
+- [PR Review](https://docs.openhands.dev/sdk/guides/github-workflows/pr-review.md): Use OpenHands Agent to generate meaningful pull request review
+- [TODO Management](https://docs.openhands.dev/sdk/guides/github-workflows/todo-management.md): Implement TODOs using OpenHands Agent
+- [Hello World](https://docs.openhands.dev/sdk/guides/hello-world.md): The simplest possible OpenHands agent - configure an LLM, create an agent, and complete a task.
+- [Hooks](https://docs.openhands.dev/sdk/guides/hooks.md): Use lifecycle hooks to observe, log, and customize agent execution.
+- [Iterative Refinement](https://docs.openhands.dev/sdk/guides/iterative-refinement.md): Implement iterative refinement workflows where agents refine their work based on critique feedback until quality thresholds are met.
+- [Exception Handling](https://docs.openhands.dev/sdk/guides/llm-error-handling.md): Provider‑agnostic exceptions raised by the SDK and recommended patterns for handling them.
+- [Image Input](https://docs.openhands.dev/sdk/guides/llm-image-input.md): Send images to multimodal agents for vision-based tasks and analysis.
+- [Reasoning](https://docs.openhands.dev/sdk/guides/llm-reasoning.md): Access model reasoning traces from Anthropic extended thinking and OpenAI responses API.
+- [LLM Registry](https://docs.openhands.dev/sdk/guides/llm-registry.md): Dynamically select and configure language models using the LLM registry.
+- [Model Routing](https://docs.openhands.dev/sdk/guides/llm-routing.md): Route agent's LLM requests to different models.
+- [LLM Streaming](https://docs.openhands.dev/sdk/guides/llm-streaming.md): Stream LLM responses token-by-token for real-time display and interactive user experiences.
+- [Model Context Protocol](https://docs.openhands.dev/sdk/guides/mcp.md): Model Context Protocol (MCP) enables dynamic tool integration from external servers. Agents can discover and use MCP-provided tools automatically.
+- [Metrics Tracking](https://docs.openhands.dev/sdk/guides/metrics.md): Track token usage, costs, and latency metrics for your agents.
+- [Observability & Tracing](https://docs.openhands.dev/sdk/guides/observability.md): Enable OpenTelemetry tracing to monitor and debug your agent's execution with tools like Laminar, Honeycomb, or any OTLP-compatible backend.
+- [Secret Registry](https://docs.openhands.dev/sdk/guides/secrets.md): Provide environment variables and secrets to agent workspace securely.
+- [Security & Action Confirmation](https://docs.openhands.dev/sdk/guides/security.md): Control agent action execution through confirmation policy and security analyzer.
+- [Agent Skills & Context](https://docs.openhands.dev/sdk/guides/skill.md): Skills add specialized behaviors, domain knowledge, and context-aware triggers to your agent through structured prompts.
+- [Software Agent SDK](https://docs.openhands.dev/sdk/index.md): Build AI agents that write software. A clean, modular SDK with production-ready tools.
+
+
+## Optional
+
+- [Company](https://openhands.dev/)
+- [Blog](https://openhands.dev/blog)
+- [OpenHands Cloud](https://app.all-hands.dev)

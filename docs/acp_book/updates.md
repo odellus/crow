@@ -1,0 +1,102 @@
+# Updates
+
+> Updates and announcements about the Agent Client Protocol
+
+<Update label="January 15, 2026" tags={["RFD"]}>
+  ## Rust SDK based on SACP RFD moves to Draft stage
+
+  The RFD for basing the Rust SDK on SACP has been moved to Draft stage. Please review the [RFD](./rfds/rust-sdk-v1) for more information on the current proposal and provide feedback as work on the implementation begins.
+</Update>
+
+<Update label="January 15, 2025" tags={["RFD"]}>
+  ## Session Config Options RFD moves to Preview stage
+
+  The RFD for adding more generic Session Config Options to the protocol has been moved to Preview stage. Please review the [RFD](./rfds/session-config-options) for more information on the current proposal and provide feedback before the feature is stabilized.
+</Update>
+
+<Update label="January 14, 2026" tags={["RFD"]}>
+  ## Authentication Methods RFD moves to Draft stage
+
+  The RFD for creating additional types of authentication methods has been moved to Draft stage. Please review the [RFD](./rfds/auth-methods) for more information on the current proposal and provide feedback as work on the implementation begins.
+</Update>
+
+<Update label="January 1, 2026" tags={["RFD"]}>
+  ## Agent Registry RFD moves to Draft stage
+
+  The RFD for creating an Agent Registry has been moved to Draft stage. Please review the [RFD](./rfds/acp-agent-registry) for more information on the current proposal and provide feedback as work on the implementation begins.
+</Update>
+
+<Update label="January 1, 2026" tags={["RFD"]}>
+  ## Session Usage RFD moves to Draft stage
+
+  The RFD for adding a new `usage_update` variant on the `session/update` notification and `usage` field on prompt responses in the protocol has been moved to Draft stage. Please review the [RFD](./rfds/session-usage) for more information on the current proposal and provide feedback as work on the implementation begins.
+</Update>
+
+<Update label="December 31, 2025" tags={["RFD"]}>
+  ## Proxy Chains RFD moves to Draft stage
+
+  The RFD for adding proxy chain functionality in the protocol has been moved to Draft stage. Please review the [RFD](./rfds/proxy-chains) for more information on the current proposal and provide feedback as work on the implementation begins.
+</Update>
+
+<Update label="December 11, 2025" tags={["RFD"]}>
+  ## Agent Telemetry Export RFD moves to Draft stage
+
+  The RFD for providing more guidance on how agents should export telemetry has been moved to Draft stage. Please review the [RFD](./rfds/agent-telemetry-export) for more information on the current proposal and provide feedback as work on the implementation begins.
+</Update>
+
+<Update label="December 3, 2025" tags={["RFD"]}>
+  ## session\_info\_update notification RFD moves to Draft stage
+
+  The RFD for adding a new `session_info_update` variant on the `session/update` notification in the protocol has been moved to Draft stage. Please review the [RFD](./rfds/session-info-update) for more information on the current proposal and provide feedback as work on the implementation begins.
+</Update>
+
+<Update label="December 3, 2025" tags={["RFD"]}>
+  ## \_meta Propagation RFD moves to Draft stage
+
+  The RFD for providing more guidance on how the `_meta` parameter should be used within the protocol has been moved to Draft stage. Please review the [RFD](./rfds/meta-propagation) for more information on the current proposal and provide feedback as work on the implementation begins.
+</Update>
+
+<Update label="November 26, 2025" tags={["RFD"]}>
+  ## session/resume RFD moves to Draft stage
+
+  The RFD for adding a "session/resume" method to the protocol has been moved to Draft stage. Please review the [RFD](./rfds/session-resume) for more information on the current proposal and provide feedback as work on the implementation begins.
+</Update>
+
+<Update label="November 20, 2025" tags={["RFD"]}>
+  ## \$/cancelRequest RFD moves to Draft stage
+
+  The RFD for adding a "\$/cancelRequest" method to the protocol has been moved to Draft stage. Please review the [RFD](./rfds/request-cancellation) for more information on the current proposal and provide feedback as work on the implementation begins.
+</Update>
+
+<Update label="November 20, 2025" tags={["RFD"]}>
+  ## session/fork RFD moves to Draft stage
+
+  The RFD for adding a "session/fork" method to the protocol has been moved to Draft stage. Please review the [RFD](./rfds/session-fork) for more information on the current proposal and provide feedback as work on the implementation begins.
+</Update>
+
+<Update label="November 3, 2025" tags={["RFD"]}>
+  ## Session Config Options RFD moves to Draft stage
+
+  The RFD for adding more generic Session Config Options to the protocol has been moved to Draft stage. Please review the [RFD](./rfds/session-config-options) for more information on the current proposal and provide feedback as work on the implementation begins.
+</Update>
+
+<Update label="October 31, 2025" tags={["RFD"]}>
+  ## session/list RFD moves to Draft stage
+
+  The RFD for adding a "session/list" method to the protocol has been moved to Draft stage. Please review the [RFD](./rfds/session-list) for more information on the current proposal and provide feedback as work on the implementation begins.
+</Update>
+
+<Update label="October 24, 2025" tags={["Protocol"]}>
+  ## Implementation Information for Agents and Clients
+
+  Agents and Clients are [now able to provide information about themselves](./protocol/initialization#implementation-information) to the other party. The [`InitializeRequest`](./protocol/schema#initializerequest) message now includes an optional `clientInfo` field and the [`InitializeResponse`](./protocol/schema#initializeresponse) message includes an optional `agentInfo` field.
+
+  This information can be used by Clients to show users which Agent is running and what version, by both sides to track usage metrics of which agents and clients are most popular among their users, and also to help track down if any issues are encountered with particular implementation version. This follows the existing pattern laid out in the [Model Context Protocol](https://modelcontextprotocol.io/specification/2025-06-18/basic/lifecycle#initialization).
+
+  This is being introduced as an optional field for now for backwards compatibility. It is possible it will be made into a required field in a future version of the protocol, like MCP, so that both sides can count on this information being available.
+</Update>
+
+
+---
+
+> To find navigation and other pages in this documentation, fetch the llms.txt file at: https://agentclientprotocol.com/llms.txt

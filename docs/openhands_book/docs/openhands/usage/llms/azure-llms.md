@@ -1,0 +1,47 @@
+# Azure
+
+> OpenHands uses LiteLLM to make calls to Azure's chat models. You can find their documentation on using Azure as a provider [here](https://docs.litellm.ai/docs/providers/azure).
+
+## Azure OpenAI Configuration
+
+When running OpenHands, you'll need to set the following environment variable using `-e` in the
+docker run command:
+
+```
+LLM_API_VERSION="<api-version>"              # e.g. "2023-05-15"
+```
+
+Example:
+
+```bash  theme={null}
+docker run -it --pull=always \
+    -e LLM_API_VERSION="2023-05-15"
+    ...
+```
+
+Then in the OpenHands UI Settings under the `LLM` tab:
+
+<Note>
+  You will need your ChatGPT deployment name which can be found on the deployments page in Azure. This is referenced as
+  \<deployment-name> below.
+</Note>
+
+1. Enable `Advanced` options.
+2. Set the following:
+   * `Custom Model` to azure/\<deployment-name>
+   * `Base URL` to your Azure API Base URL (e.g. `https://example-endpoint.openai.azure.com`)
+   * `API Key` to your Azure API key
+
+### Azure OpenAI Configuration
+
+When running OpenHands, set the following environment variable using `-e` in the
+docker run command:
+
+```
+LLM_API_VERSION="<api-version>"                                    # e.g. "2024-02-15-preview"
+```
+
+
+---
+
+> To find navigation and other pages in this documentation, fetch the llms.txt file at: https://docs.openhands.dev/llms.txt

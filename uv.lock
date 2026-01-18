@@ -516,10 +516,12 @@ dependencies = [
     { name = "agent-client-protocol" },
     { name = "aiofiles" },
     { name = "ipython" },
+    { name = "markdownify" },
     { name = "openai" },
     { name = "openhands-sdk" },
     { name = "openhands-tools" },
     { name = "python-dotenv" },
+    { name = "requests" },
 ]
 
 [package.dev-dependencies]
@@ -532,10 +534,12 @@ requires-dist = [
     { name = "agent-client-protocol", directory = "../acp-python-sdk" },
     { name = "aiofiles", specifier = ">=25.1.0" },
     { name = "ipython", specifier = ">=9.9.0" },
+    { name = "markdownify", specifier = ">=1.2.2" },
     { name = "openai", specifier = ">=2.14.0" },
     { name = "openhands-sdk", editable = "../software-agent-sdk/openhands-sdk" },
     { name = "openhands-tools", editable = "../software-agent-sdk/openhands-tools" },
     { name = "python-dotenv", specifier = ">=1.2.1" },
+    { name = "requests", specifier = ">=2.32.5" },
 ]
 
 [package.metadata.requires-dev]

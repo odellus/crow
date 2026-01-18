@@ -1,0 +1,207 @@
+# Getting Started
+
+> Install the OpenHands SDK and build AI agents that write software.
+
+The OpenHands SDK is a modular framework for building AI agents that interact with code, files, and system commands. Agents can execute bash commands, edit files, browse the web, and more.
+
+## Prerequisites
+
+Install the **[uv package manager](https://docs.astral.sh/uv/)** (version 0.8.13+):
+
+```bash  theme={null}
+curl -LsSf https://astral.sh/uv/install.sh | sh
+```
+
+## Installation
+
+### Step 1: Acquire an LLM API Key
+
+The SDK requires an LLM API key from any [LiteLLM-supported provider](https://docs.litellm.ai/docs/providers). See our [recommended models](/openhands/usage/llms/llms) for best results.
+
+<AccordionGroup>
+  <Accordion title="Option 1: Direct Provider" icon="key">
+    Bring your own API key from providers like:
+
+    * [Anthropic](https://console.anthropic.com/)
+    * [OpenAI](https://platform.openai.com/)
+    * [Other LiteLLM-supported providers](https://docs.litellm.ai/docs/providers)
+
+    Example:
+
+    ```bash  theme={null}
+    export LLM_API_KEY="your-api-key"
+    uv run python examples/01_standalone_sdk/01_hello_world.py
+    ```
+  </Accordion>
+
+  <Accordion title="Option 2: OpenHands Cloud (Recommended)" icon="cloud">
+    Sign up for [OpenHands Cloud](https://app.all-hands.dev) and get an LLM API key from the [API keys page](https://app.all-hands.dev/settings/api-keys). This gives you access to models verified to work well with OpenHands, with no markup.
+
+    Example:
+
+    ```bash  theme={null}
+    export LLM_MODEL="openhands/claude-sonnet-4-5-20250929"
+    uv run python examples/01_standalone_sdk/01_hello_world.py
+    ```
+
+    [Learn more →](/openhands/usage/llms/openhands-llms)
+  </Accordion>
+</AccordionGroup>
+
+> Tip: Model name prefixes depend on your provider
+>
+> * If you bring your own provider key (Anthropic/OpenAI/etc.), use that provider's model name, e.g. `anthropic/claude-sonnet-4-5-20250929`
+>   OpenHands supports [dozens of models](https://docs.openhands.dev/sdk/arch/llm#llm-providers), you can choose the model you want to try.
+> * If you use OpenHands Cloud, use `openhands/`-prefixed models, e.g. `openhands/claude-sonnet-4-5-20250929`
+>
+> Many examples in the docs read the model from the `LLM_MODEL` environment variable. You can set it like:
+>
+> ```bash  theme={null}
+> export LLM_MODEL="openhands/claude-sonnet-4-5-20250929"  # for OpenHands Provider
+> ```
+
+**Set Your API Key:**
+
+```bash  theme={null}
+export LLM_API_KEY=your-api-key-here
+```
+
+### Step 2: Install the SDK
+
+<AccordionGroup>
+  <Accordion title="Option 1: Install via PyPI" icon="box">
+    ```bash  theme={null}
+    pip install openhands-sdk # Core SDK (openhands.sdk)
+    pip install openhands-tools  # Built-in tools (openhands.tools)
+    # Optional: required for sandboxed workspaces in Docker or remote servers
+    pip install openhands-workspace # Workspace backends (openhands.workspace)
+    pip install openhands-agent-server # Remote agent server (openhands.agent_server)
+    ```
+  </Accordion>
+
+  <Accordion title="Option 2: Install from Source" icon="code">
+    ```bash  theme={null}
+    # Clone the repository
+    git clone https://github.com/OpenHands/software-agent-sdk.git
+    cd agent-sdk
+
+    # Install dependencies and setup development environment
+    make build
+    ```
+  </Accordion>
+</AccordionGroup>
+
+### Step 3: Run Your First Agent
+
+Here's a complete example that creates an agent and asks it to perform a simple task:
+
+```python icon="python" expandable examples/01_standalone_sdk/01_hello_world.py theme={null}
+import os
+
+from openhands.sdk import LLM, Agent, Conversation, Tool
+from openhands.tools.file_editor import FileEditorTool
+from openhands.tools.task_tracker import TaskTrackerTool
+from openhands.tools.terminal import TerminalTool
+
+
+llm = LLM(
+    model=os.getenv("LLM_MODEL", "anthropic/claude-sonnet-4-5-20250929"),
+    api_key=os.getenv("LLM_API_KEY"),
+    base_url=os.getenv("LLM_BASE_URL", None),
+)
+
+agent = Agent(
+    llm=llm,
+    tools=[
+        Tool(name=TerminalTool.name),
+        Tool(name=FileEditorTool.name),
+        Tool(name=TaskTrackerTool.name),
+    ],
+)
+
+cwd = os.getcwd()
+conversation = Conversation(agent=agent, workspace=cwd)
+
+conversation.send_message("Write 3 facts about the current project into FACTS.txt.")
+conversation.run()
+print("All done!")
+```
+
+Run the example:
+
+```bash  theme={null}
+# Using a direct provider key (Anthropic/OpenAI/etc.)
+uv run python examples/01_standalone_sdk/01_hello_world.py
+```
+
+```bash  theme={null}
+# Using OpenHands Cloud
+export LLM_MODEL="openhands/claude-sonnet-4-5-20250929"
+uv run python examples/01_standalone_sdk/01_hello_world.py
+```
+
+You should see the agent understand your request, explore the project, and create a file with facts about it.
+
+## Core Concepts
+
+**Agent**: An AI-powered entity that can reason, plan, and execute actions using tools.
+
+**Tools**: Capabilities like executing bash commands, editing files, or browsing the web.
+
+**Workspace**: The execution environment where agents operate (local, Docker, or remote).
+
+**Conversation**: Manages the interaction lifecycle between you and the agent.
+
+## Basic Workflow
+
+1. **Configure LLM**: Choose model and provide API key
+2. **Create Agent**: Use preset or custom configuration
+3. **Add Tools**: Enable capabilities (bash, file editing, etc.)
+4. **Start Conversation**: Create conversation context
+5. **Send Message**: Provide task description
+6. **Run Agent**: Agent executes until task completes or stops
+7. **Get Result**: Review agent's output and actions
+
+## Try More Examples
+
+The repository includes 24+ examples demonstrating various capabilities:
+
+```bash  theme={null}
+# Simple hello world
+uv run python examples/01_standalone_sdk/01_hello_world.py
+
+# Custom tools
+uv run python examples/01_standalone_sdk/02_custom_tools.py
+
+# With skills
+uv run python examples/01_standalone_sdk/03_activate_microagent.py
+
+# See all examples
+ls examples/01_standalone_sdk/
+```
+
+## Next Steps
+
+### Explore Documentation
+
+* **[SDK Architecture](/sdk/arch/sdk)** - Deep dive into components
+* **[Tool System](/sdk/arch/tool-system)** - Available tools
+* **[Workspace Architecture](/sdk/arch/workspace)** - Execution environments
+* **[LLM Configuration](/sdk/arch/llm)** - Deep dive into language model configuration
+
+### Build Custom Solutions
+
+* **[Custom Tools](/sdk/guides/custom-tools)** - Create custom tools to expand agent capabilities
+* **[MCP Integration](/sdk/guides/mcp)** - Connect to external tools via Model Context Protocol
+* **[Docker Workspaces](/sdk/guides/agent-server/docker-sandbox)** - Sandbox agent execution in containers
+
+### Get Help
+
+* **[Slack Community](https://openhands.dev/joinslack)** - Ask questions and share projects
+* **[GitHub Issues](https://github.com/OpenHands/software-agent-sdk/issues)** - Report bugs or request features
+* **[Example Directory](https://github.com/OpenHands/software-agent-sdk/tree/main/examples)** - Browse working code samples
+
+
+---
+
+> To find navigation and other pages in this documentation, fetch the llms.txt file at: https://docs.openhands.dev/llms.txt

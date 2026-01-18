@@ -1,0 +1,107 @@
+# Secret Registry
+
+> Provide environment variables and secrets to agent workspace securely.
+
+<Note>
+  This example is available on GitHub: [examples/01\_standalone\_sdk/12\_custom\_secrets.py](https://github.com/OpenHands/software-agent-sdk/blob/main/examples/01_standalone_sdk/12_custom_secrets.py)
+</Note>
+
+The Secret Registry provides a secure way to handle sensitive data in your agent's workspace. It automatically detects secret references in bash commands, injects them as environment variables when needed, and masks secret values in command outputs to prevent accidental exposure.
+
+```python icon="python" expandable examples/01_standalone_sdk/12_custom_secrets.py theme={null}
+import os
+
+from pydantic import SecretStr
+
+from openhands.sdk import (
+    LLM,
+    Agent,
+    Conversation,
+)
+from openhands.sdk.secret import SecretSource
+from openhands.sdk.tool import Tool
+from openhands.tools.file_editor import FileEditorTool
+from openhands.tools.terminal import TerminalTool
+
+
+# Configure LLM
+api_key = os.getenv("LLM_API_KEY")
+assert api_key is not None, "LLM_API_KEY environment variable is not set."
+model = os.getenv("LLM_MODEL", "anthropic/claude-sonnet-4-5-20250929")
+base_url = os.getenv("LLM_BASE_URL")
+llm = LLM(
+    usage_id="agent",
+    model=model,
+    base_url=base_url,
+    api_key=SecretStr(api_key),
+)
+
+# Tools
+tools = [
+    Tool(name=TerminalTool.name),
+    Tool(name=FileEditorTool.name),
+]
+
+# Agent
+agent = Agent(llm=llm, tools=tools)
+conversation = Conversation(agent)
+
+
+class MySecretSource(SecretSource):
+    def get_value(self) -> str:
+        return "callable-based-secret"
+
+
+conversation.update_secrets(
+    {"SECRET_TOKEN": "my-secret-token-value", "SECRET_FUNCTION_TOKEN": MySecretSource()}
+)
+
+conversation.send_message("just echo $SECRET_TOKEN")
+
+conversation.run()
+
+conversation.send_message("just echo $SECRET_FUNCTION_TOKEN")
+
+conversation.run()
+
+# Report cost
+cost = llm.metrics.accumulated_cost
+print(f"EXAMPLE_COST: {cost}")
+```
+
+```bash Running the Example theme={null}
+export LLM_API_KEY="your-api-key"
+export MY_SECRET="secret-value"
+cd agent-sdk
+uv run python examples/01_standalone_sdk/12_custom_secrets.py
+```
+
+### Injecting Secrets
+
+Use the `update_secrets()` method to add secrets to your conversation, as shown in the example above.
+
+Secrets can be provided as static strings or as callable functions that dynamically retrieve values, enabling integration with external secret stores and credential management systems:
+
+```python highlight={4,11} theme={null}
+from openhands.sdk.conversation.secret_source import SecretSource
+
+# Static secret
+conversation.update_secrets({"SECRET_TOKEN": "my-secret-token-value"})
+
+# Dynamic secret using SecretSource
+class MySecretSource(SecretSource):
+    def get_value(self) -> str:
+        return "callable-based-secret"
+
+conversation.update_secrets({"SECRET_FUNCTION_TOKEN": MySecretSource()})
+```
+
+## Next Steps
+
+* **[MCP Integration](/sdk/guides/mcp)** - Connect to MCP
+* **[Security Analyzer](/sdk/guides/security)** - Add security validation
+
+
+---
+
+> To find navigation and other pages in this documentation, fetch the llms.txt file at: https://docs.openhands.dev/llms.txt

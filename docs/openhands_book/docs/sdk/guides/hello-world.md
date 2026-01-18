@@ -1,0 +1,124 @@
+# Hello World
+
+> The simplest possible OpenHands agent - configure an LLM, create an agent, and complete a task.
+
+<Note>
+  This example is available on GitHub: [examples/01\_standalone\_sdk/01\_hello\_world.py](https://github.com/OpenHands/software-agent-sdk/blob/main/examples/01_standalone_sdk/01_hello_world.py)
+</Note>
+
+This is the most basic example showing how to set up and run an OpenHands agent:
+
+```python icon="python" examples/01_standalone_sdk/01_hello_world.py theme={null}
+import os
+
+from openhands.sdk import LLM, Agent, Conversation, Tool
+from openhands.tools.file_editor import FileEditorTool
+from openhands.tools.task_tracker import TaskTrackerTool
+from openhands.tools.terminal import TerminalTool
+
+
+llm = LLM(
+    model=os.getenv("LLM_MODEL", "anthropic/claude-sonnet-4-5-20250929"),
+    api_key=os.getenv("LLM_API_KEY"),
+    base_url=os.getenv("LLM_BASE_URL", None),
+)
+
+agent = Agent(
+    llm=llm,
+    tools=[
+        Tool(name=TerminalTool.name),
+        Tool(name=FileEditorTool.name),
+        Tool(name=TaskTrackerTool.name),
+    ],
+)
+
+cwd = os.getcwd()
+conversation = Conversation(agent=agent, workspace=cwd)
+
+conversation.send_message("Write 3 facts about the current project into FACTS.txt.")
+conversation.run()
+print("All done!")
+```
+
+> Tip: Model name prefixes depend on your provider
+>
+> * Bring-your-own provider key (Anthropic/OpenAI/etc.): use that provider's prefix like `anthropic/claude-sonnet-4-5-20250929`
+> * OpenHands Cloud: use `openhands/`-prefixed models like `openhands/claude-sonnet-4-5-20250929`
+>
+> You can set the model via `LLM_MODEL` env var and run the example code as-is.
+
+```bash Running the Example (Direct provider key) theme={null}
+export LLM_API_KEY="your-api-key"
+cd agent-sdk
+uv run python examples/01_standalone_sdk/01_hello_world.py
+```
+
+```bash Running the Example (OpenHands Cloud) theme={null}
+export LLM_API_KEY="your-openhands-api-key"  # https://app.all-hands.dev/settings/api-keys
+export LLM_MODEL="openhands/claude-sonnet-4-5-20250929"
+cd agent-sdk
+uv run python examples/01_standalone_sdk/01_hello_world.py
+```
+
+### LLM Configuration
+
+Configure the language model that will power your agent:
+
+```python  theme={null}
+llm = LLM(
+    model=model,
+    api_key=SecretStr(api_key),
+    base_url=base_url,  # Optional
+    service_id="agent"
+)
+```
+
+### Default Agent
+
+Use the preset agent with common built-in tools:
+
+```python  theme={null}
+agent = get_default_agent(llm=llm, cli_mode=True)
+```
+
+The default agent includes BashTool, FileEditorTool, etc. See the [tools package source code](https://github.com/OpenHands/software-agent-sdk/tree/main/openhands-tools/openhands/tools) for the complete list of available tools.
+
+### Conversation
+
+Start a conversation to manage the agent's lifecycle:
+
+```python  theme={null}
+conversation = Conversation(agent=agent, workspace=cwd)
+conversation.send_message("Write 3 facts about the current project into FACTS.txt.")
+conversation.run()
+```
+
+## Expected Behavior
+
+When you run this example:
+
+1. The agent analyzes the current directory
+2. Gathers information about the project
+3. Creates `FACTS.txt` with 3 relevant facts
+4. Completes and exits
+
+Example output file:
+
+```text  theme={null}
+FACTS.txt
+---------
+1. This is a Python project using the OpenHands Software Agent SDK.
+2. The project includes examples demonstrating various agent capabilities.
+3. The SDK provides tools for file manipulation, bash execution, and more.
+```
+
+## Next Steps
+
+* **[Custom Tools](/sdk/guides/custom-tools)** - Create custom tools for specialized needs
+* **[Model Context Protocol (MCP)](/sdk/guides/mcp)** - Integrate external MCP servers
+* **[Security Analyzer](/sdk/guides/security)** - Add security validation to tool usage
+
+
+---
+
+> To find navigation and other pages in this documentation, fetch the llms.txt file at: https://docs.openhands.dev/llms.txt

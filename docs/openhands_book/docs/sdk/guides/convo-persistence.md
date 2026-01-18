@@ -1,0 +1,215 @@
+# Persistence
+
+> Save and restore conversation state for multi-session workflows.
+
+<Note>
+  This example is available on GitHub: [examples/01\_standalone\_sdk/10\_persistence.py](https://github.com/OpenHands/software-agent-sdk/blob/main/examples/01_standalone_sdk/10_persistence.py)
+</Note>
+
+Save conversation state to disk and restore it later for long-running or multi-session workflows:
+
+```python icon="python" expandable examples/01_standalone_sdk/10_persistence.py theme={null}
+import os
+import uuid
+
+from pydantic import SecretStr
+
+from openhands.sdk import (
+    LLM,
+    Agent,
+    Conversation,
+    Event,
+    LLMConvertibleEvent,
+    get_logger,
+)
+from openhands.sdk.tool import Tool
+from openhands.tools.file_editor import FileEditorTool
+from openhands.tools.terminal import TerminalTool
+
+
+logger = get_logger(__name__)
+
+# Configure LLM
+api_key = os.getenv("LLM_API_KEY")
+assert api_key is not None, "LLM_API_KEY environment variable is not set."
+model = os.getenv("LLM_MODEL", "anthropic/claude-sonnet-4-5-20250929")
+base_url = os.getenv("LLM_BASE_URL")
+llm = LLM(
+    usage_id="agent",
+    model=model,
+    base_url=base_url,
+    api_key=SecretStr(api_key),
+)
+
+# Tools
+cwd = os.getcwd()
+tools = [
+    Tool(name=TerminalTool.name),
+    Tool(name=FileEditorTool.name),
+]
+
+# Add MCP Tools
+mcp_config = {
+    "mcpServers": {
+        "fetch": {"command": "uvx", "args": ["mcp-server-fetch"]},
+    }
+}
+# Agent
+agent = Agent(llm=llm, tools=tools, mcp_config=mcp_config)
+
+llm_messages = []  # collect raw LLM messages
+
+
+def conversation_callback(event: Event):
+    if isinstance(event, LLMConvertibleEvent):
+        llm_messages.append(event.to_llm_message())
+
+
+conversation_id = uuid.uuid4()
+persistence_dir = "./.conversations"
+
+conversation = Conversation(
+    agent=agent,
+    callbacks=[conversation_callback],
+    workspace=cwd,
+    persistence_dir=persistence_dir,
+    conversation_id=conversation_id,
+)
+conversation.send_message(
+    "Read https://github.com/OpenHands/OpenHands. Then write 3 facts "
+    "about the project into FACTS.txt."
+)
+conversation.run()
+
+conversation.send_message("Great! Now delete that file.")
+conversation.run()
+
+print("=" * 100)
+print("Conversation finished. Got the following LLM messages:")
+for i, message in enumerate(llm_messages):
+    print(f"Message {i}: {str(message)[:200]}")
+
+# Conversation persistence
+print("Serializing conversation...")
+
+del conversation
+
+# Deserialize the conversation
+print("Deserializing conversation...")
+conversation = Conversation(
+    agent=agent,
+    callbacks=[conversation_callback],
+    workspace=cwd,
+    persistence_dir=persistence_dir,
+    conversation_id=conversation_id,
+)
+
+print("Sending message to deserialized conversation...")
+conversation.send_message("Hey what did you create? Return an agent finish action")
+conversation.run()
+
+# Report cost
+cost = llm.metrics.accumulated_cost
+print(f"EXAMPLE_COST: {cost}")
+```
+
+```bash Running the Example theme={null}
+export LLM_API_KEY="your-api-key"
+cd agent-sdk
+uv run python examples/01_standalone_sdk/10_persistence.py
+```
+
+### Saving State
+
+Create a conversation with a unique ID to enable persistence:
+
+```python highlight={3-4,10-11} theme={null}
+import uuid
+
+conversation_id = uuid.uuid4()
+persistence_dir = "./.conversations"
+
+conversation = Conversation(
+    agent=agent,
+    callbacks=[conversation_callback],
+    workspace=cwd,
+    persistence_dir=persistence_dir,
+    conversation_id=conversation_id,
+)
+conversation.send_message("Start long task")
+conversation.run()  # State automatically saved
+```
+
+### Restoring State
+
+Restore a conversation using the same ID and persistence directory:
+
+```python highlight={9-10} theme={null}
+# Later, in a different session
+del conversation
+
+# Deserialize the conversation
+print("Deserializing conversation...")
+conversation = Conversation(
+    agent=agent,
+    callbacks=[conversation_callback],
+    workspace=cwd,
+    persistence_dir=persistence_dir,
+    conversation_id=conversation_id,
+)
+
+conversation.send_message("Continue task")
+conversation.run()  # Continues from saved state
+```
+
+### What Gets Persisted
+
+The conversation state includes information that allows seamless restoration:
+
+* **Message History**: Complete event log including user messages, agent responses, and system events
+* **Agent Configuration**: LLM settings, tools, MCP servers, and agent parameters
+* **Execution State**: Current agent status (idle, running, paused, etc.), iteration count, and stuck detection settings
+* **Tool Outputs**: Results from bash commands, file operations, and other tool executions
+* **Statistics**: LLM usage metrics like token counts and API calls
+* **Workspace Context**: Working directory and file system state
+* **Activated Skills**: [Skills](/sdk/guides/skill) that have been enabled during the conversation
+* **Secrets**: Managed credentials and API keys
+
+For the complete implementation details, see the [ConversationState class](https://github.com/OpenHands/software-agent-sdk/blob/main/openhands-sdk/openhands/sdk/conversation/state.py) in the source code.
+
+### Persistence Directory Structure
+
+When you set a `persistence_dir`, your conversation will be persisted to a directory structure where each conversation has its own subdirectory. By default, the persistence directory is `workspace/conversations/` (unless you specify a custom path).
+
+**Directory structure:**
+
+```
+workspace/conversations/
+├── <conversation-id-1>/
+│   ├── base_state.json       # Base conversation state
+│   └── events/               # Event files directory
+│       ├── event-00000-<event-id>.json
+│       ├── event-00001-<event-id>.json
+│       └── ...
+├── <conversation-id-2>/
+│   ├── base_state.json
+│   └── events/
+│       └── ...
+```
+
+Each conversation directory contains:
+
+* **`base_state.json`**: The core conversation state including agent configuration, execution status, statistics, and metadata
+* **`events/`**: A subdirectory containing individual event files, each named with a sequential index and event ID (e.g., `event-00000-abc123.json`)
+
+The collection of event files in the `events/` directory represents the same trajectory data you would find in the `trajectory.json` file from OpenHands V0, but split into individual files for better performance and granular access.
+
+## Next Steps
+
+* **[Pause and Resume](/sdk/guides/convo-pause-and-resume)** - Control execution flow
+* **[Async Operations](/sdk/guides/convo-async)** - Non-blocking operations
+
+
+---
+
+> To find navigation and other pages in this documentation, fetch the llms.txt file at: https://docs.openhands.dev/llms.txt

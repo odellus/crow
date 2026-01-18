@@ -1,0 +1,52 @@
+# TODO Management
+
+> Implement TODOs using OpenHands Agent
+
+<Note>
+  This example is available on GitHub: [examples/03\_github\_workflows/03\_todo\_management/](https://github.com/OpenHands/software-agent-sdk/tree/main/examples/03_github_workflows/03_todo_management)
+</Note>
+
+Scan your codebase for TODO comments and let the OpenHands Agent implement them, creating a pull request for each TODO and picking relevant reviewers based on code changes and file ownership
+
+## Quick Start
+
+```bash  theme={null}
+# 1. Copy workflow to your repository
+cp examples/03_github_workflows/03_todo_management/workflow.yml .github/workflows/todo-management.yml
+
+# 2. Configure secrets in GitHub Settings → Secrets
+# Add: LLM_API_KEY
+
+# 3. Configure GitHub Actions permissions
+# Settings → Actions → General → Workflow permissions
+# Enable: "Read and write permissions" + "Allow GitHub Actions to create and approve pull requests"
+
+# 4. Add TODO comments to your code
+# Example: # TODO(openhands): Add input validation for user email
+```
+
+The workflow is configurable and any identifier can be used in place of `TODO(openhands)`
+
+## Features
+
+* **Scanning** - Finds matching TODO comments with configurable identifiers and extracts the TODO description.
+* **Implementation** - Sends the TODO description to the OpenHands Agent that automatically implements it
+* **PR Management** - Creates feature branches, pull requests and picks most relevant reviewers
+
+## Best Practices
+
+* **Start Small** - Begin with `MAX_TODOS: 1` to test the workflow
+* **Clear Descriptions** - Write descriptive TODO comments
+* **Review PRs** - Always review the generated PRs before merging
+
+## Related Documentation
+
+* [Agent Script](https://github.com/OpenHands/software-agent-sdk/blob/main/examples/03_github_workflows/03_todo_management/agent_script.py)
+* [Scanner Script](https://github.com/OpenHands/software-agent-sdk/blob/main/examples/03_github_workflows/03_todo_management/scanner.py)
+* [Workflow File](https://github.com/OpenHands/software-agent-sdk/blob/main/examples/03_github_workflows/03_todo_management/workflow.yml)
+* [Prompt Template](https://github.com/OpenHands/software-agent-sdk/blob/main/examples/03_github_workflows/03_todo_management/prompt.py)
+
+
+---
+
+> To find navigation and other pages in this documentation, fetch the llms.txt file at: https://docs.openhands.dev/llms.txt

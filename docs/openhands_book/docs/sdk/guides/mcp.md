@@ -1,0 +1,249 @@
+# Model Context Protocol
+
+> Model Context Protocol (MCP) enables dynamic tool integration from external servers. Agents can discover and use MCP-provided tools automatically.
+
+MCP (Model Context Protocol) is a protocol for exposing tools and resources to AI agents. Read more [here](https://modelcontextprotocol.io/).
+
+## Basic MCP Usage
+
+<Note>
+  This example is available on GitHub: [examples/01\_standalone\_sdk/07\_mcp\_integration.py](https://github.com/OpenHands/software-agent-sdk/blob/main/examples/01_standalone_sdk/07_mcp_integration.py)
+</Note>
+
+Here's an example integrating MCP servers with an agent:
+
+```python icon="python" expandable examples/01_standalone_sdk/07_mcp_integration.py theme={null}
+import os
+
+from pydantic import SecretStr
+
+from openhands.sdk import (
+    LLM,
+    Agent,
+    Conversation,
+    Event,
+    LLMConvertibleEvent,
+    get_logger,
+)
+from openhands.sdk.security.llm_analyzer import LLMSecurityAnalyzer
+from openhands.sdk.tool import Tool
+from openhands.tools.file_editor import FileEditorTool
+from openhands.tools.terminal import TerminalTool
+
+
+logger = get_logger(__name__)
+
+# Configure LLM
+api_key = os.getenv("LLM_API_KEY")
+assert api_key is not None, "LLM_API_KEY environment variable is not set."
+model = os.getenv("LLM_MODEL", "anthropic/claude-sonnet-4-5-20250929")
+base_url = os.getenv("LLM_BASE_URL")
+llm = LLM(
+    usage_id="agent",
+    model=model,
+    base_url=base_url,
+    api_key=SecretStr(api_key),
+)
+
+cwd = os.getcwd()
+tools = [
+    Tool(name=TerminalTool.name),
+    Tool(name=FileEditorTool.name),
+]
+
+# Add MCP Tools
+mcp_config = {
+    "mcpServers": {
+        "fetch": {"command": "uvx", "args": ["mcp-server-fetch"]},
+        "repomix": {"command": "npx", "args": ["-y", "repomix@1.4.2", "--mcp"]},
+    }
+}
+# Agent
+agent = Agent(
+    llm=llm,
+    tools=tools,
+    mcp_config=mcp_config,
+    # This regex filters out all repomix tools except pack_codebase
+    filter_tools_regex="^(?!repomix)(.*)|^repomix.*pack_codebase.*$",
+)
+
+llm_messages = []  # collect raw LLM messages
+
+
+def conversation_callback(event: Event):
+    if isinstance(event, LLMConvertibleEvent):
+        llm_messages.append(event.to_llm_message())
+
+
+# Conversation
+conversation = Conversation(
+    agent=agent,
+    callbacks=[conversation_callback],
+    workspace=cwd,
+)
+conversation.set_security_analyzer(LLMSecurityAnalyzer())
+
+logger.info("Starting conversation with MCP integration...")
+conversation.send_message(
+    "Read https://github.com/OpenHands/OpenHands and write 3 facts "
+    "about the project into FACTS.txt."
+)
+conversation.run()
+
+conversation.send_message("Great! Now delete that file.")
+conversation.run()
+
+print("=" * 100)
+print("Conversation finished. Got the following LLM messages:")
+for i, message in enumerate(llm_messages):
+    print(f"Message {i}: {str(message)[:200]}")
+
+# Report cost
+cost = llm.metrics.accumulated_cost
+print(f"EXAMPLE_COST: {cost}")
+```
+
+```bash Running the Example theme={null}
+export LLM_API_KEY="your-api-key"
+cd agent-sdk
+uv run python examples/01_standalone_sdk/07_mcp_integration.py
+```
+
+### MCP Configuration
+
+Configure MCP servers using a dictionary with server names and connection details following [this configuration format](https://gofastmcp.com/clients/client#configuration-format)
+
+```python highlight={3-4} theme={null}
+mcp_config = {
+    "mcpServers": {
+        "fetch": {"command": "uvx", "args": ["mcp-server-fetch"]},
+        "repomix": {"command": "npx", "args": ["-y", "repomix@1.4.2", "--mcp"]},
+    }
+}
+```
+
+### Tool Filtering
+
+Use `filter_tools_regex` to control which MCP tools are available to the agent
+
+```python highlight={5} theme={null}
+agent = Agent(
+    llm=llm,
+    tools=tools,
+    mcp_config=mcp_config,
+    filter_tools_regex="^(?!repomix)(.*)|^repomix.*pack_codebase.*$",
+)
+```
+
+## MCP with OAuth
+
+<Note>
+  This example is available on GitHub: [examples/01\_standalone\_sdk/08\_mcp\_with\_oauth.py](https://github.com/OpenHands/software-agent-sdk/blob/main/examples/01_standalone_sdk/08_mcp_with_oauth.py)
+</Note>
+
+For MCP servers requiring OAuth authentication:
+
+```python icon="python" expandable examples/01_standalone_sdk/08_mcp_with_oauth.py theme={null}
+import os
+
+from pydantic import SecretStr
+
+from openhands.sdk import (
+    LLM,
+    Agent,
+    Conversation,
+    Event,
+    LLMConvertibleEvent,
+    get_logger,
+)
+from openhands.sdk.tool import Tool
+from openhands.tools.file_editor import FileEditorTool
+from openhands.tools.terminal import TerminalTool
+
+
+logger = get_logger(__name__)
+
+# Configure LLM
+api_key = os.getenv("LLM_API_KEY")
+assert api_key is not None, "LLM_API_KEY environment variable is not set."
+model = os.getenv("LLM_MODEL", "anthropic/claude-sonnet-4-5-20250929")
+base_url = os.getenv("LLM_BASE_URL")
+llm = LLM(
+    usage_id="agent",
+    model=model,
+    base_url=base_url,
+    api_key=SecretStr(api_key),
+)
+
+cwd = os.getcwd()
+tools = [
+    Tool(
+        name=TerminalTool.name,
+    ),
+    Tool(name=FileEditorTool.name),
+]
+
+mcp_config = {
+    "mcpServers": {"Notion": {"url": "https://mcp.notion.com/mcp", "auth": "oauth"}}
+}
+agent = Agent(llm=llm, tools=tools, mcp_config=mcp_config)
+
+llm_messages = []  # collect raw LLM messages
+
+
+def conversation_callback(event: Event):
+    if isinstance(event, LLMConvertibleEvent):
+        llm_messages.append(event.to_llm_message())
+
+
+# Conversation
+conversation = Conversation(
+    agent=agent,
+    callbacks=[conversation_callback],
+)
+
+logger.info("Starting conversation with MCP integration...")
+conversation.send_message("Can you search about OpenHands V1 in my notion workspace?")
+conversation.run()
+
+print("=" * 100)
+print("Conversation finished. Got the following LLM messages:")
+for i, message in enumerate(llm_messages):
+    print(f"Message {i}: {str(message)[:200]}")
+```
+
+```bash Running the Example theme={null}
+export LLM_API_KEY="your-api-key"
+cd agent-sdk
+uv run python examples/01_standalone_sdk/08_mcp_with_oauth.py
+```
+
+### OAuth Configuration
+
+* Configure OAuth-enabled MCP servers by specifying the URL and auth type
+* The SDK automatically handles the OAuth flow when first connecting
+* When the agent first attempts to use an OAuth-protected MCP server's tools, the SDK initiates the OAuth flow via [FastMCP](https://gofastmcp.com/servers/auth/authentication)
+* User will be prompted to authenticate
+* Access tokens are securely stored and automatically refreshed by FastMCP as needed
+
+```python highlight={5} theme={null}
+mcp_config = {
+    "mcpServers": {
+        "Notion": {
+            "url": "https://mcp.notion.com/mcp",
+            "auth": "oauth"
+        }
+    }
+}
+```
+
+## Next Steps
+
+* **[Custom Tools](/sdk/guides/custom-tools)** - Creating native SDK tools
+* **[Security Analyzer](/sdk/guides/security)** - Securing tool usage
+* **[MCP Package Source Code](https://github.com/OpenHands/software-agent-sdk/tree/main/openhands-sdk/openhands/mcp)** - MCP integration implementation
+
+
+---
+
+> To find navigation and other pages in this documentation, fetch the llms.txt file at: https://docs.openhands.dev/llms.txt
