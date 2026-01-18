@@ -26,7 +26,7 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # ACP imports
-from acp import run_agent, stdio_streams
+from acp import run_agent, stdio_streams, text_block, tool_content
 from acp.core import AgentSideConnection
 from acp.helpers import (
     plan_entry,
@@ -42,6 +42,7 @@ from acp.schema import (
     AgentPlanUpdate,
     AvailableCommand,
     AvailableCommandsUpdate,
+    ContentToolCallContent,
     Diff,
     EmbeddedResource,
     ImageContent,
@@ -92,11 +93,32 @@ async def _send_tool_result_to_acp(
     It sends the tool output to the ACP client via session_update.
     """
     try:
-        # Get the tool result from the event
-        obs = event.observation
+        from openhands.tools.file_editor import FileEditorObservation
+        from acp.schema import FileEditToolCallContent
         
-        # Format the output as plain text
-        output = str(obs.visualize.plain) if hasattr(obs, 'visualize') else str(obs)
+        obs = event.observation
+        content_blocks = None
+        
+        # Check if this is a file_editor observation with diff information
+        if isinstance(obs, FileEditorObservation):
+            # Only use FileEditToolCallContent for actual edits (when we have content)
+            if (hasattr(obs, 'path') and hasattr(obs, 'old_content') and hasattr(obs, 'new_content')
+                and (obs.old_content or obs.new_content)):
+                # Use FileEditToolCallContent for proper diff visualization
+                content_blocks = [
+                    FileEditToolCallContent(
+                        type="diff",
+                        path=obs.path,
+                        old_text=obs.old_content or "",
+                        new_text=obs.new_content or "",
+                    )
+                ]
+        
+        # Fallback to plain text if no structured content
+        if not content_blocks:
+            output = str(event.visualize.plain)
+            if output and output.strip():
+                content_blocks = [tool_content(block=text_block(text=output))]
         
         # Send tool completion update with result
         await conn.session_update(
@@ -104,12 +126,12 @@ async def _send_tool_result_to_acp(
             update=update_tool_call(
                 tool_call_id=event.tool_call_id,
                 status="completed",
-                content=output,
-                raw_output={"output": output},
+                content=content_blocks,
+                raw_output={"output": str(event.visualize.plain)},
             ),
         )
     except Exception as e:
-        logger.error(f"Error sending tool result to ACP: {e}")
+        logger.error(f"Error sending tool result to ACP: {e}", exc_info=True)
 
 
 # TODO - REFACTOR this is pathetic
