@@ -139,11 +139,7 @@ class ACPDebugClient:
                 print(f"   Type: {update_type}")
                 if "content" in update and "text" in update["content"]:
                     text = update["content"]["text"]
-                    # Truncate long text
-                    if len(text) > 200:
-                        print(f"   Text: {text[:200]}...")
-                    else:
-                        print(f"   Text: {text}")
+                    print(f"   Text: {text}")
 
         # Always show full JSON for reference (optional, can be commented out)
         # print(f"\n   Full JSON:")

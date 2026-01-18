@@ -613,7 +613,7 @@ class CrowAcpAgent(Agent):
         if "conversation" not in session:
             # First prompt in this session - create the Conversation
             # Note: token_callbacks will be attached per-prompt below
-            logger.info(f"Creating NEW Conversation for session {session_id[:8]}...")
+            logger.info(f"Creating NEW Conversation for session {session_id}")
             
             # Create event callback to handle tool results
             # This callback runs synchronously from the SDK's worker thread
@@ -649,7 +649,7 @@ class CrowAcpAgent(Agent):
             # Reuse existing conversation
             conversation = session["conversation"]
             logger.info(
-                f"Reusing existing Conversation: {id(conversation)} for session {session_id[:8]}"
+                f"Reusing existing Conversation: {id(conversation)} for session {session_id}"
             )
 
         # Get the conversation (created once per session)
