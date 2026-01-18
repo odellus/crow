@@ -171,10 +171,10 @@ def calculate_metrics(data: list[float]) -> dict[str, float]:
 ## General Guidelines
 
 ### Git Workflow
+- **DO NOT make commits** - The user handles git, not you
+- Focus on writing code and running tests
+- The user will commit when ready
 - Default branch is `main`
-- Write clear, focused commit messages
-- Never commit secrets (API keys, tokens)
-- Run tests before committing
 
 ### Security
 - Never hardcode credentials
