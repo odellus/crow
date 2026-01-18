@@ -6,6 +6,7 @@ readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
     "agent-client-protocol",
+    "aiofiles>=25.1.0",
     "ipython>=9.9.0",
     "openai>=2.14.0",
     "openhands-sdk",

@@ -26,7 +26,8 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # ACP imports
-from acp import run_agent
+from acp import run_agent, stdio_streams
+from acp.core import AgentSideConnection
 from acp.helpers import (
     plan_entry,
     start_tool_call,
@@ -63,9 +64,13 @@ from acp.schema import (
     ToolCallUpdate,
     ToolKind,
 )
+
+# OpenHands imports
 from openhands.sdk import LLM, Conversation, Tool
 from openhands.sdk import Agent as OpenHandsAgent
 from openhands.sdk.conversation.base import BaseConversation
+from openhands.sdk.event import ActionEvent, Event, ObservationEvent
+from openhands.sdk.hooks import HookConfig
 from openhands.sdk.llm.streaming import ModelResponseStream
 from openhands.tools.file_editor import FileEditorTool
 from openhands.tools.terminal import TerminalTool
@@ -76,6 +81,38 @@ from crow.agent.config import LLMConfig, ServerConfig
 StreamingState = Literal["thinking", "content", "tool_name", "tool_args"]
 
 
+async def _send_tool_result_to_acp(
+    session_id: str,
+    conn: Any,
+    event: ObservationEvent,
+) -> None:
+    """Send tool result to ACP client.
+    
+    This function is called from the event callback when a tool completes.
+    It sends the tool output to the ACP client via session_update.
+    """
+    try:
+        # Get the tool result from the event
+        obs = event.observation
+        
+        # Format the output as plain text
+        output = str(obs.visualize.plain) if hasattr(obs, 'visualize') else str(obs)
+        
+        # Send tool completion update with result
+        await conn.session_update(
+            session_id=session_id,
+            update=update_tool_call(
+                tool_call_id=event.tool_call_id,
+                status="completed",
+                content=output,
+                raw_output={"output": output},
+            ),
+        )
+    except Exception as e:
+        logger.error(f"Error sending tool result to ACP: {e}")
+
+
+# TODO - REFACTOR this is pathetic
 def _map_tool_to_kind(tool_name: str) -> str:
     """Map OpenHands tool name to ACP tool kind."""
     tool_name_lower = tool_name.lower()
@@ -224,10 +261,6 @@ class CrowAcpAgent(Agent):
             agent_kwargs = {
                 "llm": self._llm,
                 "tools": tools,
-                "system_prompt_kwargs": {
-                    "llm_security_analyzer": False,  # Disable security analyzer
-                    "add_security_risk_prediction": False,
-                },
             }
             if mcp_config:
                 agent_kwargs["mcp_config"] = mcp_config
@@ -319,26 +352,26 @@ class CrowAcpAgent(Agent):
 
         # Create initial plan based on user prompt
         # NOTE: This implementation creates plan entries for each step of execution
-        initial_plan_entries = [
-            plan_entry(
-                content=f"Process request: {user_message[:100]}{'...' if len(user_message) > 100 else ''}",
-                priority="high",
-                status="in_progress",
-            ),
-        ]
+        # initial_plan_entries = [
+        #     plan_entry(
+        #         content=f"Process request: {user_message[:100]}{'...' if len(user_message) > 100 else ''}",
+        #         priority="high",
+        #         status="in_progress",
+        #     ),
+        # ]
 
-        # Track plan entries for this session
-        plan_entries = initial_plan_entries.copy()
+        # # Track plan entries for this session
+        # plan_entries = initial_plan_entries.copy()
 
-        # Send initial plan update
-        try:
-            await self._conn.session_update(
-                session_id=session_id,
-                update=update_plan(initial_plan_entries),
-            )
-        except Exception as e:
-            # Plan updates are optional, don't fail if they don't work
-            logger.warning(f"Failed to send plan update: {e}")
+        # # Send initial plan update
+        # try:
+        #     await self._conn.session_update(
+        #         session_id=session_id,
+        #         update=update_plan(initial_plan_entries),
+        #     )
+        # except Exception as e:
+        #     # Plan updates are optional, don't fail if they don't work
+        #     logger.warning(f"Failed to send plan update: {e}")
 
         # Create queue for streaming updates from sync callback
         update_queue: asyncio.Queue = asyncio.Queue()
@@ -487,22 +520,22 @@ class CrowAcpAgent(Agent):
                         )
 
                         # Add plan entry for this tool
-                        if permission_granted:
-                            tool_plan_entry = plan_entry(
-                                content=f"Execute tool: {tool_name}",
-                                priority="medium",
-                                status="in_progress",
-                            )
-                            plan_entries.append(tool_plan_entry)
+                        # if permission_granted:
+                        #     tool_plan_entry = plan_entry(
+                        #         content=f"Execute tool: {tool_name}",
+                        #         priority="medium",
+                        #         status="in_progress",
+                        #     )
+                        #     plan_entries.append(tool_plan_entry)
 
-                            # Send updated plan
-                            try:
-                                await self._conn.session_update(
-                                    session_id=session_id,
-                                    update=update_plan(plan_entries),
-                                )
-                            except Exception as e:
-                                logger.warning(f"Failed to send plan update: {e}")
+                        #     # Send updated plan
+                        #     try:
+                        #         await self._conn.session_update(
+                        #             session_id=session_id,
+                        #             update=update_plan(plan_entries),
+                        #         )
+                        #     except Exception as e:
+                        #         logger.warning(f"Failed to send plan update: {e}")
 
                         # Map tool name to ACP tool kind
                         tool_kind = _map_tool_to_kind(tool_name)
@@ -541,29 +574,29 @@ class CrowAcpAgent(Agent):
                         )
 
                         # Update plan entry for this tool
-                        # Find the most recent tool plan entry and mark it completed
-                        for i in range(len(plan_entries) - 1, -1, -1):
-                            entry = plan_entries[i]
-                            if (
-                                entry.status == "in_progress"
-                                and "Execute tool:" in entry.content
-                            ):
-                                # Update this entry to completed
-                                plan_entries[i] = plan_entry(
-                                    content=entry.content,
-                                    priority=entry.priority,
-                                    status="completed",
-                                )
-                                break
+                        # # Find the most recent tool plan entry and mark it completed
+                        # for i in range(len(plan_entries) - 1, -1, -1):
+                        #     entry = plan_entries[i]
+                        #     if (
+                        #         entry.status == "in_progress"
+                        #         and "Execute tool:" in entry.content
+                        #     ):
+                        #         # Update this entry to completed
+                        #         plan_entries[i] = plan_entry(
+                        #             content=entry.content,
+                        #             priority=entry.priority,
+                        #             status="completed",
+                        #         )
+                        #         break
 
-                        # Send updated plan
-                        try:
-                            await self._conn.session_update(
-                                session_id=session_id,
-                                update=update_plan(plan_entries),
-                            )
-                        except Exception as e:
-                            logger.warning(f"Failed to send plan update: {e}")
+                        # # Send updated plan
+                        # try:
+                        #     await self._conn.session_update(
+                        #         session_id=session_id,
+                        #         update=update_plan(plan_entries),
+                        #     )
+                        # except Exception as e:
+                        #     logger.warning(f"Failed to send plan update: {e}")
 
                         # Reset current tool
                         current_tool_call["id"] = None
@@ -581,21 +614,47 @@ class CrowAcpAgent(Agent):
             # First prompt in this session - create the Conversation
             # Note: token_callbacks will be attached per-prompt below
             logger.info(f"Creating NEW Conversation for session {session_id[:8]}...")
+            
+            # Create event callback to handle tool results
+            # This callback runs synchronously from the SDK's worker thread
+            # and schedules async ACP updates on the event loop
+            loop = asyncio.get_running_loop()
+            
+            def event_callback(event: Event) -> None:
+                """Handle OpenHands SDK events and send tool results to ACP client.
+                
+                This callback is invoked synchronously from the SDK's worker thread,
+                so we schedule async ACP updates on the event loop.
+                """
+                if isinstance(event, ObservationEvent):
+                    # Tool completed - send result to ACP client
+                    asyncio.run_coroutine_threadsafe(
+                        _send_tool_result_to_acp(
+                            session_id=session_id,
+                            conn=self._conn,
+                            event=event,
+                        ),
+                        loop,
+                    )
+            
             conversation = Conversation(
                 agent=session["agent"],
                 workspace=session["cwd"],
                 visualizer=None,  # Disable UI output to stdout
+                callbacks=[event_callback],  # Add event callback for tool results
             )
             session["conversation"] = conversation
             logger.info(f"Conversation created: {id(conversation)}")
         else:
             # Reuse existing conversation
             conversation = session["conversation"]
-            logger.info(f"Reusing existing Conversation: {id(conversation)} for session {session_id[:8]}")
-        
+            logger.info(
+                f"Reusing existing Conversation: {id(conversation)} for session {session_id[:8]}"
+            )
+
         # Get the conversation (created once per session)
         conversation = session["conversation"]
-        
+
         # Attach token callbacks for THIS prompt only
         # The callbacks have access to the per-prompt update_queue
         # We need to replace the token_callbacks for each prompt
@@ -641,27 +700,27 @@ class CrowAcpAgent(Agent):
 
         # Update plan to completed status
         # Mark all in_progress entries as completed
-        final_plan_entries = []
-        for entry in plan_entries:
-            if entry.status == "in_progress":
-                final_plan_entries.append(
-                    plan_entry(
-                        content=entry.content,
-                        priority=entry.priority,
-                        status="completed",
-                    )
-                )
-            else:
-                final_plan_entries.append(entry)
+        # final_plan_entries = []
+        # for entry in plan_entries:
+        #     if entry.status == "in_progress":
+        #         final_plan_entries.append(
+        #             plan_entry(
+        #                 content=entry.content,
+        #                 priority=entry.priority,
+        #                 status="completed",
+        #             )
+        #         )
+        #     else:
+        #         final_plan_entries.append(entry)
 
-        try:
-            await self._conn.session_update(
-                session_id=session_id,
-                update=update_plan(final_plan_entries),
-            )
-        except Exception as e:
-            # Plan updates are optional, don't fail if they don't work
-            logger.warning(f"Failed to send plan update: {e}")
+        # try:
+        #     await self._conn.session_update(
+        #         session_id=session_id,
+        #         update=update_plan(final_plan_entries),
+        #     )
+        # except Exception as e:
+        #     # Plan updates are optional, don't fail if they don't work
+        #     logger.warning(f"Failed to send plan update: {e}")
 
         # Return appropriate stop reason
         stop_reason = "cancelled" if cancelled_flag["cancelled"] else "end_turn"
@@ -771,7 +830,6 @@ class CrowAcpAgent(Agent):
         **kwargs: Any,
     ) -> LoadSessionResponse:
         """Load an existing session."""
-        from acp.schema import McpServerStdio
 
         # Check if session file exists
         session_file = self._sessions_dir / f"{session_id}.json"
@@ -911,7 +969,6 @@ Use session/set_mode to change modes."""
             # Clear conversation context if it exists
             if "conversation" in session:
                 # Create a new conversation to clear context
-                from openhands.sdk import Conversation
 
                 session["conversation"] = Conversation(
                     agent=session["agent"],
@@ -1032,8 +1089,6 @@ Use session/set_mode to change modes."""
 
 async def main():
     """Entry point for the ACP server."""
-    from acp import stdio_streams
-    from acp.core import AgentSideConnection
 
     # Get proper stdin/stdout streams for ACP communication
     reader, writer = await stdio_streams()

@@ -514,6 +514,7 @@ version = "0.1.0"
 source = { editable = "." }
 dependencies = [
     { name = "agent-client-protocol" },
+    { name = "aiofiles" },
     { name = "ipython" },
     { name = "openai" },
     { name = "openhands-sdk" },
@@ -529,6 +530,7 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "agent-client-protocol", directory = "../acp-python-sdk" },
+    { name = "aiofiles", specifier = ">=25.1.0" },
     { name = "ipython", specifier = ">=9.9.0" },
     { name = "openai", specifier = ">=2.14.0" },
     { name = "openhands-sdk", editable = "../software-agent-sdk/openhands-sdk" },
