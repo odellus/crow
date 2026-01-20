@@ -1,5 +1,5 @@
 <p align="center">
-    <img src="assets/crow-logo-crop.png" description="crow logo"width=500/>
+    <img src="https://github.com/odellus/crow/raw/v0.1.0/assets/crow-logo-crop.png" description="crow logo"width=500/>
 </p>
 
 # Crow

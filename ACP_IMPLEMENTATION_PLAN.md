@@ -28,6 +28,8 @@ async def prompt(self, prompt: list, session_id: str, **kwargs):
         })
 ```
 
+# Hey
+
 ### Implementation Steps
 1. Identify OpenHands SDK exception types
 2. Map OpenHands exceptions to ACP errors
