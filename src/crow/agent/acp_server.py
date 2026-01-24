@@ -74,7 +74,7 @@ from openhands.sdk.conversation.base import BaseConversation
 from openhands.sdk.event import ActionEvent, Event, ObservationEvent
 from openhands.sdk.hooks import HookConfig
 from openhands.sdk.llm.streaming import ModelResponseStream
-from openhands.tools.file_editor import FileEditorTool
+from openhands.tools.file_editor import FileEditorObservation, FileEditorTool
 from openhands.tools.terminal import TerminalTool
 
 from crow.agent.config import LLMConfig, ServerConfig
@@ -92,25 +92,25 @@ def _build_diff_blocks(
     new_text: str,
 ) -> list[FileEditToolCallContent]:
     """Build diff blocks grouped with small context windows.
-    
+
     Uses SequenceMatcher to find actual changed regions and creates
     multiple focused blocks with surrounding context, similar to kimi-cli's approach.
     """
     from difflib import SequenceMatcher
-    
+
     old_lines = old_text.splitlines(keepends=True)
     new_lines = new_text.splitlines(keepends=True)
     matcher = SequenceMatcher(None, old_lines, new_lines, autojunk=False)
     blocks: list[FileEditToolCallContent] = []
-    
+
     for group in matcher.get_grouped_opcodes(n=N_CONTEXT_LINES):
         if not group:
             continue
-        
+
         # Extract the changed region with context
         i1, i2 = group[0][1], group[-1][2]
         j1, j2 = group[0][3], group[-1][4]
-        
+
         blocks.append(
             FileEditToolCallContent(
                 type="diff",
@@ -119,7 +119,7 @@ def _build_diff_blocks(
                 new_text="".join(new_lines[j1:j2]),
             )
         )
-    
+
     return blocks
 
 
@@ -129,34 +129,36 @@ async def _send_tool_result_to_acp(
     event: ObservationEvent,
 ) -> None:
     """Send tool result to ACP client.
-    
+
     This function is called from the event callback when a tool completes.
     It sends the tool output to the ACP client via session_update.
     """
     try:
-        from openhands.tools.file_editor import FileEditorObservation
-        
         obs = event.observation
         content_blocks = None
-        
+
         # Check if this is a file_editor observation with diff information
         if isinstance(obs, FileEditorObservation):
             # Only use FileEditToolCallContent for actual edits (when we have content)
-            if (hasattr(obs, 'path') and hasattr(obs, 'old_content') and hasattr(obs, 'new_content')
-                and (obs.old_content or obs.new_content)):
+            if (
+                hasattr(obs, "path")
+                and hasattr(obs, "old_content")
+                and hasattr(obs, "new_content")
+                and (obs.old_content or obs.new_content)
+            ):
                 # Build intelligent diff blocks with context windows
                 content_blocks = _build_diff_blocks(
                     path=obs.path,
                     old_text=obs.old_content or "",
                     new_text=obs.new_content or "",
                 )
-        
+
         # Fallback to plain text if no structured content
         if not content_blocks:
             output = str(event.visualize.plain)
             if output and output.strip():
                 content_blocks = [tool_content(block=text_block(text=output))]
-        
+
         # Send tool completion update with result
         await conn.session_update(
             session_id=session_id,
@@ -673,15 +675,15 @@ class CrowAcpAgent(Agent):
             # First prompt in this session - create the Conversation
             # Note: token_callbacks will be attached per-prompt below
             logger.info(f"Creating NEW Conversation for session {session_id}")
-            
+
             # Create event callback to handle tool results
             # This callback runs synchronously from the SDK's worker thread
             # and schedules async ACP updates on the event loop
             loop = asyncio.get_running_loop()
-            
+
             def event_callback(event: Event) -> None:
                 """Handle OpenHands SDK events and send tool results to ACP client.
-                
+
                 This callback is invoked synchronously from the SDK's worker thread,
                 so we schedule async ACP updates on the event loop.
                 """
@@ -695,7 +697,7 @@ class CrowAcpAgent(Agent):
                         ),
                         loop,
                     )
-            
+
             conversation = Conversation(
                 agent=session["agent"],
                 workspace=session["cwd"],
@@ -745,9 +747,9 @@ class CrowAcpAgent(Agent):
             await update_queue.put(("done", None))
             await sender
 
-            # Return error response
+            # Return error response - use "refusal" for errors
             return PromptResponse(
-                stop_reason="error",
+                stop_reason="refusal",
             )
 
         # Clean up cancelled_flag only - keep the conversation for reuse!
