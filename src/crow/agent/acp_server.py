@@ -747,9 +747,9 @@ class CrowAcpAgent(Agent):
             await update_queue.put(("done", None))
             await sender
 
-            # Return error response - use "refusal" for errors
+            # Return error response - use "end_turn" for errors
             return PromptResponse(
-                stop_reason="refusal",
+                stop_reason="end_turn",
             )
 
         # Clean up cancelled_flag only - keep the conversation for reuse!

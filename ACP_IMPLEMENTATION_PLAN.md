@@ -1,5 +1,15 @@
 # ACP Server Implementation Plan
 
+## Priority 0: Personal Tasks (PENDING)
+
+### Task: Pick Up Eggs From Store
+- **Status**: PENDING
+- **Priority**: HIGH (need eggs for breakfast/cooking)
+- **Estimated Time**: 30 minutes
+- **Notes**: Don't forget to check expiration dates
+
+---
+
 ## Priority 1: Error Handling (CRITICAL - Week 1)
 
 ### Current State

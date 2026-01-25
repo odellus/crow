@@ -2,6 +2,34 @@
 
 Essential commands and guidelines for agents working on the Crow project.
 
+## Installation
+
+### Installing crow-ai Tool
+
+**Install from source:**
+```bash
+uv tool install ./crow --python 3.12
+```
+
+**Uninstall:**
+```bash
+uv tool uninstall crow-ai
+```
+
+**Reinstall after changes:**
+```bash
+# UV caches packages, so force a fresh build
+uv tool uninstall crow-ai
+uv build --out-dir /tmp/crow-build
+uv tool install /tmp/crow-build/crow_ai-0.1.2-py3-none-any.whl --python 3.12
+```
+
+**Why the build step?**
+- UV caches wheel files
+- `uv tool install ./crow` may use cached version
+- Building fresh ensures latest code is installed
+- This is a known UV issue with local path installs
+
 ## Project Commands
 
 ### Running Commands

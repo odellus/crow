@@ -1,12 +1,44 @@
 """Configuration for Crow ACP server."""
 
 import os
-from dataclasses import dataclass
+from pathlib import Path
+from dataclasses import dataclass, field
 from typing import Any
 
+import yaml
 from dotenv import load_dotenv
 
-load_dotenv()
+
+def get_crow_config_dir() -> Path:
+    """Get the Crow configuration directory (~/.crow)."""
+    return Path.home() / ".crow"
+
+
+def load_crow_env() -> None:
+    """Load environment variables from Crow config directory.
+    
+    Loads from ~/.crow/.env if it exists, then from local .env.
+    """
+    crow_env = get_crow_config_dir() / ".env"
+    if crow_env.exists():
+        load_dotenv(crow_env, override=True)
+    # Also load local .env for development
+    load_dotenv(".env", override=False)
+
+
+def load_crow_config() -> dict[str, Any]:
+    """Load configuration from ~/.crow/config.yaml."""
+    config_file = get_crow_config_dir() / "config.yaml"
+    if config_file.exists():
+        with open(config_file) as f:
+            return yaml.safe_load(f)
+    return {}
+
+
+# Load environment on import
+load_crow_env()
+# Load YAML config
+_crow_config = load_crow_config()
 
 
 @dataclass
@@ -22,14 +54,15 @@ class LLMConfig:
 
     @classmethod
     def from_env(cls) -> "LLMConfig":
-        """Load LLM config from environment variables."""
+        """Load LLM config from environment variables and config.yaml."""
+        llm_config = _crow_config.get("llm", {})
         return cls(
-            model=os.getenv("LLM_MODEL", "anthropic/glm-4.7"),
+            model=llm_config.get("model", os.getenv("LLM_MODEL", "anthropic/glm-4.7")),
             api_key=os.getenv("ZAI_API_KEY", ""),
             base_url=os.getenv("ZAI_BASE_URL"),
-            temperature=float(os.getenv("LLM_TEMPERATURE", "0.0")),
-            max_tokens=int(os.getenv("LLM_MAX_TOKENS", "4096")),
-            stream=True,
+            temperature=float(llm_config.get("temperature", os.getenv("LLM_TEMPERATURE", "0.0"))),
+            max_tokens=int(llm_config.get("max_tokens", os.getenv("LLM_MAX_TOKENS", "4096"))),
+            stream=llm_config.get("stream", True),
         )
 
 
@@ -44,11 +77,12 @@ class AgentConfig:
 
     @classmethod
     def from_env(cls, cwd: str) -> "AgentConfig":
-        """Load agent config from environment variables."""
+        """Load agent config from environment variables and config.yaml."""
+        agent_config = _crow_config.get("agent", {})
         return cls(
             cwd=cwd,
-            max_iterations=int(os.getenv("MAX_ITERATIONS", "500")),
-            timeout=int(os.getenv("AGENT_TIMEOUT", "300")),
+            max_iterations=int(agent_config.get("max_iterations", os.getenv("MAX_ITERATIONS", "500"))),
+            timeout=int(agent_config.get("timeout", os.getenv("AGENT_TIMEOUT", "300"))),
         )
 
 
@@ -62,9 +96,10 @@ class ServerConfig:
 
     @classmethod
     def from_env(cls) -> "ServerConfig":
-        """Load server config from environment variables."""
+        """Load server config from environment variables and config.yaml."""
+        server_config = _crow_config.get("server", {})
         return cls(
-            name=os.getenv("SERVER_NAME", "crow-acp-server"),
-            version=os.getenv("SERVER_VERSION", "0.1.0"),
-            title=os.getenv("SERVER_TITLE", "Crow ACP Server"),
+            name=server_config.get("name", os.getenv("SERVER_NAME", "crow-acp-server")),
+            version=server_config.get("version", os.getenv("SERVER_VERSION", "0.1.2")),
+            title=server_config.get("title", os.getenv("SERVER_TITLE", "Crow ACP Server")),
         )
