@@ -2,6 +2,9 @@
 
 import sys
 
+from crow import __version__
+from crow.agent.acp_server import sync_main
+
 
 def main() -> None:
     """Main CLI entry point."""
@@ -15,17 +18,17 @@ def main() -> None:
         print()
         print("Examples:")
         print("  crow acp                                    # Start ACP server")
-        print("  uv run acp-python-sdk/examples/client.py crow acp  # Connect with ACP client")
+        print(
+            "  uv run acp-python-sdk/examples/client.py crow acp  # Connect with ACP client"
+        )
         sys.exit(1)
-    
+
     command = sys.argv[1]
-    
+
     if command == "acp":
         # Start ACP server
-        from crow.agent.acp_server import sync_main
         sync_main()
     elif command in ["--version", "-v"]:
-        from crow import __version__
         print(f"crow {__version__}")
     else:
         print(f"Unknown command: {command}", file=sys.stderr)

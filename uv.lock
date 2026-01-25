@@ -521,6 +521,7 @@ dependencies = [
     { name = "openhands-sdk" },
     { name = "openhands-tools" },
     { name = "python-dotenv" },
+    { name = "pyyaml" },
     { name = "requests" },
 ]
 
@@ -539,6 +540,7 @@ requires-dist = [
     { name = "openhands-sdk", editable = "../software-agent-sdk/openhands-sdk" },
     { name = "openhands-tools", editable = "../software-agent-sdk/openhands-tools" },
     { name = "python-dotenv", specifier = ">=1.2.1" },
+    { name = "pyyaml", specifier = ">=6.0.0" },
     { name = "requests", specifier = ">=2.32.5" },
 ]
 
