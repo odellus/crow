@@ -2,60 +2,86 @@
 
 Essential commands and guidelines for agents working on the Crow project.
 
-## Installation
+## Installation & Setup
 
-### Installing crow-ai Tool
+### Quick Start (Recommended)
 
-**Install from source:**
+**Install the Crow CLI globally:**
 ```bash
-uv tool install ./crow --python 3.12
+cd /home/thomas/src/projects/orchestrator-project/crow
+uv build
+uv tool install dist/crow_ai-0.1.2-py3-none-any.whl --python 3.12
 ```
 
-**Uninstall:**
+This installs the `crow` command globally, available from any directory.
+
+**Configuration:**
+- API keys and secrets: `~/.crow/.env`
+- User settings: `~/.crow/config.yaml`
+- Sessions: `~/.crow/sessions/`
+- Logs: `~/.crow/logs/`
+
+**Usage:**
+```bash
+# Start ACP server (works from any directory)
+crow acp
+
+# Show version
+crow --version
+
+# Show help
+crow
+```
+
+**Using with ACP clients:**
+```bash
+uv --project /path/to/acp-python-sdk run python acp-python-sdk/examples/client.py crow acp
+```
+
+### Reinstalling After Changes
+
+```bash
+cd /home/thomas/src/projects/orchestrator-project/crow
+uv build
+uv tool install dist/crow_ai-0.1.2-py3-none-any.whl --python 3.12
+```
+
+### Uninstalling
+
 ```bash
 uv tool uninstall crow-ai
 ```
 
-**Reinstall after changes:**
-```bash
-# UV caches packages, so force a fresh build
-uv tool uninstall crow-ai
-uv build --out-dir /tmp/crow-build
-uv tool install /tmp/crow-build/crow_ai-0.1.2-py3-none-any.whl --python 3.12
-```
+## Development Workflow
 
-**Why the build step?**
-- UV caches wheel files
-- `uv tool install ./crow` may use cached version
-- Building fresh ensures latest code is installed
-- This is a known UV issue with local path installs
+### Project Commands
 
-## Project Commands
-
-### Running Commands
-
-**ALWAYS use `uv --project` for running commands:**
+**For development work on Crow itself, use `uv --project`:**
 
 ```bash
-# Run Python scripts
-uv --project crow run python script.py
+# Install dependencies
+uv --project crow sync
+
+# Add a dependency
+uv --project crow add requests
 
 # Run tests
 uv --project crow run python -m pytest tests/
 
-# Run linting/formatting
-uv --project crow run ruff check .
+# Format code
 uv --project crow run ruff format .
 
-# Run the ACP server
-uv --project crow run crow acp
+# Check code
+uv --project crow run ruff check .
 ```
 
-**Why `--project`?**
+**Why `--project` for development?**
 - Ensures commands run in the correct project context
 - Avoids "No such file or directory" errors
 - Prevents accidentally running commands in the wrong directory
 - More reliable than `cd`-ing into directories
+
+**Note:** Once installed globally with `uv tool install`, you can use `crow acp` from any directory without `uv --project`.
 
 ### Testing
 
@@ -84,23 +110,58 @@ jq '.' test_output.txt  # If JSON output
 - You don't lose information by piping to grep
 - You can share the output file for debugging
 
-### Development Workflow
+## Configuration System
+
+### Configuration Loading Priority
+
+The configuration system loads in this order:
+
+1. `~/.crow/.env` (global environment variables)
+2. `~/.crow/config.yaml` (global settings)
+3. Local `.env` file (for development)
+4. Environment variables (can override above)
+
+This allows for:
+- Global configuration for everyday use
+- Local overrides for development/testing
+- Environment-specific settings via env vars
+
+### ~/.crow/.env
+
+Contains API keys and sensitive configuration:
 
 ```bash
-# Install dependencies
-uv --project crow sync
+ZAI_API_KEY=your_api_key_here
+ZAI_BASE_URL=https://api.z.ai/api/anthropic
+LANGFUSE_PUBLIC_KEY=...
+LANGFUSE_SECRET_KEY=...
+LANGFUSE_HOST=http://localhost:3044
+LMNR_PROJECT_API_KEY=...
+```
 
-# Add a dependency
-uv --project crow add requests
+### ~/.crow/config.yaml
 
-# Run the main script
-uv --project crow run python main.py
+Contains user settings (non-sensitive):
 
-# Format code
-uv --project crow run ruff format .
+```yaml
+llm:
+  model: "anthropic/glm-4.7"
+  temperature: 0.0
+  max_tokens: 4096
+  stream: true
 
-# Check code
-uv --project crow run ruff check .
+agent:
+  max_iterations: 500
+  timeout: 300
+
+server:
+  name: "crow-acp-server"
+  version: "0.1.2"
+  title: "Crow ACP Server"
+
+session:
+  sessions_dir: "~/.crow/sessions"
+  logs_dir: "~/.crow/logs"
 ```
 
 ## Code Style Guidelines

@@ -22,32 +22,61 @@ Crow is NOT just an ACP server, NOT just an IDE. It's a complete environment whe
 
 ### Installation
 
+**Install the Crow CLI globally:**
 ```bash
-cd crow
-uv sync
+cd /home/thomas/src/projects/orchestrator-project/crow
+uv build
+uv tool install dist/crow_ai-0.1.2-py3-none-any.whl --python 3.12
 ```
 
-### Run the ACP Server
+This installs the `crow` command globally, available from any directory.
 
+**Configuration:**
+- API keys and secrets: `~/.crow/.env`
+- User settings: `~/.crow/config.yaml`
+- Sessions: `~/.crow/sessions/`
+- Logs: `~/.crow/logs/`
+
+### Usage
+
+**Start the ACP server:**
 ```bash
-python -m crow.agent.acp_server
+crow acp
 ```
 
-The server will listen on stdin/stdout for JSON-RPC messages following the ACP protocol.
-
-### Run Iterative Refinement
-
+**Using with ACP clients:**
 ```bash
-python task_pipeline.py --plan-file PLAN.md
+uv --project /path/to/acp-python-sdk run python acp-python-sdk/examples/client.py crow acp
 ```
 
-This will:
-1. Split PLAN.md into tasks
-2. Run each task through iterative refinement (planning → implementation → critique)
-3. Track progress and results
+**Other commands:**
+```bash
+crow              # Show help
+crow --version    # Show version
+```
+
+### Reinstalling After Changes
+
+```bash
+cd /home/thomas/src/projects/orchestrator-project/crow
+uv build
+uv tool install dist/crow_ai-0.1.2-py3-none-any.whl --python 3.12
+```
+
+### Development Setup
+
+For development work on Crow itself:
+
+```bash
+cd /home/thomas/src/projects/orchestrator-project/crow
+uv --project crow sync
+```
+
+See [AGENTS.md](AGENTS.md) for detailed development workflow instructions.
 
 ## Documentation
 
+- **[INSTALLATION.md](INSTALLATION.md)** - Installation and configuration guide
 - **[DESIGN.md](DESIGN.md)** - Vision, architecture, and design decisions
 - **[CURRENT_STATE.md](CURRENT_STATE.md)** - Analysis of current code and what needs fixing
 - **[ROADMAP.md](ROADMAP.md)** - Development phases and timeline
