@@ -1,81 +1,167 @@
-# Agent Client Protocol (ACP) Book
+<p align="center">
+    <img src="https://github.com/odellus/crow/raw/v0.1.0/assets/crow-logo-crop.png" description="crow logo"width=500/>
+</p>
 
-A comprehensive local collection of the Agent Client Protocol documentation, fetched from [agentclientprotocol.com](https://agentclientprotocol.com).
+# Crow
 
-## About ACP
+**An Agent Development Environment (ADE) for building, running, and improving autonomous coding agents.**
 
-The Agent Client Protocol standardizes communication between code editors/IDEs and coding agents, suitable for both local and remote scenarios. ACP solves integration overhead by providing a standardized protocol similar to how the Language Server Protocol (LSP) standardized language server integration.
+> **Status**: In active development. Phase 0 complete (ACP server, iterative refinement, task pipeline). See [ROADMAP.md](ROADMAP.md) for what's next.
 
-## Documentation Structure
+## What is Crow?
 
-This repository contains the complete ACP documentation organized into the following sections:
+Crow is NOT just an ACP server, NOT just an IDE. It's a complete environment where:
 
-### 📚 Overview
-- [Introduction](./overview/introduction.md) - Get started with ACP
-- [Architecture](./overview/architecture.md) - Overview of ACP architecture
-- [Agents](./overview/agents.md) - Agents implementing ACP
-- [Clients](./overview/clients.md) - Clients implementing ACP
+- **Humans plan** in a journal (Logseq-inspired knowledge base)
+- **Humans + agents prime** the environment together (pair programming)
+- **Autonomous agents work** in the primed environment (read journal → write code → document decisions)
+- **Humans review** in the journal and provide feedback
+- **Knowledge accumulates** and agents get better over time
 
-### 🔧 Protocol Reference
-- [Overview](./protocol/overview.md) - How ACP works
-- [Initialization](./protocol/initialization.md) - How all ACP connections begin
-- [Prompt Turn](./protocol/prompt-turn.md) - Understanding the core conversation flow
-- [Session Setup](./protocol/session-setup.md) - Creating and loading sessions
-- [Session Modes](./protocol/session-modes.md) - Switch between different agent operating modes
-- [Content](./protocol/content.md) - Understanding content blocks in ACP
-- [Tool Calls](./protocol/tool-calls.md) - How agents report tool call execution
-- [Terminals](./protocol/terminals.md) - Executing and managing terminal commands
-- [File System](./protocol/file-system.md) - Client filesystem access methods
-- [Agent Plan](./protocol/agent-plan.md) - How agents communicate their execution plans
-- [Slash Commands](./protocol/slash-commands.md) - Advertise available slash commands to clients
-- [Transports](./protocol/transports.md) - Mechanisms for agents and clients to communicate
-- [Extensibility](./protocol/extensibility.md) - Adding custom data and capabilities
-- [Schema](./protocol/schema.md) - Schema definitions for ACP
+## Quick Start
 
-### 📖 Libraries
-- [Python](./libraries/python.md) - Python library for ACP
-- [TypeScript](./libraries/typescript.md) - TypeScript library for ACP
-- [Rust](./libraries/rust.md) - Rust library for ACP
-- [Kotlin](./libraries/kotlin.md) - Kotlin library for ACP
-- [Community](./libraries/community.md) - Community managed libraries
+### Installation
 
-### 🤝 Community
-- [Contributing](./community/contributing.md) - How to participate in ACP development
-- [Code of Conduct](./community/code-of-conduct.md) - Community guidelines
-- [Communication](./community/communication.md) - Communication methods for contributors
-- [Governance](./community/governance.md) - How the ACP project is governed
-- [Working & Interest Groups](./community/working-interest-groups.md) - Collaborative groups within ACP
+**Install the Crow CLI globally:**
+```bash
+cd /home/thomas/src/projects/orchestrator-project/crow
+uv build
+uv tool install dist/crow_ai-0.1.2-py3-none-any.whl --python 3.12
+```
 
-### 📋 Requests for Dialog (RFDs)
-RFDs are the process for introducing changes to the protocol:
+This installs the `crow` command globally, available from any directory.
 
-- [About RFDs](./rfds/about.md) - Our process for introducing changes
-- [Introduce RFD Process](./rfds/introduce-rfd-process.md) - Initial RFD process proposal
-- [MCP-over-ACP](./rfds/mcp-over-acp.md) - MCP Transport via ACP Channels
-- [Agent Telemetry Export](./rfds/agent-telemetry-export.md) - Telemetry export mechanism
-- [Authentication Methods](./rfds/auth-methods.md) - Authentication standards
-- [Meta Field Propagation](./rfds/meta-propagation.md) - Metadata propagation conventions
-- [Agent Extensions via Proxies](./rfds/proxy-chains.md) - ACP Proxy chains
-- [Request Cancellation](./rfds/request-cancellation.md) - Cancellation mechanism
-- [Rust SDK based on SACP](./rfds/rust-sdk-v1.md) - Rust SDK proposal
-- [Session Config Options](./rfds/session-config-options.md) - Configuration options
-- [Session Fork](./rfds/session-fork.md) - Forking existing sessions
-- [Session Info Update](./rfds/session-info-update.md) - Session information updates
-- [Session List](./rfds/session-list.md) - Listing sessions
-- [Session Resume](./rfds/session-resume.md) - Resuming existing sessions
-- [Session Usage](./rfds/session-usage.md) - Session usage and context status
-- [ACP Agent Registry](./rfds/acp-agent-registry.md) - Agent registry proposal
+**Configuration:**
+- API keys and secrets: `~/.crow/.env`
+- User settings: `~/.crow/config.yaml`
+- Sessions: `~/.crow/sessions/`
+- Logs: `~/.crow/logs/`
 
-### 🎨 Brand
-- [Brand Assets](./brand.md) - Assets for the ACP brand
+### Usage
 
-### 📢 Updates
-- [Updates & Announcements](./updates.md) - Latest news about ACP
+**Start the ACP server:**
+```bash
+crow acp
+```
 
-## Source
+**Using with ACP clients:**
+```bash
+uv --project /path/to/acp-python-sdk run python acp-python-sdk/examples/client.py crow acp
+```
 
-All documentation is sourced from the official [Agent Client Protocol website](https://agentclientprotocol.com). For the most up-to-date information, please visit the official site.
+**Other commands:**
+```bash
+crow              # Show help
+crow --version    # Show version
+```
 
-## File Index
+### Reinstalling After Changes
 
-See [llms.txt](./llms.txt) for a complete index of all documentation files.
+```bash
+cd /home/thomas/src/projects/orchestrator-project/crow
+uv build
+uv tool install dist/crow_ai-0.1.2-py3-none-any.whl --python 3.12
+```
+
+### Development Setup
+
+For development work on Crow itself:
+
+```bash
+cd /home/thomas/src/projects/orchestrator-project/crow
+uv --project crow sync
+```
+
+See [AGENTS.md](AGENTS.md) for detailed development workflow instructions.
+
+## Documentation
+
+- **[INSTALLATION.md](INSTALLATION.md)** - Installation and configuration guide
+- **[DESIGN.md](DESIGN.md)** - Vision, architecture, and design decisions
+- **[CURRENT_STATE.md](CURRENT_STATE.md)** - Analysis of current code and what needs fixing
+- **[ROADMAP.md](ROADMAP.md)** - Development phases and timeline
+- **[AGENTS.md](AGENTS.md)** - Project-specific knowledge for agents
+- **[REFACTOR_PLAN.md](REFACTOR_PLAN.md)** - Original refactor plan (superseded by ROADMAP.md)
+
+## Features
+
+### Current (Phase 0 - Complete)
+
+- ✅ **ACP Server** - Streaming ACP server wrapping OpenHands SDK
+- ✅ **Iterative Refinement** - Planning → Implementation → Critique → Documentation loop
+- ✅ **Task Pipeline** - Split PLAN.md into tasks, run sequentially
+- ✅ **MCP Integration** - playwright, zai-vision, fetch, web_search
+- ✅ **Session Management** - Multiple concurrent sessions with persistence
+- ✅ **Slash Commands** - /help, /clear, /status
+
+### In Progress (Phase 1-3)
+
+- 🚧 **Restructure** - Moving files from root to `src/crow/`
+- 📋 **Jinja2 Templates** - Replace hardcoded prompts with templates
+- 📋 **Environment Priming** - Human + agent pair programming before autonomous phase
+
+### Planned (Phase 4-8)
+
+- 📋 **Project Management** - `/projects/` directory, git repos, journals
+- 📋 **Journal Page** - Logseq-inspired knowledge base
+- 📋 **Web UI** - CodeBlitz/Monaco integration
+- 📋 **Feedback Loops** - Capture human feedback, feed to agents
+- 📋 **Telemetry** - Self-hosted Laminar/Langfuse
+
+## Architecture
+
+```
+Crow
+├── ACP Server (src/crow/agent/)
+│   └── Streaming ACP protocol implementation
+├── Orchestration (src/crow/orchestration/)
+│   ├── Environment priming
+│   ├── Task splitting
+│   ├── Iterative refinement
+│   └── Task pipeline
+├── Web UI (Future)
+│   ├── CodeBlitz/Monaco editor
+│   ├── Journal page
+│   ├── Project browser
+│   └── Terminal
+└── Projects (/projects/)
+    └── Each project = git repo + journal
+```
+
+## The Problem We're Solving
+
+Current AI coding tools:
+- ❌ Drop agents into empty workspaces (no context)
+- ❌ Lose agent decisions in markdown files ("lost like tears in rain")
+- ❌ No feedback loop (human review not captured)
+- ❌ No knowledge accumulation
+
+Our solution:
+- ✅ **Environment priming** - Human + agent set up context first
+- ✅ **Journal** - All decisions documented and linked
+- ✅ **Feedback loops** - Human review captured and fed back
+- ✅ **Knowledge accumulation** - Agents get better over time
+
+## Contributing
+
+This is a personal project, but feedback and ideas are welcome!
+
+## License
+
+MIT
+
+## Acknowledgments
+
+- [Agent Client Protocol](https://agentclientprotocol.com/)
+- [OpenHands SDK](https://docs.openhands.dev/)
+- [Model Context Protocol](https://modelcontextprotocol.io/)
+- [Trae Solo](https://traesolo.net/) - Autonomous development inspiration
+- [Google Antigravity](https://antigravity.google/) - Agent-first IDE inspiration
+- [Logseq](https://logseq.com/) - Knowledge management inspiration
+- [CodeBlitz](https://github.com/sugarforever/codeblitz) - Web IDE foundation
+
+---
+
+*"The agent is the primary developer, humans are the critics/product managers."*
+
+Modified with Crow ADE
