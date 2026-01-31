@@ -276,6 +276,66 @@ class CrowAcpAgent(Agent):
         self._sessions_dir = Path.home() / ".crow" / "sessions"
         self._sessions_dir.mkdir(parents=True, exist_ok=True)
 
+    def _enhance_tool_call_title(self, tool_name: str, tool_args: str) -> str:
+        """Enhance tool call title with key argument for better UX.
+        
+        This extracts a meaningful argument from the tool args to create
+        a more descriptive title, similar to kimi-cli's approach.
+        
+        Examples:
+            - "terminal" with command "ls -la" -> "terminal: ls -la"
+            - "file_editor" with path "test.py" -> "file_editor: test.py"
+        """
+        import json
+        from typing import Any
+        
+        try:
+            args: dict[str, Any] = json.loads(tool_args) if tool_args else {}
+        except json.JSONDecodeError:
+            # Args are incomplete or invalid, just return tool name
+            return tool_name
+        
+        # Extract key argument based on tool name
+        key_arg = None
+        tool_name_lower = tool_name.lower()
+        
+        # Terminal/execute tools - show the command
+        if "terminal" in tool_name_lower or "run" in tool_name_lower or "execute" in tool_name_lower:
+            key_arg = args.get("command") or args.get("cmd")
+        
+        # File operations - show the path
+        elif "file" in tool_name_lower or "edit" in tool_name_lower:
+            key_arg = args.get("path")
+            if key_arg:
+                # Shorten path to just the filename if it's long
+                if len(key_arg) > 50:
+                    parts = key_arg.split("/")
+                    if len(parts) > 1:
+                        key_arg = f".../{parts[-1]}"
+        
+        # Search tools - show the query/pattern
+        elif "search" in tool_name_lower or "grep" in tool_name_lower:
+            key_arg = args.get("query") or args.get("pattern") or args.get("text")
+        
+        # Read tools - show the path
+        elif "read" in tool_name_lower:
+            key_arg = args.get("path")
+        
+        # Browser tools - show the URL or action
+        elif "browser" in tool_name_lower or "browse" in tool_name_lower:
+            key_arg = args.get("url") or args.get("action")
+        
+        # If we found a key argument, format it nicely
+        if key_arg:
+            key_str = str(key_arg)
+            # Truncate if too long
+            if len(key_str) > 40:
+                key_str = key_str[:37] + "..."
+            return f"{tool_name}: {key_str}"
+        
+        # No key argument found, return just the tool name
+        return tool_name
+
     def on_connect(self, conn: Any) -> None:
         """Called when client connects."""
         self._conn = conn
@@ -475,7 +535,9 @@ class CrowAcpAgent(Agent):
             """
             Handle all types of streaming tokens including content,
             tool calls, and thinking blocks with dynamic boundary detection.
-            EXACT pattern from crow_mcp_integration.py but emitting to queue.
+            
+            CRITICAL: Send updates directly via run_coroutine_threadsafe, NOT through queue!
+            The queue adds latency and prevents true streaming.
             """
             for choice in chunk.choices:
                 delta = choice.delta
@@ -487,14 +549,28 @@ class CrowAcpAgent(Agent):
                 if isinstance(reasoning_content, str) and reasoning_content:
                     if current_state[0] != "thinking":
                         current_state[0] = "thinking"
-                    update_queue.put_nowait(("thought", reasoning_content))
+                    # Send directly to ACP - NO QUEUE!
+                    asyncio.run_coroutine_threadsafe(
+                        self._conn.session_update(
+                            session_id=session_id,
+                            update=update_agent_thought_text(reasoning_content),
+                        ),
+                        loop,
+                    )
 
                 # Handle regular content
                 content = getattr(delta, "content", None)
                 if isinstance(content, str) and content:
                     if current_state[0] != "content":
                         current_state[0] = "content"
-                    update_queue.put_nowait(("content", content))
+                    # Send directly to ACP - NO QUEUE!
+                    asyncio.run_coroutine_threadsafe(
+                        self._conn.session_update(
+                            session_id=session_id,
+                            update=update_agent_message_text(content),
+                        ),
+                        loop,
+                    )
 
                 # Handle tool calls
                 tool_calls = getattr(delta, "tool_calls", None)
@@ -551,9 +627,13 @@ class CrowAcpAgent(Agent):
 
         # Start background task to send updates from queue
         async def sender_task():
+            import time
+            start_time = time.time()
             while True:
                 try:
                     update_type, data = await update_queue.get()
+                    elapsed = time.time() - start_time
+                    logger.debug(f"[{elapsed:.3f}] Sender processing: {update_type}")
                     if update_type == "done":
                         # Finish any pending tool call
                         if current_tool_call["id"]:
@@ -579,15 +659,21 @@ class CrowAcpAgent(Agent):
                         break
                     elif update_type == "thought":
                         assistant_parts.append({"type": "thought", "text": data})
-                        await self._conn.session_update(
-                            session_id=session_id,
-                            update=update_agent_thought_text(data),
+                        # Fire-and-forget - don't await to avoid blocking the queue drain
+                        asyncio.create_task(
+                            self._conn.session_update(
+                                session_id=session_id,
+                                update=update_agent_thought_text(data),
+                            )
                         )
                     elif update_type == "content":
                         assistant_parts.append({"type": "text", "text": data})
-                        await self._conn.session_update(
-                            session_id=session_id,
-                            update=update_agent_message_text(data),
+                        # Fire-and-forget - don't await to avoid blocking the queue drain
+                        asyncio.create_task(
+                            self._conn.session_update(
+                                session_id=session_id,
+                                update=update_agent_message_text(data),
+                            )
                         )
                     elif update_type == "tool_start":
                         tool_call_id, tool_name, tool_args, oh_tool_call_id = data
@@ -631,25 +717,41 @@ class CrowAcpAgent(Agent):
                         # Map tool name to ACP tool kind
                         tool_kind = _map_tool_to_kind(tool_name)
 
-                        # Send tool call update with appropriate status
+                        # Create enhanced title with key argument if available
+                        title = self._enhance_tool_call_title(tool_name, tool_args)
+
+                        # Send tool call update with appropriate status and content
+                        # Include the arguments in content so users can see what's being executed
                         status = "in_progress" if permission_granted else "failed"
                         await self._conn.session_update(
                             session_id=session_id,
                             update=start_tool_call(
                                 tool_call_id=tool_call_id,
-                                title=tool_name,
+                                title=title,
                                 kind=tool_kind,
                                 status=status,
+                                content=[
+                                    tool_content(
+                                        block=text_block(text=tool_args if tool_args else "{}")
+                                    )
+                                ],
+                                raw_input=tool_args,
                             ),
                         )
                     elif update_type == "tool_args":
                         tool_call_id, tool_args = data
-                        # Update tool call with progress
+                        # Update tool call with progress and stream the accumulating arguments
+                        # This shows users the arguments being built up in real-time
                         await self._conn.session_update(
                             session_id=session_id,
                             update=update_tool_call(
                                 tool_call_id=tool_call_id,
                                 status="in_progress",
+                                content=[
+                                    tool_content(
+                                        block=text_block(text=tool_args if tool_args else "{}")
+                                    )
+                                ],
                             ),
                         )
                     elif update_type == "tool_end":
@@ -757,22 +859,32 @@ class CrowAcpAgent(Agent):
         # Store conversation in session for cancellation
         session["cancelled_flag"] = cancelled_flag
 
-        # Run in thread pool to avoid blocking event loop
-        loop = asyncio.get_running_loop()
-
-        conversation_error = None
+        # Run conversation in background thread WITHOUT awaiting
+        # This allows the event loop to process run_coroutine_threadsafe calls immediately
+        import threading
+        conversation_error = [None]  # Use list to allow assignment in nested function
+        conversation_done = threading.Event()
 
         def run_conversation():
-            nonlocal conversation_error
             try:
                 conversation.send_message(user_message)
                 conversation.run()
             except Exception as e:
                 logger.error(f"Error running conversation: {e}", exc_info=True)
-                conversation_error = str(e)
+                conversation_error[0] = str(e)
                 update_queue.put_nowait(("error", str(e)))
+            finally:
+                conversation_done.set()
 
-        await loop.run_in_executor(None, run_conversation)
+        # Start conversation in background thread - DON'T AWAIT!
+        thread = threading.Thread(target=run_conversation, daemon=True)
+        thread.start()
+
+        # Wait for conversation to finish while processing updates
+        # The sender_task is already running and draining the queue
+        # Use async wait to avoid blocking the event loop!
+        loop = asyncio.get_running_loop()
+        await loop.run_in_executor(None, conversation_done.wait)
 
         # Check if conversation failed
         if conversation_error:
