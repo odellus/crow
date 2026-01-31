@@ -7,7 +7,7 @@ Crow/
 ├── README.md
 └── src/
     └── crow/
-        ├── acpi/
+        ├── acp/
         │   └── [Logic for agent client protocol, can join multiple agents into single ACP. Use API]
         ├── agents/
         │   └── [Configuration and implementation of agents, long running sequences of tasks (planning), integration of custom required mcp servers] - Bulk of our value add
@@ -40,7 +40,7 @@ graph TD
 
 ## Component Descriptions
 
-### acpi/
+### acp/
 **Agent Client Protocol Implementation**
 - Logic for agent client protocol
 - Can join multiple agents into single ACP

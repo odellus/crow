@@ -127,15 +127,30 @@ async def _send_tool_result_to_acp(
     session_id: str,
     conn: Any,
     event: ObservationEvent,
+    tool_call_id_map: dict[str, str],
 ) -> None:
     """Send tool result to ACP client.
 
     This function is called from the event callback when a tool completes.
     It sends the tool output to the ACP client via session_update.
+    
+    Args:
+        session_id: The ACP session ID
+        conn: The ACP connection
+        event: The ObservationEvent from OpenHands SDK
+        tool_call_id_map: Mapping from OpenHands SDK tool_call_id to ACP tool_call_id
     """
     try:
         obs = event.observation
         content_blocks = None
+
+        # Translate OpenHands SDK tool_call_id to ACP tool_call_id
+        acp_tool_call_id = tool_call_id_map.get(event.tool_call_id)
+        if not acp_tool_call_id:
+            logger.warning(
+                f"No ACP tool call ID found for OpenHands SDK tool call ID: {event.tool_call_id}"
+            )
+            return
 
         # Check if this is a file_editor observation with diff information
         if isinstance(obs, FileEditorObservation):
@@ -163,7 +178,7 @@ async def _send_tool_result_to_acp(
         await conn.session_update(
             session_id=session_id,
             update=update_tool_call(
-                tool_call_id=event.tool_call_id,
+                tool_call_id=acp_tool_call_id,  # Use the ACP tool call ID
                 status="completed",
                 content=content_blocks,
                 raw_output={"output": str(event.visualize.plain)},
@@ -445,6 +460,13 @@ class CrowAcpAgent(Agent):
 
         # Tool call tracking
         current_tool_call = {"id": None, "name": None, "args": ""}
+        
+        # Track tool call IDs: map OpenHands SDK tool_call_id -> ACP tool_call_id
+        # This is needed because OpenHands SDK uses its own tool call IDs,
+        # but we generate new UUIDs for ACP. We need to map them when sending results.
+        # Store in session so event callback can access it
+        tool_call_id_map: dict[str, str] = {}
+        session["tool_call_id_map"] = tool_call_id_map
 
         # Track assistant response for conversation history
         assistant_parts = []
@@ -478,6 +500,9 @@ class CrowAcpAgent(Agent):
                 tool_calls = getattr(delta, "tool_calls", None)
                 if tool_calls:
                     for tool_call in tool_calls:
+                        # Get the OpenHands SDK tool call ID (from LLM)
+                        oh_tool_call_id = getattr(tool_call, 'id', None)
+                        
                         tool_name = (
                             tool_call.function.name if tool_call.function.name else ""
                         )
@@ -495,14 +520,19 @@ class CrowAcpAgent(Agent):
                                     ("tool_end", current_tool_call.copy())
                                 )
 
-                            # Start new tool call
-                            tool_call_id = str(uuid.uuid4())
-                            current_tool_call["id"] = tool_call_id
+                            # Generate ACP tool call ID (new UUID for ACP)
+                            acp_tool_call_id = str(uuid.uuid4())
+                            
+                            # Store the mapping: OpenHands SDK ID -> ACP ID
+                            if oh_tool_call_id:
+                                tool_call_id_map[oh_tool_call_id] = acp_tool_call_id
+                            
+                            current_tool_call["id"] = acp_tool_call_id
                             current_tool_call["name"] = tool_name
                             current_tool_call["args"] = tool_args
                             current_state[0] = "tool_name"
                             update_queue.put_nowait(
-                                ("tool_start", (tool_call_id, tool_name, tool_args))
+                                ("tool_start", (acp_tool_call_id, tool_name, tool_args, oh_tool_call_id))
                             )
 
                         # Accumulate args for current tool
@@ -560,7 +590,7 @@ class CrowAcpAgent(Agent):
                             update=update_agent_message_text(data),
                         )
                     elif update_type == "tool_start":
-                        tool_call_id, tool_name, tool_args = data
+                        tool_call_id, tool_name, tool_args, oh_tool_call_id = data
 
                         # Track tool call for conversation history
                         assistant_parts.append(
@@ -689,11 +719,14 @@ class CrowAcpAgent(Agent):
                 """
                 if isinstance(event, ObservationEvent):
                     # Tool completed - send result to ACP client
+                    # Get the tool_call_id_map from the session
+                    id_map = session.get("tool_call_id_map", {})
                     asyncio.run_coroutine_threadsafe(
                         _send_tool_result_to_acp(
                             session_id=session_id,
                             conn=self._conn,
                             event=event,
+                            tool_call_id_map=id_map,
                         ),
                         loop,
                     )
