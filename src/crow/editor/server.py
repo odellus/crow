@@ -157,8 +157,7 @@ async def acp_websocket(websocket: WebSocket) -> None:
             working_dir = os.getcwd()
         # Find crow-agent command - try uv run first, then direct path
         crow_agent_cmd = os.environ.get(
-            "CROW_AGENT_CMD",
-            "uv run --directory crow-agent crow-agent"
+            "CROW_AGENT_CMD", "uv run --directory crow-agent crow-agent"
         )
         bridge = ACPBridge(crow_agent_cmd.split() + ["acp"], cwd=working_dir)
         await bridge.handle(websocket)
@@ -172,8 +171,7 @@ async def acp_websocket(websocket: WebSocket) -> None:
             working_dir = os.getcwd()
         # Find openhands command - try uv run first, then direct path
         openhands_cmd = os.environ.get(
-            "CROW_OPENHANDS_CMD",
-            "uv run --directory OpenHands-CLI openhands"
+            "CROW_OPENHANDS_CMD", "uv run --directory OpenHands-CLI openhands"
         )
         bridge = ACPBridge(openhands_cmd.split() + ["acp"], cwd=working_dir)
         await bridge.handle(websocket)
@@ -188,7 +186,7 @@ async def acp_websocket(websocket: WebSocket) -> None:
         # Find crow command - it's installed via uv
         crow_cmd = os.environ.get(
             "CROW_CMD",
-            "uv run --project crow crow"  # Use uv run to execute crow
+            "crow acp",  # Use uv run to execute crow
         )
         bridge = ACPBridge(crow_cmd.split() + ["acp"], cwd=working_dir)
         await bridge.handle(websocket)
@@ -255,6 +253,7 @@ async def delete_session(request: Request) -> JSONResponse:
 # When running from source, look relative to this file
 import importlib.resources
 
+
 def _get_frontend_dir() -> Path:
     """Get the frontend directory, handling both installed and source scenarios."""
     # First, try to find it as package data (installed wheel)
@@ -265,14 +264,15 @@ def _get_frontend_dir() -> Path:
                 return Path(str(frontend_path))
     except (FileNotFoundError, AttributeError):
         pass
-    
+
     # Fall back to relative path (source/development)
     relative_path = Path(__file__).parent / "frontend" / "dist"
     if relative_path.is_dir():
         return relative_path
-    
+
     # Return the relative path anyway (will fail later with clear error)
     return relative_path
+
 
 FRONTEND_DIR = _get_frontend_dir()
 INDEX_HTML = FRONTEND_DIR / "index.html"

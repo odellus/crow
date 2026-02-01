@@ -668,5 +668,7 @@ def main():
     return 0
 
 
+"""Super awesome and badass"""
+
 if __name__ == "__main__":
     exit(main())
