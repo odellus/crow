@@ -871,46 +871,65 @@ class CrowAcpAgent(Agent):
 
         sender = asyncio.create_task(sender_task())
 
-        # Create a NEW Conversation for each prompt
-        # Each prompt needs its own token callback with closure access to
-        # the prompt-specific variables (update_queue, session_id, cancelled_flag, etc.)
-        logger.info(f"Creating NEW Conversation for prompt in session {session_id}")
+        # Create or reuse conversation for this session
+        # The Conversation object MUST be created once and reused for all prompts
+        # to maintain conversation state across multiple messages
+        if "conversation" not in session:
+            # First prompt in this session - create the Conversation
+            logger.info(f"Creating NEW Conversation for session {session_id}")
 
-        # Create event callback to handle tool results
-        # This callback runs synchronously from the SDK's worker thread
-        # and schedules async ACP updates on the event loop
-        loop = asyncio.get_running_loop()
+            # Create event callback to handle tool results
+            # This callback runs synchronously from the SDK's worker thread
+            # and schedules async ACP updates on the event loop
+            loop = asyncio.get_running_loop()
 
-        def event_callback(event: Event) -> None:
-            """Handle OpenHands SDK events and send tool results to ACP client.
+            def event_callback(event: Event) -> None:
+                """Handle OpenHands SDK events and send tool results to ACP client.
 
-            This callback is invoked synchronously from the SDK's worker thread,
-            so we schedule async ACP updates on the event loop.
-            """
-            if isinstance(event, ObservationEvent):
-                # Tool completed - send result to ACP client
-                # Get the tool_call_id_map from the session
-                id_map = session.get("tool_call_id_map", {})
-                asyncio.run_coroutine_threadsafe(
-                    _send_tool_result_to_acp(
-                        session_id=session_id,
-                        conn=self._conn,
-                        event=event,
-                        tool_call_id_map=id_map,
-                    ),
-                    loop,
-                )
+                This callback is invoked synchronously from the SDK's worker thread,
+                so we schedule async ACP updates on the event loop.
+                """
+                if isinstance(event, ObservationEvent):
+                    # Tool completed - send result to ACP client
+                    # Get the tool_call_id_map from the session
+                    id_map = session.get("tool_call_id_map", {})
+                    asyncio.run_coroutine_threadsafe(
+                        _send_tool_result_to_acp(
+                            session_id=session_id,
+                            conn=self._conn,
+                            event=event,
+                            tool_call_id_map=id_map,
+                        ),
+                        loop,
+                    )
 
-        # Create a NEW conversation for this prompt with the token callback
-        # This ensures the LLM gets the correct token_callback from the start
-        conversation = Conversation(
-            agent=session["agent"],
-            workspace=session["cwd"],
-            visualizer=None,  # Disable UI output to stdout
-            callbacks=[event_callback],  # Add event callback for tool results
-            token_callbacks=[on_token],  # Add token callback for streaming
-        )
-        logger.info(f"Conversation created: {id(conversation)}")
+            # Create a token callback that retrieves the per-prompt callback from session
+            # This allows us to update the token callback for each prompt while reusing the Conversation
+            def dynamic_token_callback(chunk: ModelResponseStream) -> None:
+                """Token callback that delegates to the per-prompt callback stored in session."""
+                prompt_callback = session.get("current_token_callback")
+                if prompt_callback:
+                    prompt_callback(chunk)
+
+            conversation = Conversation(
+                agent=session["agent"],
+                workspace=session["cwd"],
+                visualizer=None,  # Disable UI output to stdout
+                callbacks=[event_callback],  # Add event callback for tool results
+                token_callbacks=[dynamic_token_callback],  # Dynamic token callback
+            )
+            session["conversation"] = conversation
+            logger.info(f"Conversation created: {id(conversation)}")
+        else:
+            # Reuse existing conversation
+            conversation = session["conversation"]
+            logger.info(
+                f"Reusing existing Conversation: {id(conversation)} for session {session_id}"
+            )
+
+        # Store the current prompt's token callback in the session
+        # The dynamic_token_callback in the Conversation will delegate to this
+        session["current_token_callback"] = on_token
 
         # Store conversation in session for cancellation
         session["cancelled_flag"] = cancelled_flag

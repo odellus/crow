@@ -231,7 +231,10 @@ async def main() -> int:
     # Start the Crow ACP server as a subprocess
     print("\n[1/4] Starting Crow ACP server...")
 
-    crow_dir = Path(__file__).parent / "src"
+    # Find the project root (where src/ directory lives)
+    # We're in tests/, so go up one level
+    project_root = Path(__file__).parent.parent
+    crow_dir = project_root / "src"
 
     proc = await asyncio.create_subprocess_exec(
         sys.executable,
@@ -272,10 +275,10 @@ async def main() -> int:
     session = await conn.new_session(mcp_servers=[], cwd=str(Path.cwd()))
     print(f"[INFO] Session created: {session.session_id}")
 
-    # Send test prompt
-    print("\n[4/4] Sending test prompt...")
+    # Send first test prompt
+    print("\n[4/6] Sending first test prompt...")
     print("-" * 80)
-    print("PROMPT: What is 2+2? Please respond with just the number.")
+    print("PROMPT 1: What is 2+2? Please respond with just the number.")
     print("-" * 80)
     print("\nRESPONSE:")
 
@@ -286,6 +289,24 @@ async def main() -> int:
         )
     except Exception as exc:
         logging.error("Prompt failed: %s", exc)
+        return 1
+
+    print("\n")
+
+    # Send SECOND prompt in the SAME session to test persistence
+    print("\n[5/6] Sending second test prompt (SAME SESSION)...")
+    print("-" * 80)
+    print("PROMPT 2: What was my previous question?")
+    print("-" * 80)
+    print("\nRESPONSE:")
+
+    try:
+        await conn.prompt(
+            session_id=session.session_id,
+            prompt=[text_block("What was my previous question?")],
+        )
+    except Exception as exc:
+        logging.error("Second prompt failed: %s", exc)
         return 1
 
     print("\n")
