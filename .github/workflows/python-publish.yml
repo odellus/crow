@@ -26,13 +26,18 @@ jobs:
         with:
           python-version: "3.x"
 
-      - name: Install Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: '22'
+      - name: Install fnm and Node.js
+        run: |
+          curl -fsSL https://fnm.vercel.app/install | bash -s -- --skip-shell
+          export PATH="/home/runner/.local/share/fnm:$PATH"
+          eval "$(fnm env --shell bash)"
+          fnm install 22
+          fnm use 22
 
       - name: Build frontend
         run: |
+          export PATH="/home/runner/.local/share/fnm:$PATH"
+          eval "$(fnm env --shell bash)"
           cd src/crow/editor/frontend
           npm install
           npm run build
