@@ -235,12 +235,9 @@ class CrowAcpAgent(Agent):
         self._llm_config = LLMConfig.from_env()
         self._server_config = ServerConfig.from_env()
 
-        # Disable streaming for custom APIs that don't support it properly
-        # ZAI API and other custom providers may not return CustomStreamWrapper
+        # Note: Streaming should work with all APIs including ZAI
+        # If there are streaming issues, they should be fixed in the SDK/transport layer
         stream = self._llm_config.stream
-        if self._llm_config.base_url and "zai" in str(self._llm_config.base_url).lower():
-            logger.warning("Detected ZAI API - disabling streaming due to compatibility issues")
-            stream = False
 
         self._llm = LLM(
             model=self._llm_config.model,
@@ -558,14 +555,16 @@ class CrowAcpAgent(Agent):
 
             CRITICAL: Send updates directly via run_coroutine_threadsafe, NOT through queue!
             The queue adds latency and prevents true streaming.
-            
+
             CRITICAL: Check cancelled_flag before sending any updates!
             """
             # Check for cancellation before processing any tokens
             if cancelled_flag["cancelled"]:
-                logger.debug("Cancellation detected in on_token, ignoring further tokens")
+                logger.debug(
+                    "Cancellation detected in on_token, ignoring further tokens"
+                )
                 return
-            
+
             for choice in chunk.choices:
                 delta = choice.delta
                 if delta is None:
@@ -639,7 +638,11 @@ class CrowAcpAgent(Agent):
                                 )
 
                             # Get the ACP tool call ID (already generated above)
-                            acp_tool_call_id = tool_call_id_map.get(oh_tool_call_id) if oh_tool_call_id else str(uuid.uuid4())
+                            acp_tool_call_id = (
+                                tool_call_id_map.get(oh_tool_call_id)
+                                if oh_tool_call_id
+                                else str(uuid.uuid4())
+                            )
 
                             current_tool_call["id"] = acp_tool_call_id
                             current_tool_call["name"] = tool_name
@@ -681,14 +684,18 @@ class CrowAcpAgent(Agent):
                     try:
                         update_type, data = await update_queue.get()
                         elapsed = time.time() - start_time
-                        logger.debug(f"[{elapsed:.3f}] Sender processing: {update_type}")
+                        logger.debug(
+                            f"[{elapsed:.3f}] Sender processing: {update_type}"
+                        )
                     except Exception as e:
                         logger.error(f"Error getting update from queue: {e}")
                         break
-                    
+
                     # Check for cancellation FIRST, before processing any updates
                     if cancelled_flag["cancelled"]:
-                        logger.info(f"Cancellation detected, breaking event loop for session {session_id}")
+                        logger.info(
+                            f"Cancellation detected, breaking event loop for session {session_id}"
+                        )
                         # Drain any remaining events in the queue
                         while not update_queue.empty():
                             try:
@@ -705,7 +712,7 @@ class CrowAcpAgent(Agent):
                                 ),
                             )
                         break
-                    
+
                     if update_type == "done":
                         # Finish any pending tool call
                         if current_tool_call["id"]:
@@ -864,61 +871,46 @@ class CrowAcpAgent(Agent):
 
         sender = asyncio.create_task(sender_task())
 
-        # Create or reuse conversation for this session
-        # The Conversation object MUST be created once and reused for all prompts
-        # to maintain conversation state across multiple messages
-        if "conversation" not in session:
-            # First prompt in this session - create the Conversation
-            # Note: token_callbacks will be attached per-prompt below
-            logger.info(f"Creating NEW Conversation for session {session_id}")
+        # Create a NEW Conversation for each prompt
+        # Each prompt needs its own token callback with closure access to
+        # the prompt-specific variables (update_queue, session_id, cancelled_flag, etc.)
+        logger.info(f"Creating NEW Conversation for prompt in session {session_id}")
 
-            # Create event callback to handle tool results
-            # This callback runs synchronously from the SDK's worker thread
-            # and schedules async ACP updates on the event loop
-            loop = asyncio.get_running_loop()
+        # Create event callback to handle tool results
+        # This callback runs synchronously from the SDK's worker thread
+        # and schedules async ACP updates on the event loop
+        loop = asyncio.get_running_loop()
 
-            def event_callback(event: Event) -> None:
-                """Handle OpenHands SDK events and send tool results to ACP client.
+        def event_callback(event: Event) -> None:
+            """Handle OpenHands SDK events and send tool results to ACP client.
 
-                This callback is invoked synchronously from the SDK's worker thread,
-                so we schedule async ACP updates on the event loop.
-                """
-                if isinstance(event, ObservationEvent):
-                    # Tool completed - send result to ACP client
-                    # Get the tool_call_id_map from the session
-                    id_map = session.get("tool_call_id_map", {})
-                    asyncio.run_coroutine_threadsafe(
-                        _send_tool_result_to_acp(
-                            session_id=session_id,
-                            conn=self._conn,
-                            event=event,
-                            tool_call_id_map=id_map,
-                        ),
-                        loop,
-                    )
+            This callback is invoked synchronously from the SDK's worker thread,
+            so we schedule async ACP updates on the event loop.
+            """
+            if isinstance(event, ObservationEvent):
+                # Tool completed - send result to ACP client
+                # Get the tool_call_id_map from the session
+                id_map = session.get("tool_call_id_map", {})
+                asyncio.run_coroutine_threadsafe(
+                    _send_tool_result_to_acp(
+                        session_id=session_id,
+                        conn=self._conn,
+                        event=event,
+                        tool_call_id_map=id_map,
+                    ),
+                    loop,
+                )
 
-            conversation = Conversation(
-                agent=session["agent"],
-                workspace=session["cwd"],
-                visualizer=None,  # Disable UI output to stdout
-                callbacks=[event_callback],  # Add event callback for tool results
-            )
-            session["conversation"] = conversation
-            logger.info(f"Conversation created: {id(conversation)}")
-        else:
-            # Reuse existing conversation
-            conversation = session["conversation"]
-            logger.info(
-                f"Reusing existing Conversation: {id(conversation)} for session {session_id}"
-            )
-
-        # Get the conversation (created once per session)
-        conversation = session["conversation"]
-
-        # Attach token callbacks for THIS prompt only
-        # The callbacks have access to the per-prompt update_queue
-        # We need to replace the token_callbacks for each prompt
-        conversation._on_token = BaseConversation.compose_callbacks([on_token])
+        # Create a NEW conversation for this prompt with the token callback
+        # This ensures the LLM gets the correct token_callback from the start
+        conversation = Conversation(
+            agent=session["agent"],
+            workspace=session["cwd"],
+            visualizer=None,  # Disable UI output to stdout
+            callbacks=[event_callback],  # Add event callback for tool results
+            token_callbacks=[on_token],  # Add token callback for streaming
+        )
+        logger.info(f"Conversation created: {id(conversation)}")
 
         # Store conversation in session for cancellation
         session["cancelled_flag"] = cancelled_flag
@@ -971,7 +963,9 @@ class CrowAcpAgent(Agent):
 
         # Return appropriate stop reason
         stop_reason = "cancelled" if cancelled_flag["cancelled"] else "end_turn"
-        logger.info(f"Conversation finished with stop_reason: {stop_reason}, cancelled_flag: {cancelled_flag['cancelled']}")
+        logger.info(
+            f"Conversation finished with stop_reason: {stop_reason}, cancelled_flag: {cancelled_flag['cancelled']}"
+        )
 
         # Save assistant response to conversation history
         if assistant_parts:

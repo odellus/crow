@@ -184,11 +184,7 @@ async def acp_websocket(websocket: WebSocket) -> None:
             # Fall back to current directory
             working_dir = os.getcwd()
         # Find crow command - it's installed via uv
-        crow_cmd = os.environ.get(
-            "CROW_CMD",
-            "crow acp",  # Use uv run to execute crow
-        )
-        bridge = ACPBridge(crow_cmd.split() + ["acp"], cwd=working_dir)
+        bridge = ACPBridge(["crow", "acp"], cwd=working_dir)
         await bridge.handle(websocket)
     else:
         # Proxy to external WebSocket URL

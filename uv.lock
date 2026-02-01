@@ -555,8 +555,8 @@ requires-dist = [
     { name = "ipython", specifier = ">=9.9.0" },
     { name = "markdownify", specifier = ">=1.2.2" },
     { name = "openai", specifier = ">=2.14.0" },
-    { name = "openhands-sdk", git = "https://github.com/odellus/software-agent-sdk?subdirectory=openhands-sdk&rev=36e81623f434410c9744c2d78f53d38f6f0916d6" },
-    { name = "openhands-tools", git = "https://github.com/odellus/software-agent-sdk?subdirectory=openhands-tools&rev=36e81623f434410c9744c2d78f53d38f6f0916d6" },
+    { name = "openhands-sdk", directory = "../software-agent-sdk/openhands-sdk" },
+    { name = "openhands-tools", directory = "../software-agent-sdk/openhands-tools" },
     { name = "python-dotenv", specifier = ">=1.2.1" },
     { name = "pyyaml", specifier = ">=6.0.0" },
     { name = "requests", specifier = ">=2.32.5" },
@@ -2003,7 +2003,7 @@ wheels = [
 [[package]]
 name = "openhands-sdk"
 version = "1.7.4"
-source = { git = "https://github.com/odellus/software-agent-sdk?subdirectory=openhands-sdk&rev=36e81623f434410c9744c2d78f53d38f6f0916d6#36e81623f434410c9744c2d78f53d38f6f0916d6" }
+source = { editable = "../software-agent-sdk/openhands-sdk" }
 dependencies = [
     { name = "deprecation" },
     { name = "fastmcp" },
@@ -2017,10 +2017,26 @@ dependencies = [
     { name = "websockets" },
 ]
 
+[package.metadata]
+requires-dist = [
+    { name = "boto3", marker = "extra == 'boto3'", specifier = ">=1.35.0" },
+    { name = "deprecation", specifier = ">=2.1.0" },
+    { name = "fastmcp", specifier = ">=2.11.3" },
+    { name = "httpx", specifier = ">=0.27.0" },
+    { name = "litellm", specifier = ">=1.80.10" },
+    { name = "lmnr", specifier = ">=0.7.24" },
+    { name = "pydantic", specifier = ">=2.12.5" },
+    { name = "python-frontmatter", specifier = ">=1.1.0" },
+    { name = "python-json-logger", specifier = ">=3.3.0" },
+    { name = "tenacity", specifier = ">=9.1.2" },
+    { name = "websockets", specifier = ">=12" },
+]
+provides-extras = ["boto3"]
+
 [[package]]
 name = "openhands-tools"
 version = "1.7.4"
-source = { git = "https://github.com/odellus/software-agent-sdk?subdirectory=openhands-tools&rev=36e81623f434410c9744c2d78f53d38f6f0916d6#36e81623f434410c9744c2d78f53d38f6f0916d6" }
+source = { directory = "../software-agent-sdk/openhands-tools" }
 dependencies = [
     { name = "bashlex" },
     { name = "binaryornot" },
@@ -2031,6 +2047,19 @@ dependencies = [
     { name = "openhands-sdk" },
     { name = "pydantic" },
     { name = "tom-swe" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "bashlex", specifier = ">=0.18" },
+    { name = "binaryornot", specifier = ">=0.4.4" },
+    { name = "browser-use", specifier = ">=0.8.0" },
+    { name = "cachetools" },
+    { name = "func-timeout", specifier = ">=4.3.5" },
+    { name = "libtmux", specifier = ">=0.53.0" },
+    { name = "openhands-sdk", editable = "../software-agent-sdk/openhands-sdk" },
+    { name = "pydantic", specifier = ">=2.11.7" },
+    { name = "tom-swe", specifier = ">=1.0.3" },
 ]
 
 [[package]]

@@ -1,5 +1,13 @@
 """Crow agent implementations."""
 
-from .config import AgentConfig, LLMConfig, ServerConfig, load_crow_config, load_crow_env
+# ACP server has been moved to crow.acp.server
+from crow.acp.server import CrowAcpAgent, sync_main
 
-__all__ = ["AgentConfig", "LLMConfig", "ServerConfig", "load_crow_config", "load_crow_env"]
+from .config import LLMConfig, ServerConfig
+
+__all__ = [
+    "LLMConfig",
+    "ServerConfig",
+    "CrowAcpAgent",
+    "sync_main",
+]

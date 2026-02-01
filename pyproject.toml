@@ -10,8 +10,8 @@ dependencies = [
     "ipython>=9.9.0",
     "markdownify>=1.2.2",
     "openai>=2.14.0",
-    "openhands-sdk @ git+https://github.com/odellus/software-agent-sdk@36e81623f434410c9744c2d78f53d38f6f0916d6#subdirectory=openhands-sdk",
-    "openhands-tools @ git+https://github.com/odellus/software-agent-sdk@36e81623f434410c9744c2d78f53d38f6f0916d6#subdirectory=openhands-tools",
+    "openhands-sdk @ file:///home/thomas/src/projects/orchestrator-project/software-agent-sdk/openhands-sdk",
+    "openhands-tools @ file:///home/thomas/src/projects/orchestrator-project/software-agent-sdk/openhands-tools",
     "python-dotenv>=1.2.1",
     "pyyaml>=6.0.0",
     "requests>=2.32.5",
@@ -40,7 +40,7 @@ packages = ["src/crow"]
 [tool.hatch.build.targets.sdist.force-include]
 "src/crow/editor/frontend/dist" = "src/crow/editor/frontend/dist"
 
-[tool.uv.sources]
+# [tool.uv.sources]
 # openhands-sdk = { path = "../software-agent-sdk/openhands-sdk", editable = true }
 # openhands-tools = { path = "../software-agent-sdk/openhands-tools", editable = true }
 # agent-client-protocol = { path = "../acp-python-sdk" }
