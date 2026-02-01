@@ -39,7 +39,7 @@ jobs:
           export PATH="/home/runner/.local/share/fnm:$PATH"
           eval "$(fnm env --shell bash)"
           cd src/crow/editor/frontend
-          npm install
+          npm install --legacy-peer-deps
           npm run build
 
       - name: Build release distributions
