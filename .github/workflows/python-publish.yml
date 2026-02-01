@@ -26,6 +26,17 @@ jobs:
         with:
           python-version: "3.x"
 
+      - name: Install Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Build frontend
+        run: |
+          cd src/crow/editor/frontend
+          npm install
+          npm run build
+
       - name: Build release distributions
         run: |
           # NOTE: put your own distribution build steps here.
