@@ -75,6 +75,7 @@ from openhands.sdk.event import ActionEvent, Event, ObservationEvent
 from openhands.sdk.hooks import HookConfig
 from openhands.sdk.llm.streaming import ModelResponseStream
 from openhands.tools.file_editor import FileEditorObservation, FileEditorTool
+from openhands.tools.task_tracker import TaskTrackerTool
 from openhands.tools.terminal import TerminalTool
 
 from crow.agent.config import LLMConfig, ServerConfig
@@ -133,7 +134,7 @@ async def _send_tool_result_to_acp(
 
     This function is called from the event callback when a tool completes.
     It sends the tool output to the ACP client via session_update.
-    
+
     Args:
         session_id: The ACP session ID
         conn: The ACP connection
@@ -146,6 +147,10 @@ async def _send_tool_result_to_acp(
 
         # Translate OpenHands SDK tool_call_id to ACP tool_call_id
         acp_tool_call_id = tool_call_id_map.get(event.tool_call_id)
+        logger.debug(
+            f"Looking up tool call ID: {event.tool_call_id} -> {acp_tool_call_id}, "
+            f"available IDs: {list(tool_call_id_map.keys())}"
+        )
         if not acp_tool_call_id:
             logger.warning(
                 f"No ACP tool call ID found for OpenHands SDK tool call ID: {event.tool_call_id}"
@@ -278,31 +283,35 @@ class CrowAcpAgent(Agent):
 
     def _enhance_tool_call_title(self, tool_name: str, tool_args: str) -> str:
         """Enhance tool call title with key argument for better UX.
-        
+
         This extracts a meaningful argument from the tool args to create
         a more descriptive title, similar to kimi-cli's approach.
-        
+
         Examples:
             - "terminal" with command "ls -la" -> "terminal: ls -la"
             - "file_editor" with path "test.py" -> "file_editor: test.py"
         """
         import json
         from typing import Any
-        
+
         try:
             args: dict[str, Any] = json.loads(tool_args) if tool_args else {}
         except json.JSONDecodeError:
             # Args are incomplete or invalid, just return tool name
             return tool_name
-        
+
         # Extract key argument based on tool name
         key_arg = None
         tool_name_lower = tool_name.lower()
-        
+
         # Terminal/execute tools - show the command
-        if "terminal" in tool_name_lower or "run" in tool_name_lower or "execute" in tool_name_lower:
+        if (
+            "terminal" in tool_name_lower
+            or "run" in tool_name_lower
+            or "execute" in tool_name_lower
+        ):
             key_arg = args.get("command") or args.get("cmd")
-        
+
         # File operations - show the path
         elif "file" in tool_name_lower or "edit" in tool_name_lower:
             key_arg = args.get("path")
@@ -312,19 +321,19 @@ class CrowAcpAgent(Agent):
                     parts = key_arg.split("/")
                     if len(parts) > 1:
                         key_arg = f".../{parts[-1]}"
-        
+
         # Search tools - show the query/pattern
         elif "search" in tool_name_lower or "grep" in tool_name_lower:
             key_arg = args.get("query") or args.get("pattern") or args.get("text")
-        
+
         # Read tools - show the path
         elif "read" in tool_name_lower:
             key_arg = args.get("path")
-        
+
         # Browser tools - show the URL or action
         elif "browser" in tool_name_lower or "browse" in tool_name_lower:
             key_arg = args.get("url") or args.get("action")
-        
+
         # If we found a key argument, format it nicely
         if key_arg:
             key_str = str(key_arg)
@@ -332,7 +341,7 @@ class CrowAcpAgent(Agent):
             if len(key_str) > 40:
                 key_str = key_str[:37] + "..."
             return f"{tool_name}: {key_str}"
-        
+
         # No key argument found, return just the tool name
         return tool_name
 
@@ -391,7 +400,11 @@ class CrowAcpAgent(Agent):
                         }
 
             # Create OpenHands agent with security disabled (auto-approve all)
-            tools = [Tool(name=TerminalTool.name), Tool(name=FileEditorTool.name)]
+            tools = [
+                Tool(name=TerminalTool.name),
+                Tool(name=FileEditorTool.name),
+                Tool(name=TaskTrackerTool.name),
+            ]
 
             # Only pass mcp_config if it's not None
             agent_kwargs = {
@@ -520,7 +533,7 @@ class CrowAcpAgent(Agent):
 
         # Tool call tracking
         current_tool_call = {"id": None, "name": None, "args": ""}
-        
+
         # Track tool call IDs: map OpenHands SDK tool_call_id -> ACP tool_call_id
         # This is needed because OpenHands SDK uses its own tool call IDs,
         # but we generate new UUIDs for ACP. We need to map them when sending results.
@@ -535,10 +548,17 @@ class CrowAcpAgent(Agent):
             """
             Handle all types of streaming tokens including content,
             tool calls, and thinking blocks with dynamic boundary detection.
-            
+
             CRITICAL: Send updates directly via run_coroutine_threadsafe, NOT through queue!
             The queue adds latency and prevents true streaming.
+            
+            CRITICAL: Check cancelled_flag before sending any updates!
             """
+            # Check for cancellation before processing any tokens
+            if cancelled_flag["cancelled"]:
+                logger.debug("Cancellation detected in on_token, ignoring further tokens")
+                return
+            
             for choice in chunk.choices:
                 delta = choice.delta
                 if delta is None:
@@ -577,8 +597,8 @@ class CrowAcpAgent(Agent):
                 if tool_calls:
                     for tool_call in tool_calls:
                         # Get the OpenHands SDK tool call ID (from LLM)
-                        oh_tool_call_id = getattr(tool_call, 'id', None)
-                        
+                        oh_tool_call_id = getattr(tool_call, "id", None)
+
                         tool_name = (
                             tool_call.function.name if tool_call.function.name else ""
                         )
@@ -588,7 +608,22 @@ class CrowAcpAgent(Agent):
                             else ""
                         )
 
-                        # New tool call starting
+                        logger.debug(
+                            f"Tool call chunk: id={oh_tool_call_id}, name={tool_name}, "
+                            f"args_len={len(tool_args)}, current_name={current_tool_call['name']}"
+                        )
+
+                        # Store tool call ID mapping as soon as we see it
+                        # This must happen BEFORE tool execution starts to avoid race conditions
+                        if oh_tool_call_id and oh_tool_call_id not in tool_call_id_map:
+                            # Generate ACP tool call ID (new UUID for ACP)
+                            acp_tool_call_id = str(uuid.uuid4())
+                            tool_call_id_map[oh_tool_call_id] = acp_tool_call_id
+                            logger.debug(
+                                f"Stored tool call ID mapping: {oh_tool_call_id} -> {acp_tool_call_id}"
+                            )
+
+                        # New tool call starting (different name)
                         if tool_name and current_tool_call["name"] != tool_name:
                             # Finish previous tool call if exists
                             if current_tool_call["id"]:
@@ -596,19 +631,23 @@ class CrowAcpAgent(Agent):
                                     ("tool_end", current_tool_call.copy())
                                 )
 
-                            # Generate ACP tool call ID (new UUID for ACP)
-                            acp_tool_call_id = str(uuid.uuid4())
-                            
-                            # Store the mapping: OpenHands SDK ID -> ACP ID
-                            if oh_tool_call_id:
-                                tool_call_id_map[oh_tool_call_id] = acp_tool_call_id
-                            
+                            # Get the ACP tool call ID (already generated above)
+                            acp_tool_call_id = tool_call_id_map.get(oh_tool_call_id) if oh_tool_call_id else str(uuid.uuid4())
+
                             current_tool_call["id"] = acp_tool_call_id
                             current_tool_call["name"] = tool_name
                             current_tool_call["args"] = tool_args
                             current_state[0] = "tool_name"
                             update_queue.put_nowait(
-                                ("tool_start", (acp_tool_call_id, tool_name, tool_args, oh_tool_call_id))
+                                (
+                                    "tool_start",
+                                    (
+                                        acp_tool_call_id,
+                                        tool_name,
+                                        tool_args,
+                                        oh_tool_call_id,
+                                    ),
+                                )
                             )
 
                         # Accumulate args for current tool
@@ -628,12 +667,38 @@ class CrowAcpAgent(Agent):
         # Start background task to send updates from queue
         async def sender_task():
             import time
+
             start_time = time.time()
-            while True:
-                try:
-                    update_type, data = await update_queue.get()
-                    elapsed = time.time() - start_time
-                    logger.debug(f"[{elapsed:.3f}] Sender processing: {update_type}")
+            try:
+                while True:
+                    try:
+                        update_type, data = await update_queue.get()
+                        elapsed = time.time() - start_time
+                        logger.debug(f"[{elapsed:.3f}] Sender processing: {update_type}")
+                    except Exception as e:
+                        logger.error(f"Error getting update from queue: {e}")
+                        break
+                    
+                    # Check for cancellation FIRST, before processing any updates
+                    if cancelled_flag["cancelled"]:
+                        logger.info(f"Cancellation detected, breaking event loop for session {session_id}")
+                        # Drain any remaining events in the queue
+                        while not update_queue.empty():
+                            try:
+                                update_queue.get_nowait()
+                            except asyncio.QueueEmpty:
+                                break
+                        # Finish any pending tool call
+                        if current_tool_call["id"]:
+                            await self._conn.session_update(
+                                session_id=session_id,
+                                update=update_tool_call(
+                                    tool_call_id=current_tool_call["id"],
+                                    status="failed",
+                                ),
+                            )
+                        break
+                    
                     if update_type == "done":
                         # Finish any pending tool call
                         if current_tool_call["id"]:
@@ -642,18 +707,6 @@ class CrowAcpAgent(Agent):
                                 update=update_tool_call(
                                     tool_call_id=current_tool_call["id"],
                                     status="completed",
-                                ),
-                            )
-                        break
-                    # Check for cancellation
-                    if cancelled_flag["cancelled"]:
-                        # Finish any pending tool call
-                        if current_tool_call["id"]:
-                            await self._conn.session_update(
-                                session_id=session_id,
-                                update=update_tool_call(
-                                    tool_call_id=current_tool_call["id"],
-                                    status="failed",
                                 ),
                             )
                         break
@@ -732,7 +785,9 @@ class CrowAcpAgent(Agent):
                                 status=status,
                                 content=[
                                     tool_content(
-                                        block=text_block(text=tool_args if tool_args else "{}")
+                                        block=text_block(
+                                            text=tool_args if tool_args else "{}"
+                                        )
                                     )
                                 ],
                                 raw_input=tool_args,
@@ -749,7 +804,9 @@ class CrowAcpAgent(Agent):
                                 status="in_progress",
                                 content=[
                                     tool_content(
-                                        block=text_block(text=tool_args if tool_args else "{}")
+                                        block=text_block(
+                                            text=tool_args if tool_args else "{}"
+                                        )
                                     )
                                 ],
                             ),
@@ -795,8 +852,8 @@ class CrowAcpAgent(Agent):
                         current_tool_call["id"] = None
                         current_tool_call["name"] = None
                         current_tool_call["args"] = ""
-                except Exception as e:
-                    logger.error(f"Error sending update: {e}")
+            finally:
+                logger.info(f"Sender task finished for session {session_id}")
 
         sender = asyncio.create_task(sender_task())
 
@@ -862,6 +919,7 @@ class CrowAcpAgent(Agent):
         # Run conversation in background thread WITHOUT awaiting
         # This allows the event loop to process run_coroutine_threadsafe calls immediately
         import threading
+
         conversation_error = [None]  # Use list to allow assignment in nested function
         conversation_done = threading.Event()
 
@@ -904,32 +962,9 @@ class CrowAcpAgent(Agent):
         await update_queue.put(("done", None))
         await sender
 
-        # Update plan to completed status
-        # Mark all in_progress entries as completed
-        # final_plan_entries = []
-        # for entry in plan_entries:
-        #     if entry.status == "in_progress":
-        #         final_plan_entries.append(
-        #             plan_entry(
-        #                 content=entry.content,
-        #                 priority=entry.priority,
-        #                 status="completed",
-        #             )
-        #         )
-        #     else:
-        #         final_plan_entries.append(entry)
-
-        # try:
-        #     await self._conn.session_update(
-        #         session_id=session_id,
-        #         update=update_plan(final_plan_entries),
-        #     )
-        # except Exception as e:
-        #     # Plan updates are optional, don't fail if they don't work
-        #     logger.warning(f"Failed to send plan update: {e}")
-
         # Return appropriate stop reason
         stop_reason = "cancelled" if cancelled_flag["cancelled"] else "end_turn"
+        logger.info(f"Conversation finished with stop_reason: {stop_reason}, cancelled_flag: {cancelled_flag['cancelled']}")
 
         # Save assistant response to conversation history
         if assistant_parts:
@@ -952,19 +987,26 @@ class CrowAcpAgent(Agent):
         try:
             if session_id in self._sessions:
                 session = self._sessions[session_id]
+                logger.info(f"Cancel requested for session {session_id}")
 
                 # Set cancellation flag
                 if "cancelled_flag" in session:
                     session["cancelled_flag"]["cancelled"] = True
+                    logger.info(f"Set cancelled_flag to True for session {session_id}")
+                else:
+                    logger.warning(f"No cancelled_flag found in session {session_id}")
 
                 # Pause the conversation if it exists
                 if "conversation" in session:
                     conversation = session["conversation"]
                     # Note: pause() waits for the current LLM call to complete
                     # This is a temporary solution until hard cancellation is added
+                    logger.info(f"Pausing conversation for session {session_id}")
                     conversation.pause()
+                else:
+                    logger.warning(f"No conversation found in session {session_id}")
         except Exception as e:
-            logger.error(f"Error during cancellation: {e}")
+            logger.error(f"Error during cancellation: {e}", exc_info=True)
 
     async def set_session_mode(
         self,
@@ -1067,7 +1109,11 @@ class CrowAcpAgent(Agent):
                     }
 
         # Create OpenHands agent with security disabled (auto-approve all)
-        tools = [Tool(name=TerminalTool.name), Tool(name=FileEditorTool.name)]
+        tools = [
+            Tool(name=TerminalTool.name),
+            Tool(name=FileEditorTool.name),
+            Tool(name=TaskTrackerTool.name),
+        ]
 
         # Only pass mcp_config if it's not None
         agent_kwargs = {
