@@ -47,7 +47,7 @@ def acp() -> None:
 
 @app.command()
 def editor(
-    port: int = typer.Option(8000, "--port", "-p", help="Port to run the server on"),
+    port: int = typer.Option(9873, "--port", "-p", help="Port to run the server on"),
     host: str = typer.Option("localhost", "--host", "-H", help="Host to bind to"),
     reload: bool = typer.Option(False, "--reload", help="Enable auto-reload for development"),
 ) -> None:

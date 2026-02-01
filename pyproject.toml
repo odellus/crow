@@ -30,6 +30,12 @@ build-backend = "hatchling.build"
 [tool.hatch.build.targets.wheel]
 packages = ["src/crow"]
 
+[tool.hatch.build.targets.wheel.force-include]
+"src/crow/editor/frontend/dist" = "crow/editor/frontend/dist"
+
+[tool.hatch.build.targets.sdist.force-include]
+"src/crow/editor/frontend/dist" = "src/crow/editor/frontend/dist"
+
 [tool.uv.sources]
 openhands-sdk = { path = "../software-agent-sdk/openhands-sdk", editable = true }
 openhands-tools = { path = "../software-agent-sdk/openhands-tools", editable = true }

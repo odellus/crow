@@ -251,7 +251,30 @@ async def delete_session(request: Request) -> JSONResponse:
 
 
 # Frontend paths
-FRONTEND_DIR = Path(__file__).parent / "frontend" / "dist"
+# When installed as a package, look for data in the package installation directory
+# When running from source, look relative to this file
+import importlib.resources
+
+def _get_frontend_dir() -> Path:
+    """Get the frontend directory, handling both installed and source scenarios."""
+    # First, try to find it as package data (installed wheel)
+    try:
+        with importlib.resources.files("crow.editor") as editor_dir:
+            frontend_path = editor_dir / "frontend" / "dist"
+            if frontend_path.is_dir():
+                return Path(str(frontend_path))
+    except (FileNotFoundError, AttributeError):
+        pass
+    
+    # Fall back to relative path (source/development)
+    relative_path = Path(__file__).parent / "frontend" / "dist"
+    if relative_path.is_dir():
+        return relative_path
+    
+    # Return the relative path anyway (will fail later with clear error)
+    return relative_path
+
+FRONTEND_DIR = _get_frontend_dir()
 INDEX_HTML = FRONTEND_DIR / "index.html"
 
 
