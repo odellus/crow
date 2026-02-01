@@ -10,7 +10,7 @@ Essential commands and guidelines for agents working on the Crow project.
 ```bash
 cd /home/thomas/src/projects/orchestrator-project/crow
 uv build
-uv tool install dist/crow_ai-0.1.2-py3-none-any.whl --python 3.12
+uv tool install dist/crow_ai-0.2.3-py3-none-any.whl --python 3.12
 ```
 
 This installs the `crow` command globally, available from any directory.

@@ -235,11 +235,18 @@ class CrowAcpAgent(Agent):
         self._llm_config = LLMConfig.from_env()
         self._server_config = ServerConfig.from_env()
 
+        # Disable streaming for custom APIs that don't support it properly
+        # ZAI API and other custom providers may not return CustomStreamWrapper
+        stream = self._llm_config.stream
+        if self._llm_config.base_url and "zai" in str(self._llm_config.base_url).lower():
+            logger.warning("Detected ZAI API - disabling streaming due to compatibility issues")
+            stream = False
+
         self._llm = LLM(
             model=self._llm_config.model,
             api_key=self._llm_config.api_key,
             base_url=self._llm_config.base_url,
-            stream=self._llm_config.stream,
+            stream=stream,
         )
 
         # Define available session modes
